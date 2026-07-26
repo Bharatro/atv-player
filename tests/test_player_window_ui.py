@@ -6274,7 +6274,7 @@ def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -
     window.open_session(session)
 
     assert window.playlist_group_combo.isHidden() is False
-    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线", "极速线"]
+    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线(2)", "极速线(2)"]
     assert [window.playlist.item(i).text() for i in range(window.playlist.count())] == ["第1集", "第2集"]
     assert window.playlist.currentRow() == 1
 

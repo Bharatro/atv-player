@@ -25,6 +25,7 @@ from atv_player.metadata.hydrator import MetadataHydrator
 from atv_player.metadata.models import MetadataContext, MetadataMatch, MetadataQuery
 from atv_player.models import (
     AppConfig,
+    AppIdentity,
     DoubanCategory,
     FavoriteRecord,
     HistoryRecord,
@@ -66,6 +67,24 @@ class FakeAISettingsClient:
         if self.error is not None:
             raise self.error
         return True
+
+
+class _FakeRepoBase:
+    """Shared base for inline ``FakeRepo`` doubles used by AppCoordinator tests.
+
+    AppCoordinator._show_main reads the installation identity from the repo, so
+    every repo double must satisfy that interface.
+    """
+
+    def ensure_app_identity(self) -> AppIdentity:
+        return AppIdentity(installation_id="installation-id", created_at=0)
+
+
+class _NoOpSignal:
+    """Minimal Qt-signal double for dialog tests that only need ``connect``."""
+
+    def connect(self, _slot) -> None:
+        pass
 
 
 class FakeBrowseController:
@@ -601,15 +620,19 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 8
-    assert window.nav_tabs.tabText(0) == "豆瓣电影"
-    assert window.nav_tabs.tabText(1) == "电报影视"
-    assert window.nav_tabs.tabText(2) == "网络直播"
-    assert window.nav_tabs.tabText(3) == "Emby"
-    assert window.nav_tabs.tabText(4) == "Jellyfin"
-    assert window.nav_tabs.tabText(5) == "飞牛影视"
-    assert window.nav_tabs.tabText(6) == "文件浏览"
-    assert window.nav_tabs.tabText(7) == "播放记录"
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
+        "豆瓣电影",
+        "全球片单",
+        "电报影视",
+        "网络直播",
+        "Emby",
+        "Jellyfin",
+        "飞牛影视",
+        "文件浏览",
+        "我的收藏",
+        "我的追更",
+        "播放记录",
+    ]
 
 
 def test_main_window_restores_last_selected_main_tab_on_startup(qtbot) -> None:
@@ -931,7 +954,7 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     widget.show()
 
     qtbot.waitUntil(
-        lambda: widget.nav_tabs.count() > 6 and widget.nav_tabs.tabText(6) == "红果短剧"
+        lambda: "红果短剧" in [widget.nav_tabs.tabText(i) for i in range(widget.nav_tabs.count())]
     )
     assert callable(captured_loader["drive"])
     assert callable(captured_loader["offline"])
@@ -1332,12 +1355,15 @@ def test_main_window_hides_emby_jellyfin_and_feiniu_tabs_when_disabled(qtbot) ->
     qtbot.addWidget(window)
     window.show()
 
-    assert window.nav_tabs.count() == 5
+    assert window.nav_tabs.count() == 8
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
-    assert window.nav_tabs.tabText(1) == "电报影视"
-    assert window.nav_tabs.tabText(2) == "网络直播"
-    assert window.nav_tabs.tabText(3) == "文件浏览"
-    assert window.nav_tabs.tabText(4) == "播放记录"
+    assert window.nav_tabs.tabText(1) == "全球片单"
+    assert window.nav_tabs.tabText(2) == "电报影视"
+    assert window.nav_tabs.tabText(3) == "网络直播"
+    assert window.nav_tabs.tabText(4) == "文件浏览"
+    assert window.nav_tabs.tabText(5) == "我的收藏"
+    assert window.nav_tabs.tabText(6) == "我的追更"
+    assert window.nav_tabs.tabText(7) == "播放记录"
 
 
 def test_main_window_inserts_bilibili_tab_immediately_after_telegram(qtbot) -> None:
@@ -1361,12 +1387,12 @@ def test_main_window_inserts_bilibili_tab_immediately_after_telegram(qtbot) -> N
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:7] == [
         "豆瓣电影",
+        "全球片单",
         "电报影视",
         "B站",
         "网络直播",
         "Emby",
         "Jellyfin",
-        "飞牛影视",
     ]
 
 
@@ -1391,9 +1417,9 @@ def test_main_window_inserts_youtube_tab_when_enabled(qtbot) -> None:
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:4] == [
         "豆瓣电影",
+        "全球片单",
         "电报影视",
         "YouTube",
-        "网络直播",
     ]
     assert window.youtube_page.keyword_edit.isHidden() is False
 
@@ -1521,8 +1547,9 @@ def test_main_window_opens_live_source_manager_dialog_and_reloads_live_categorie
     monkeypatch.setattr(window.live_page, "reload_categories", lambda: reloaded.append(True))
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
 
         def exec(self) -> int:
             return 1
@@ -1554,8 +1581,9 @@ def test_main_window_opening_live_source_manager_closes_shortcut_help_dialog(qtb
     window.setFocus()
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
 
         def exec(self) -> int:
             return 1
@@ -1592,8 +1620,9 @@ def test_main_window_opening_plugin_manager_closes_shortcut_help_dialog(qtbot, m
     window.setFocus()
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
 
         def exec(self) -> int:
             return 1
@@ -1635,8 +1664,9 @@ def test_main_window_reloads_plugins_with_drive_detail_loader_after_plugin_manag
     qtbot.addWidget(window)
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
             self.plugin_tabs_dirty = True
 
         def exec(self) -> int:
@@ -1675,8 +1705,9 @@ def test_main_window_reloads_plugins_with_offline_download_loader_after_plugin_m
     qtbot.addWidget(window)
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
             self.parent = parent
             self.plugin_tabs_dirty = True
 
@@ -1714,8 +1745,9 @@ def test_main_window_does_not_reload_plugins_when_plugin_manager_closes_without_
     qtbot.addWidget(window)
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
             self.parent = parent
             self.plugin_tabs_dirty = False
 
@@ -1770,8 +1802,9 @@ def test_main_window_reloads_only_changed_plugins_when_plugin_manager_closes(qtb
     qtbot.addWidget(window)
 
     class FakeDialog:
-        def __init__(self, manager, parent=None) -> None:
+        def __init__(self, manager, parent=None, **kwargs) -> None:
             self.manager = manager
+            self.builtin_tabs_saved = _NoOpSignal()
             self.parent = parent
             self.plugin_tabs_dirty = True
             self.changed_plugin_ids = ["plugin-2"]
@@ -2368,6 +2401,9 @@ def test_main_window_help_dialog_renders_install_links_for_missing_ytdlp_and_nod
     dialog = visible_shortcut_help_dialogs()[0]
     table = dialog.findChild(QTableWidget, "systemInfoTable")
     assert table is not None
+    # System info rows are populated asynchronously via a background thread;
+    # wait for the Node.js install link to be rendered before asserting.
+    qtbot.waitUntil(lambda: isinstance(table.cellWidget(0, 1), QLabel), timeout=5000)
 
     node_widget = system_info_value_widget(dialog, 0)
     mpv_widget = system_info_value_widget(dialog, 1)
@@ -5318,7 +5354,7 @@ def test_app_coordinator_reconfigures_logging_with_structured_handler(monkeypatc
 
 
 def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5359,7 +5395,7 @@ def test_app_coordinator_show_main_passes_app_log_service_to_main_window(monkeyp
 
 
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5413,7 +5449,7 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
 
 
 def test_app_coordinator_start_returns_login_window_when_vod_token_fetch_raises_api_error(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5470,7 +5506,7 @@ def test_app_coordinator_start_returns_login_window_when_vod_token_fetch_raises_
 
 
 def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5532,7 +5568,7 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
 
 
 def test_app_coordinator_passes_shared_m3u8_filter_into_main_window(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5574,7 +5610,7 @@ def test_app_coordinator_passes_shared_m3u8_filter_into_main_window(monkeypatch)
 def test_app_coordinator_passes_saved_m3u_proxy_segment_prefetch_size_to_local_hls_proxy_server(monkeypatch) -> None:
     captured: list[int] = []
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(m3u_proxy_segment_prefetch_size=7)
 
@@ -5596,7 +5632,7 @@ def test_app_coordinator_passes_saved_m3u_proxy_segment_prefetch_size_to_local_h
 
 
 def test_app_coordinator_show_main_save_config_updates_live_proxy_prefetch_size(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5638,7 +5674,7 @@ def test_app_coordinator_show_main_save_config_updates_live_proxy_prefetch_size(
 
 
 def test_app_coordinator_closes_m3u8_filter_when_shutting_down() -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 
@@ -5658,7 +5694,7 @@ def test_app_coordinator_closes_m3u8_filter_when_shutting_down() -> None:
 
 
 def test_app_coordinator_show_main_starts_async_player_restore_when_supported(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5716,7 +5752,7 @@ def test_app_coordinator_show_main_starts_async_player_restore_when_supported(mo
 
 
 def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5780,7 +5816,7 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
 
 
 def test_app_coordinator_show_main_injects_pansou_controller_when_capability_enabled(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -5834,7 +5870,7 @@ def test_app_coordinator_show_main_injects_pansou_controller_when_capability_ena
 
 
 def test_app_coordinator_show_main_injects_shared_local_playback_history_repository(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.database_path = tmp_path / "app.db"
             self.config = AppConfig(
@@ -5953,7 +5989,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
 
 
 def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -6018,7 +6054,7 @@ def test_app_coordinator_show_main_wires_metadata_hydrator_factory(monkeypatch) 
 
 
 def test_app_coordinator_show_main_wires_favorites_controller(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -6075,7 +6111,7 @@ def test_app_coordinator_show_main_wires_favorites_controller(monkeypatch) -> No
 
 
 def test_app_coordinator_show_main_wires_following_controller(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -6133,7 +6169,7 @@ def test_app_coordinator_show_main_wires_following_controller(monkeypatch) -> No
 
 
 def test_app_coordinator_show_main_wires_danmaku_controller_factory(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -6187,7 +6223,7 @@ def test_app_coordinator_show_main_wires_danmaku_controller_factory(monkeypatch)
 
 
 def test_app_coordinator_show_main_wires_episode_title_enhancer_factory(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -6248,7 +6284,7 @@ def test_app_coordinator_show_main_wires_episode_title_enhancer_factory(monkeypa
 
 
 def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb_key_are_enabled(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6266,7 +6302,7 @@ def test_app_coordinator_builds_episode_title_enhancer_only_when_switch_and_tmdb
 
 
 def test_app_coordinator_builds_episode_title_enhancer_for_browse_when_enabled(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6289,7 +6325,7 @@ def test_app_coordinator_builds_episode_title_enhancer_for_supported_remote_sour
     monkeypatch,
     source_kind: str,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6307,7 +6343,7 @@ def test_app_coordinator_builds_episode_title_enhancer_for_supported_remote_sour
 
 
 def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episode_marker(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6363,7 +6399,7 @@ def test_app_coordinator_episode_title_enhancer_preserves_variety_playlist_order
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6442,7 +6478,7 @@ def test_app_coordinator_episode_title_enhancer_preserves_variety_playlist_order
 
 
 def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6500,7 +6536,7 @@ def test_app_coordinator_episode_title_enhancer_maps_multi_season_playlist(tmp_p
 
 
 def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_search(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6546,7 +6582,7 @@ def test_app_coordinator_episode_title_enhancer_strips_season_suffix_from_tmdb_s
 
 
 def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_first_air_year(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6592,7 +6628,7 @@ def test_app_coordinator_episode_title_enhancer_accepts_series_with_different_fi
 
 
 def test_app_coordinator_episode_title_enhancer_does_not_fallback_to_raw_season_title_search(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6638,7 +6674,7 @@ def test_app_coordinator_episode_title_enhancer_falls_back_to_raw_season_title_f
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6714,7 +6750,7 @@ def test_app_coordinator_episode_title_enhancer_uses_provider_fallback_for_unres
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6828,7 +6864,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_animation_tmdb_match_for
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6918,7 +6954,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_live_action_tmdb_match_f
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -6970,7 +7006,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_closer_year_among_same_t
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7023,7 +7059,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_candidate_with_requested
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7086,7 +7122,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_candidate_with_requested
 
 
 def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_across_reopens(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7138,7 +7174,7 @@ def test_app_coordinator_episode_title_enhancer_reuses_cached_tmdb_results_acros
 def test_app_coordinator_episode_title_enhancer_logs_tmdb_search_cache_hit_and_miss(
     tmp_path, monkeypatch, caplog
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7201,7 +7237,7 @@ def test_app_coordinator_episode_title_enhancer_logs_tmdb_search_cache_hit_and_m
 def test_app_coordinator_episode_title_enhancer_reuses_cached_final_titles_across_reopens(
     tmp_path, monkeypatch, caplog
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7309,7 +7345,7 @@ def test_app_coordinator_episode_title_enhancer_ignores_legacy_final_title_cache
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7397,7 +7433,7 @@ def test_app_coordinator_episode_title_enhancer_falls_back_to_vod_name_season_wh
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7446,7 +7482,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_filename_season_over_vod
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7495,7 +7531,7 @@ def test_app_coordinator_episode_title_enhancer_uses_path_filename_for_mixed_pla
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7566,7 +7602,7 @@ def test_app_coordinator_episode_title_enhancer_ignores_complete_series_count_wh
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7655,7 +7691,7 @@ def test_app_coordinator_episode_title_enhancer_maps_tilde_quality_variants_and_
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7743,7 +7779,7 @@ def test_app_coordinator_episode_title_enhancer_uses_playlist_position_for_numer
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7808,7 +7844,7 @@ def test_app_coordinator_browse_episode_title_enhancer_falls_back_to_playlist_in
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7882,7 +7918,7 @@ def test_app_coordinator_episode_title_enhancer_preserves_grouped_multi_version_
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -7951,7 +7987,7 @@ def test_app_coordinator_episode_title_enhancer_sorts_each_multi_version_block_i
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8020,7 +8056,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_high_confidence_iqiyi_ov
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8090,7 +8126,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_iqiyi_when_search_videoi
 ) -> None:
     from atv_player.metadata.providers.iqiyi import IqiyiMetadataProvider as RealIqiyiMetadataProvider
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8179,7 +8215,7 @@ def test_app_coordinator_episode_title_enhancer_keeps_tmdb_when_iqiyi_title_conf
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8247,7 +8283,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_confirmed_bilibili_over_
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8355,7 +8391,7 @@ def test_app_coordinator_episode_title_enhancer_prefers_bound_bangumi_over_tmdb_
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         database_path = tmp_path / "app.db"
 
         def load_config(self) -> AppConfig:
@@ -8433,7 +8469,7 @@ def test_app_coordinator_episode_title_enhancer_loads_bound_bangumi_using_curren
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         database_path = tmp_path / "app.db"
 
         def load_config(self) -> AppConfig:
@@ -8506,7 +8542,7 @@ def test_app_coordinator_episode_title_enhancer_hydrates_bangumi_search_candidat
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8594,7 +8630,7 @@ def test_app_coordinator_episode_title_enhancer_infers_anime_category_from_title
     tmp_path,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8679,7 +8715,7 @@ def test_app_coordinator_episode_title_enhancer_infers_anime_category_from_title
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8751,7 +8787,7 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_to_iqiyi(tm
 
 
 def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_404_to_tencent(tmp_path, monkeypatch, caplog) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -8819,7 +8855,7 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_404_to_tenc
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 
@@ -8865,7 +8901,7 @@ def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_r
 
 
 def test_app_coordinator_builds_local_douban_client_from_latest_config(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 metadata_douban_cookie="bid=first;",
@@ -8978,7 +9014,7 @@ def test_app_coordinator_enables_tmdb_provider_with_proxy_only(monkeypatch) -> N
         ],
     )
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return config
 
@@ -9013,7 +9049,7 @@ def test_app_coordinator_enables_tmdb_provider_with_proxy_only(monkeypatch) -> N
 
 
 def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=False,
@@ -9030,7 +9066,7 @@ def test_app_coordinator_disables_metadata_hydrator_when_enhancement_off(tmp_pat
 
 
 def test_app_coordinator_metadata_factories_do_not_support_youtube_source(tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(metadata_enhancement_enabled=True)
 
@@ -9047,7 +9083,7 @@ def test_app_coordinator_metadata_factories_do_not_support_youtube_source(tmp_pa
 
 @pytest.mark.parametrize("vod_id", ["BV1xx411c7mD", "av170001", ""])
 def test_app_coordinator_metadata_factories_skip_regular_bilibili_video_ids(tmp_path, monkeypatch, vod_id: str) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(metadata_enhancement_enabled=True)
 
@@ -9066,7 +9102,7 @@ def test_app_coordinator_metadata_factories_skip_regular_bilibili_video_ids(tmp_
 
 @pytest.mark.parametrize("vod_id", ["ss45969", "ep2401902", "season$45969"])
 def test_app_coordinator_metadata_factories_support_bilibili_pgc_ids(tmp_path, monkeypatch, vod_id: str) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(metadata_enhancement_enabled=True)
 
@@ -9087,7 +9123,7 @@ def test_app_coordinator_injects_ai_enrichment_into_metadata_scrape_factory(
     monkeypatch,
     tmp_path,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9113,7 +9149,7 @@ def test_app_coordinator_disables_metadata_ai_workflows_independently(
     monkeypatch,
     tmp_path,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9147,7 +9183,7 @@ def test_app_coordinator_disables_metadata_ai_workflows_independently(
 
 
 def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_field(tmp_path, monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(metadata_enhancement_enabled=True)
 
@@ -9179,7 +9215,7 @@ def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_fi
 
 
 def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9237,7 +9273,7 @@ def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch,
 
 
 def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_required_config(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9338,7 +9374,7 @@ def test_app_coordinator_scrape_service_skips_local_douban_and_tmdb_without_requ
 
 
 def test_app_coordinator_scrape_service_excludes_disabled_metadata_sources(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9410,7 +9446,7 @@ def test_metadata_context_to_query_includes_original_base_match_fields() -> None
 
 
 def test_app_coordinator_builds_iqiyi_metadata_provider(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig(
                 metadata_enhancement_enabled=True,
@@ -9638,7 +9674,7 @@ def test_main_window_restore_last_player_routes_youtube_detail_to_youtube_contro
 
 
 def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.database_path = tmp_path / "app.db"
             self.config = AppConfig(
@@ -9746,7 +9782,7 @@ def test_start_live_background_refresh_skips_recent_epg_and_sources(monkeypatch)
         def start(self) -> None:
             self._target()
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 
@@ -9799,7 +9835,7 @@ def test_start_live_background_refresh_refreshes_stale_epg_and_non_manual_source
         def start(self) -> None:
             self._target()
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 
@@ -9852,7 +9888,7 @@ def test_start_live_background_refresh_logs_failures_with_live_category(monkeypa
         def start(self) -> None:
             self._target()
 
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 
@@ -9902,7 +9938,7 @@ def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_o
     qtbot,
     monkeypatch,
 ) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -9948,7 +9984,7 @@ def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_o
 
 
 def test_app_coordinator_logout_clears_tokens_and_shows_login(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(
                 base_url="http://127.0.0.1:4567",
@@ -10032,7 +10068,7 @@ def test_app_coordinator_logout_clears_tokens_and_shows_login(monkeypatch) -> No
 
 
 def test_app_coordinator_show_login_closes_active_api_client(monkeypatch) -> None:
-    class FakeRepo:
+    class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
 

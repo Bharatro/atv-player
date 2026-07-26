@@ -213,7 +213,7 @@ def test_global_catalog_service_returns_error_item_on_tmdb_failure() -> None:
     assert items == [
         VodItem(
             vod_id="global_catalog:error",
-            vod_name="环球片单加载失败",
+            vod_name="全球片单加载失败",
             vod_content="当前榜单暂时无法获取",
         )
     ]

@@ -1855,7 +1855,7 @@ def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> No
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -1886,7 +1886,7 @@ def test_main_window_places_global_catalog_after_douban(qtbot) -> None:
     )
     qtbot.addWidget(window)
 
-    assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "环球片单", "电报影视"]
+    assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "全球片单", "电报影视"]
     assert window._builtin_tab_definitions[1].key == "global_catalog"
 
 
@@ -2173,7 +2173,7 @@ def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qt
         "文件浏览",
         "我的收藏",
         "我的追更",
-        "环球片单",
+        "全球片单",
         "Emby",
         "Jellyfin",
         "飞牛影视",
@@ -2208,7 +2208,7 @@ def test_main_window_refreshes_builtin_tabs_after_saving_overrides(qtbot) -> Non
     )
 
     assert config.builtin_tab_overrides_json == '{"order":["history","douban"],"hidden":["history"],"renames":{"douban":"电影"}}'
-    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:3] == ["电影", "环球片单", "电报影视"]
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:3] == ["电影", "全球片单", "电报影视"]
 
 
 def test_main_window_builtin_tab_context_menu_renames_tab(qtbot, monkeypatch) -> None:
@@ -2376,7 +2376,7 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
         "我的收藏",
         "我的追更",
         "播放记录",
-        "插件管理",
+        "源管理",
         "直播源管理",
         "高级设置",
         "退出登录",
@@ -2436,7 +2436,7 @@ def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> 
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -2628,7 +2628,7 @@ def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot)
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2688,7 +2688,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
         lambda: len(window._plugin_pages) == 1
         and [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2709,7 +2709,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -3239,7 +3239,7 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -7214,7 +7214,7 @@ def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.plugin_manager_button.toolTip() == "源管理"
     assert window.live_source_manager_button.toolTip() == "直播源管理"
 
 
@@ -7235,7 +7235,7 @@ def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) 
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.plugin_manager_button.toolTip() == "源管理"
     assert window.live_source_manager_button.toolTip() == "直播源管理"
     assert not hasattr(window, "parse_manager_button")
 

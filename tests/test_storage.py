@@ -106,13 +106,13 @@ def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: P
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
     config.disabled_danmaku_provider_ids = ["youku", "mgtv", "migu"]
-    config.disabled_metadata_provider_ids = ["tmdb", "official_douban", "migu"]
+    config.disabled_metadata_provider_ids = ["tmdb", "official_douban", "bangumi"]
 
     repo.save_config(config)
     loaded = repo.load_config()
 
     assert loaded.disabled_danmaku_provider_ids == ["youku", "mgtv", "migu"]
-    assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban", "migu"]
+    assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban", "bangumi"]
 
 
 def test_settings_repository_round_trips_builtin_tab_overrides(tmp_path: Path) -> None:

@@ -2238,7 +2238,7 @@ class AppCoordinator(QObject):
             yt_dlp_service=self._yt_dlp_service,
             smart_search_controller=smart_search_controller,
             heat_controller=heat_controller,
-            youtube_category_text_loader=self._api_client.get_text if self._api_client is not None else None,
+            youtube_category_text_loader=getattr(self._api_client, "get_text", None),
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
             danmaku_controller_factory=danmaku_controller_factory,
