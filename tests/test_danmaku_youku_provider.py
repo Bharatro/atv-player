@@ -142,6 +142,60 @@ def test_youku_provider_search_maps_episode_candidates_from_page_component_paylo
     ]
 
 
+def test_youku_search_uses_stage_for_subtitle_and_filters_preview() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "悬案"},
+                            },
+                            "componentMap": {
+                                "1035": {
+                                    "data": [
+                                        {
+                                            "videoId": "XNjUxODE2NjYyOA==",
+                                            "title": "专线",
+                                            "displayName": "4",
+                                            "showVideoStage": "4",
+                                            "iconCorner": {"tagText": "VIP"},
+                                        },
+                                        {
+                                            "videoId": "preview04",
+                                            "title": "专线（预告）",
+                                            "displayName": "4",
+                                            "showVideoStage": None,
+                                            "iconCorner": {"tagText": "预告"},
+                                        },
+                                    ]
+                                }
+                            },
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_XNjUxODE2NjYyOA==.html":
+            return httpx.Response(200, text="<html></html>")
+        raise AssertionError(url)
+
+    items = YoukuDanmakuProvider(get=fake_get).search("悬案")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("悬案 第4集 专线", "https://v.youku.com/v_show/id_XNjUxODE2NjYyOA==.html"),
+    ]
+
+
 def test_youku_search_prefixes_parent_title_for_bare_episode_titles() -> None:
     def fake_get(
         url: str,

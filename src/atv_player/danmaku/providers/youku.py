@@ -32,6 +32,7 @@ class YoukuDanmakuProvider:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     )
+    _NON_MAIN_EPISODE_MARKERS = ("预告", "看点", "片花")
 
     def __init__(self, get=httpx.get, post=httpx.post) -> None:
         self._get = get
@@ -341,10 +342,16 @@ class YoukuDanmakuProvider:
         for episode in episodes:
             if not isinstance(episode, dict):
                 continue
-            episode_title = str(episode.get("title") or "").strip()
+            raw_title = str(episode.get("title") or "").strip()
+            episode_number = self._component_episode_number(episode, raw_title)
             url = self._component_episode_url(episode)
-            if not episode_title or not url:
+            if (
+                episode_number is None
+                or not url
+                or self._is_non_main_episode_candidate(episode, raw_title)
+            ):
                 continue
+            episode_title = self._episode_title_with_number(raw_title, episode_number)
             output.append(
                 DanmakuSearchItem(
                     provider=self.key,
@@ -357,6 +364,35 @@ class YoukuDanmakuProvider:
                 )
             )
         return output
+
+    def _component_episode_number(self, episode: dict, title: str) -> int | None:
+        for value in (
+            episode.get("showVideoStage"),
+            episode.get("displayName"),
+            title,
+        ):
+            number = extract_episode_number(str(value or ""))
+            if number is not None:
+                return number
+        return None
+
+    def _is_non_main_episode_candidate(self, episode: dict, title: str) -> bool:
+        video_type = str(episode.get("videoType") or "").strip()
+        if video_type and video_type != "正片":
+            return True
+        marker_text = " ".join(
+            (
+                title,
+                str(((episode.get("iconCorner") or {}).get("tagText") or "")),
+            )
+        )
+        return any(marker in marker_text for marker in self._NON_MAIN_EPISODE_MARKERS)
+
+    def _episode_title_with_number(self, title: str, episode_number: int) -> str:
+        value = str(title or "").strip()
+        if extract_episode_number(value) == episode_number:
+            return value
+        return f"第{episode_number}集 {value}".strip()
 
     def _component_primary_url(self, common: dict) -> str:
         for candidate in (
