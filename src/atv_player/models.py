@@ -60,6 +60,9 @@ class AppConfig:
     m3u_proxy_segment_prefetch_size: int = 2
     episode_title_enhancement_enabled: bool = True
     disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
+    danmaku_blocked_words: list[str] = field(default_factory=list)
+    danmaku_duplicate_window_minutes: int = 0
+    danmaku_convert_top_bottom_to_scroll: bool = False
     disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"

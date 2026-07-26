@@ -9,6 +9,45 @@ from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 
 
+def test_app_config_defaults_disable_danmaku_cleaning() -> None:
+    config = AppConfig()
+
+    assert config.danmaku_blocked_words == []
+    assert config.danmaku_duplicate_window_minutes == 0
+    assert config.danmaku_convert_top_bottom_to_scroll is False
+
+
+def test_settings_repository_round_trips_danmaku_cleaning(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.danmaku_blocked_words = [" 广告 ", "剧透", "广告", ""]
+    config.danmaku_duplicate_window_minutes = 7
+    config.danmaku_convert_top_bottom_to_scroll = True
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.danmaku_blocked_words == ["广告", "剧透"]
+    assert loaded.danmaku_duplicate_window_minutes == 7
+    assert loaded.danmaku_convert_top_bottom_to_scroll is True
+
+
+def test_settings_repository_normalizes_invalid_danmaku_cleaning(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE app_config SET danmaku_blocked_words = ?, "
+            "danmaku_duplicate_window_minutes = ? WHERE id = 1",
+            ('["  spam  ", 3, "spam", ""]', 999),
+        )
+
+    loaded = repo.load_config()
+
+    assert loaded.danmaku_blocked_words == ["spam"]
+    assert loaded.danmaku_duplicate_window_minutes == 60
+
+
 def test_settings_repository_creates_stable_app_identity(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
 
