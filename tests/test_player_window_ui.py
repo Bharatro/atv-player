@@ -4208,6 +4208,214 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     assert item.danmaku_search_provider == "youku"
 
 
+def test_player_window_danmaku_source_dialog_has_episode_url_download_controls(qtbot) -> None:
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_url_edit is not None
+    assert window._danmaku_source_url_download_button is not None
+    assert window._danmaku_source_url_download_button.text() == "下载"
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("", "请输入单集链接"),
+        ("v.qq.com/x/1", "请输入完整的 http(s) 单集链接"),
+        ("https:///x/1", "请输入完整的 http(s) 单集链接"),
+    ],
+)
+def test_player_window_rejects_invalid_episode_url_without_starting_task(
+    qtbot,
+    value: str,
+    message: str,
+) -> None:
+    class RecordingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def download_danmaku_from_url(self, _item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            return ""
+
+    controller = RecordingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(value)
+
+    window._download_current_item_danmaku_url()
+
+    assert controller.calls == []
+    assert window._danmaku_source_status_label.text() == message
+
+
+def test_player_window_downloads_episode_url_and_reloads_danmaku(qtbot, monkeypatch) -> None:
+    class BlockingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def download_danmaku_from_url(self, item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            self.started.set()
+            assert self.release.wait(timeout=1)
+            item.danmaku_xml = '<i><d p="1,1,25,16777215">manual</d></i>'
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = url
+            item.selected_danmaku_title = "第1集"
+            return item.danmaku_xml
+
+    controller = BlockingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    renders: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(item.danmaku_xml),
+    )
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        " https://v.qq.com/x/cover/demo/ep1.html "
+    )
+
+    window._danmaku_source_url_download_button.click()
+
+    assert controller.started.wait(timeout=1)
+    assert item.danmaku_pending is True
+    assert window._danmaku_source_url_download_button.isEnabled() is False
+    controller.release.set()
+    qtbot.waitUntil(
+        lambda: window._danmaku_source_url_download_button.isEnabled() is True
+    )
+    assert item.danmaku_pending is False
+    assert renders
+    assert all("manual" in xml for xml in renders)
+    assert controller.calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep1.html"
+    assert window._danmaku_source_url_download_button.isEnabled() is True
+
+
+def test_player_window_episode_url_enter_starts_download(qtbot) -> None:
+    class RecordingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def download_danmaku_from_url(self, item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            item.danmaku_xml = "<i>manual</i>"
+            return item.danmaku_xml
+
+    controller = RecordingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        "https://v.qq.com/x/cover/demo/ep1.html"
+    )
+
+    window._danmaku_source_url_edit.returnPressed.emit()
+
+    qtbot.waitUntil(
+        lambda: controller.calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    )
+
+
+def test_player_window_episode_url_failure_keeps_source_and_shows_status(qtbot) -> None:
+    class FailingController:
+        def download_danmaku_from_url(self, _item: PlayItem, _url: str) -> str:
+            raise RuntimeError("boom")
+
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        danmaku_xml="<i>old</i>",
+        selected_danmaku_provider="youku",
+        selected_danmaku_url="https://youku/old",
+        selected_danmaku_title="旧来源",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FailingController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        "https://v.qq.com/x/cover/demo/ep1.html"
+    )
+
+    window._download_current_item_danmaku_url()
+
+    qtbot.waitUntil(lambda: item.danmaku_pending is False)
+    qtbot.waitUntil(
+        lambda: window._danmaku_source_status_label.text()
+        == "单集链接弹幕下载失败: boom"
+    )
+    qtbot.waitUntil(
+        lambda: "单集链接弹幕下载失败: boom" in window.log_view.toPlainText()
+    )
+    assert item.danmaku_xml == "<i>old</i>"
+    assert item.selected_danmaku_provider == "youku"
+    assert item.selected_danmaku_url == "https://youku/old"
+    assert item.selected_danmaku_title == "旧来源"
+
+
 def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qtbot) -> None:
     item = PlayItem(
         title="第1集",

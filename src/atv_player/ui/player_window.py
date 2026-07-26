@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
@@ -771,6 +772,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_dialog: QDialog | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
+        self._danmaku_source_url_edit: QLineEdit | None = None
+        self._danmaku_source_url_download_button: QPushButton | None = None
         self._danmaku_source_search_provider_combo: QComboBox | None = None
         self._danmaku_source_status_label: QLabel | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
@@ -8636,6 +8639,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         search_row.setColumnStretch(1, 1)
         search_row.setColumnStretch(2, 1)
         layout.addLayout(search_row)
+        url_row = QHBoxLayout()
+        url_row.addWidget(QLabel("单集链接", host))
+        self._danmaku_source_url_edit = QLineEdit(host)
+        self._danmaku_source_url_edit.setPlaceholderText("https://v.qq.com/...")
+        url_row.addWidget(self._danmaku_source_url_edit, 1)
+        self._danmaku_source_url_download_button = QPushButton("下载", host)
+        url_row.addWidget(self._danmaku_source_url_download_button)
+        layout.addLayout(url_row)
         columns = QHBoxLayout()
         self._danmaku_source_provider_list = QListWidget(host)
         self._danmaku_source_option_list = QListWidget(host)
@@ -8668,6 +8679,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
         clear_button.clicked.connect(self._clear_current_item_danmaku_source)
         switch_button.clicked.connect(self._switch_current_item_danmaku_source)
+        self._danmaku_source_url_download_button.clicked.connect(
+            self._download_current_item_danmaku_url
+        )
+        self._danmaku_source_url_edit.returnPressed.connect(
+            self._download_current_item_danmaku_url
+        )
         actions.addWidget(rerun_button)
         actions.addWidget(reset_button)
         actions.addWidget(clear_button)
@@ -8952,13 +8969,25 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._configure_danmaku_for_current_item()
 
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
+        has_active_task = self._has_active_danmaku_source_task(current_item)
+        controller = self.session.danmaku_controller if self.session is not None else None
+        supports_url_download = callable(
+            getattr(controller, "download_danmaku_from_url", None)
+        )
+        url_download_enabled = bool(
+            current_item is not None and not has_active_task and supports_url_download
+        )
+        if self._danmaku_source_url_edit is not None:
+            self._danmaku_source_url_edit.setEnabled(url_download_enabled)
+        if self._danmaku_source_url_download_button is not None:
+            self._danmaku_source_url_download_button.setEnabled(url_download_enabled)
         if self._danmaku_source_rerun_button is not None:
             self._danmaku_source_rerun_button.setEnabled(current_item is not None)
         if self._danmaku_source_clear_button is not None:
             self._danmaku_source_clear_button.setEnabled(
                 bool(
                     current_item is not None
-                    and not self._has_active_danmaku_source_task(current_item)
+                    and not has_active_task
                     and current_item.danmaku_xml
                 )
             )
@@ -8966,7 +8995,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._danmaku_source_switch_button.setEnabled(
                 bool(
                     current_item is not None
-                    and not self._has_active_danmaku_source_task(current_item)
+                    and not has_active_task
                     and any(group.options for group in current_item.danmaku_candidates)
                 )
             )
@@ -8983,6 +9012,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         configure_danmaku_on_success: bool = False,
         debug_label: str = "",
         queue_if_active: bool = False,
+        status_error_prefix: str = "",
     ) -> None:
         item_id = id(item)
         active_count = self._active_danmaku_source_task_counts.get(item_id, 0)
@@ -8996,9 +9026,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         def run() -> None:
             succeeded = False
+            failure_status = ""
             try:
                 task()
                 succeeded = True
+            except Exception as exc:
+                if status_error_prefix:
+                    failure_status = f"{status_error_prefix}: {exc}"
+                raise
             finally:
                 remaining = self._active_danmaku_source_task_counts.get(item_id, 1) - 1
                 if remaining > 0:
@@ -9006,7 +9041,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 else:
                     self._active_danmaku_source_task_counts.pop(item_id, None)
                     item.danmaku_pending = self._danmaku_source_task_pending_state.pop(item_id, False)
-                    item.danmaku_status_text = ""
+                    item.danmaku_status_text = "" if succeeded else failure_status
                 self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
 
         self._enqueue_controller_task(error_prefix, run)
@@ -9143,6 +9178,41 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             configure_danmaku_on_success=True,
             debug_label="手动切换",
             queue_if_active=True,
+        )
+
+    def _download_current_item_danmaku_url(self) -> None:
+        current_item = self._current_play_item()
+        session = self.session
+        edit = self._danmaku_source_url_edit
+        if current_item is None or session is None or edit is None:
+            return
+        if self._has_active_danmaku_source_task(current_item):
+            return
+        raw_url = edit.text().strip()
+        if not raw_url:
+            current_item.danmaku_status_text = "请输入单集链接"
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        try:
+            page_url = normalize_danmaku_episode_url(raw_url)
+        except ValueError as exc:
+            current_item.danmaku_status_text = str(exc)
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        download = getattr(session.danmaku_controller, "download_danmaku_from_url", None)
+        if not callable(download):
+            current_item.danmaku_status_text = "当前弹幕源不支持单集链接下载"
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        edit.setText(page_url)
+        current_item.danmaku_status_text = "下载中（单集链接）..."
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="单集链接弹幕下载失败",
+            task=lambda: download(current_item, page_url),
+            configure_danmaku_on_success=True,
+            debug_label="单集链接下载",
+            status_error_prefix="单集链接弹幕下载失败",
         )
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
