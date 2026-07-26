@@ -171,7 +171,27 @@ def test_danmaku_service_falls_back_when_ai_query_empty() -> None:
 def test_create_default_danmaku_service_excludes_disabled_providers() -> None:
     service = create_default_danmaku_service(disabled_provider_ids=["youku", "mgtv"])
 
-    assert service.provider_order == ["tencent", "bilibili", "iqiyi", "sohu", "migu", "renren"]
+    assert service.provider_order == [
+        "tencent",
+        "bilibili",
+        "iqiyi",
+        "sohu",
+        "migu",
+        "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
+
+
+def test_default_service_can_disable_new_anime_providers() -> None:
+    service = create_default_danmaku_service(
+        disabled_provider_ids=["dandan", "bahamut", "animeko"]
+    )
+
+    assert "dandan" not in service.provider_order
+    assert "bahamut" not in service.provider_order
+    assert "animeko" not in service.provider_order
 
 
 def test_create_default_danmaku_service_can_disable_renren_provider() -> None:
@@ -1557,6 +1577,9 @@ def test_default_service_has_fixed_provider_order() -> None:
         "sohu",
         "migu",
         "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
     ]
 
 
@@ -1599,6 +1622,9 @@ def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
         "sohu",
         "migu",
         "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
     ]
 
 
@@ -1606,6 +1632,52 @@ def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
     assert "iqiyi" in service.provider_order
+
+
+def test_new_anime_provider_labels_are_user_facing() -> None:
+    providers = {
+        key: FakeProvider(
+            key,
+            [
+                DanmakuSearchItem(
+                    provider=key,
+                    name="迷宫饭 第1集",
+                    url=f"{key}://episode/1",
+                )
+            ],
+            [],
+        )
+        for key in ("dandan", "bahamut", "animeko")
+    }
+    service = DanmakuService(
+        providers,
+        provider_order=["dandan", "bahamut", "animeko"],
+    )
+
+    result = service.search_danmu_sources("迷宫饭 第1集")
+
+    assert [(group.provider, group.provider_label) for group in result.groups] == [
+        ("dandan", "弹弹Play"),
+        ("bahamut", "巴哈姆特"),
+        ("animeko", "Animeko"),
+    ]
+
+
+def test_resolve_routes_cached_internal_url_without_context() -> None:
+    animeko = FakeProvider(
+        "animeko",
+        [],
+        [DanmakuRecord(1.0, 1, "16777215", "缓存")],
+    )
+    service = DanmakuService(
+        {"animeko": animeko},
+        provider_order=["animeko"],
+    )
+
+    xml = service.resolve_danmu("animeko://episode/4201")
+
+    assert "缓存" in xml
+    assert animeko.resolve_calls == ["animeko://episode/4201"]
 
 
 def test_search_danmu_sources_uses_sohu_provider_label() -> None:

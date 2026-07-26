@@ -10,7 +10,10 @@ from atv_player.ai.enrichment import DanmakuQueryRefinementInput
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.providers import (
+    AnimekoDanmakuProvider,
+    BahamutDanmakuProvider,
     BilibiliDanmakuProvider,
+    DandanDanmakuProvider,
     IqiyiDanmakuProvider,
     MiguDanmakuProvider,
     MgtvDanmakuProvider,
@@ -98,6 +101,9 @@ _PROVIDER_LABELS = {
     "sohu": "搜狐",
     "migu": "咪咕",
     "renren": "人人",
+    "dandan": "弹弹Play",
+    "bahamut": "巴哈姆特",
+    "animeko": "Animeko",
 }
 
 
@@ -927,10 +933,26 @@ def create_default_danmaku_service(
         "sohu": SohuDanmakuProvider(get=get),
         "migu": MiguDanmakuProvider(get=get, post=post),
         "renren": RenrenDanmakuProvider(get=get),
+        "dandan": DandanDanmakuProvider(get=get),
+        "bahamut": BahamutDanmakuProvider(get=get),
+        "animeko": AnimekoDanmakuProvider(get=get, post=post),
     }
+    fixed_order = [
+        "tencent",
+        "youku",
+        "bilibili",
+        "iqiyi",
+        "mgtv",
+        "sohu",
+        "migu",
+        "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
     provider_order = [
         key
-        for key in ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu", "renren"]
+        for key in fixed_order
         if key not in disabled
     ]
     if disabled_provider_ids_loader is None and disabled:

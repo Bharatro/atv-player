@@ -7708,6 +7708,34 @@ def test_advanced_settings_dialog_exposes_renren_danmaku_source(qtbot) -> None:
     assert "renren" not in config.disabled_metadata_provider_ids
 
 
+def test_advanced_settings_dialog_exposes_anime_danmaku_sources(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert {
+        key: dialog.danmaku_source_checkboxes[key].text()
+        for key in ("dandan", "bahamut", "animeko")
+    } == {
+        "dandan": "弹弹Play",
+        "bahamut": "巴哈姆特",
+        "animeko": "Animeko",
+    }
+
+    dialog.danmaku_source_checkboxes["dandan"].setChecked(False)
+    dialog.danmaku_source_checkboxes["bahamut"].setChecked(False)
+    dialog.danmaku_source_checkboxes["animeko"].setChecked(False)
+    dialog._save()
+
+    assert config.disabled_danmaku_provider_ids[-3:] == [
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
+
+
 def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

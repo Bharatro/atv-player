@@ -1,0 +1,193 @@
+import threading
+import time
+
+import httpx
+import pytest
+
+from atv_player.danmaku.errors import DanmakuResolveError
+from atv_player.danmaku.providers.dandan import DandanDanmakuProvider
+
+
+def test_dandan_search_expands_and_filters_requested_episode() -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        path = kwargs["params"]["path"]
+        calls.append(path)
+        if path.startswith("/v2/search/anime?"):
+            return httpx.Response(
+                200,
+                json={"animes": [{"animeId": 100, "animeTitle": "葬送的芙莉莲"}]},
+            )
+        if path == "/v2/bangumi/100":
+            return httpx.Response(
+                200,
+                json={
+                    "bangumi": {
+                        "episodes": [
+                            {
+                                "episodeId": 10001,
+                                "episodeNumber": "1",
+                                "episodeTitle": "冒险的终点",
+                            },
+                            {
+                                "episodeId": 10002,
+                                "episodeNumber": "2",
+                                "episodeTitle": "无需魔法",
+                            },
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(path)
+
+    provider = DandanDanmakuProvider(get=fake_get)
+
+    items = provider.search("葬送的芙莉莲", original_name="葬送的芙莉莲 第2集")
+
+    assert [(item.provider, item.name, item.url) for item in items] == [
+        ("dandan", "葬送的芙莉莲 第2集 无需魔法", "dandan://episode/10002")
+    ]
+    assert calls == [
+        "/v2/search/anime?keyword=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%8E%B2",
+        "/v2/bangumi/100",
+    ]
+
+
+def test_dandan_resolve_maps_comments_and_skips_invalid_rows() -> None:
+    def fake_get(url: str, **kwargs):
+        assert kwargs["params"]["path"] == (
+            "/v2/comment/10002?from=0&withRelated=true&chConvert=0"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "comments": [
+                    {"cid": 1, "p": "1.25,1,16711680,[dandan]", "m": "滚动"},
+                    {"cid": 2, "p": "2.5,5,65280,[dandan]", "m": "顶部"},
+                    {"cid": 3, "p": "bad,1,255,[dandan]", "m": "坏时间"},
+                    {"cid": 4, "p": "4,4,255,[dandan]", "m": ""},
+                ]
+            },
+        )
+
+    provider = DandanDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("dandan://episode/10002")
+
+    assert [(r.time_offset, r.pos, r.color, r.content) for r in records] == [
+        (1.25, 1, "16711680", "滚动"),
+        (2.5, 5, "65280", "顶部"),
+    ]
+
+
+def test_dandan_supports_only_valid_internal_episode_urls() -> None:
+    provider = DandanDanmakuProvider()
+
+    assert provider.supports("dandan://episode/10002") is True
+    assert provider.supports("dandan://episode/") is False
+    assert provider.supports("animeko://episode/10002") is False
+
+
+def test_dandan_search_failure_is_isolated() -> None:
+    provider = DandanDanmakuProvider(
+        get=lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPError("down"))
+    )
+
+    assert provider.search("葬送的芙莉莲") == []
+
+
+def test_dandan_search_keeps_results_when_another_series_detail_fails() -> None:
+    def fake_get(url: str, **kwargs):
+        path = kwargs["params"]["path"]
+        if path.startswith("/v2/search/anime"):
+            return httpx.Response(
+                200,
+                json={
+                    "animes": [
+                        {"animeId": 100, "animeTitle": "迷宫饭"},
+                        {"animeId": 200, "animeTitle": "迷宫饭"},
+                    ]
+                },
+            )
+        if path == "/v2/bangumi/100":
+            return httpx.Response(
+                200,
+                json={
+                    "bangumi": {
+                        "episodes": [{"episodeId": 10001, "episodeNumber": "1"}]
+                    }
+                },
+            )
+        raise httpx.HTTPError("second detail failed")
+
+    items = DandanDanmakuProvider(get=fake_get).search("迷宫饭")
+
+    assert [item.url for item in items] == ["dandan://episode/10001"]
+
+
+def test_dandan_search_expands_series_details_concurrently() -> None:
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_get(url: str, **kwargs):
+        nonlocal active, max_active
+        path = kwargs["params"]["path"]
+        if path.startswith("/v2/search/anime"):
+            return httpx.Response(
+                200,
+                json={
+                    "animes": [
+                        {"animeId": anime_id, "animeTitle": "迷宫饭"}
+                        for anime_id in range(1, 5)
+                    ]
+                },
+            )
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        anime_id = path.rsplit("/", 1)[-1]
+        return httpx.Response(
+            200,
+            json={
+                "bangumi": {
+                    "episodes": [{"episodeId": f"{anime_id}01", "episodeNumber": "1"}]
+                }
+            },
+        )
+
+    DandanDanmakuProvider(get=fake_get).search("迷宫饭")
+
+    assert max_active > 1
+
+
+def test_dandan_resolve_skips_non_finite_timestamps() -> None:
+    provider = DandanDanmakuProvider(
+        get=lambda *args, **kwargs: httpx.Response(
+            200,
+            json={
+                "comments": [
+                    {"p": "nan,1,16777215", "m": "NaN"},
+                    {"p": "inf,1,16777215", "m": "Infinity"},
+                    {"p": "1,1,16777215", "m": "valid"},
+                ]
+            },
+        )
+    )
+
+    assert [record.content for record in provider.resolve("dandan://episode/1")] == [
+        "valid"
+    ]
+
+
+def test_dandan_resolve_failure_names_the_source() -> None:
+    provider = DandanDanmakuProvider(
+        get=lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPError("down"))
+    )
+
+    with pytest.raises(DanmakuResolveError, match="弹弹Play弹幕获取失败"):
+        provider.resolve("dandan://episode/10002")
