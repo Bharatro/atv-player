@@ -175,6 +175,29 @@ def test_migu_resolve_raises_when_all_segments_fail() -> None:
         provider.resolve("https://webapi.miguvideo.com/gateway/live_barrage/videox/barrage/v2/list/album-1/ep-1")
 
 
+def test_migu_resolve_fails_fast_when_cipher_cannot_decrypt() -> None:
+    calls: list[str] = []
+
+    def fake_fetch(segment_url: str):
+        calls.append(segment_url)
+        raise DanmakuResolveError("咪咕弹幕响应解密失败")
+
+    provider = MiguDanmakuProvider(get=lambda *args, **kwargs: None)
+    provider._fetch_segment_records = fake_fetch
+    provider.prime_resolve_context(
+        "https://webapi.miguvideo.com/gateway/live_barrage/videox/barrage/v2/list/album-1/ep-1",
+        {"album_id": "album-1", "episode_id": "ep-1", "duration_seconds": 90},
+    )
+
+    with pytest.raises(DanmakuResolveError, match="加密接口已变更"):
+        provider.resolve(
+            "https://webapi.miguvideo.com/gateway/live_barrage/videox/barrage/v2/list/album-1/ep-1"
+        )
+
+    # Fail fast: only the first of the three 30s segments is probed.
+    assert len(calls) == 1
+
+
 def test_migu_supports_migu_urls() -> None:
     provider = MiguDanmakuProvider()
 

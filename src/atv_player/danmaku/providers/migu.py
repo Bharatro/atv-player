@@ -244,8 +244,25 @@ class MiguDanmakuProvider:
         ]
         records: list[DanmakuRecord] = []
         failures = 0
+        if segment_urls:
+            # Probe the first segment before fetching the rest. Migu encrypts
+            # every segment with the same gateway cipher, so if the first one
+            # cannot be decrypted (the cipher was rotated) every segment fails
+            # identically — fail fast with a clear reason instead of fetching
+            # all of them just to discard the results.
+            try:
+                records.extend(self._fetch_segment_records(segment_urls[0]))
+            except DanmakuResolveError as exc:
+                raise DanmakuResolveError(
+                    "咪咕弹幕暂不可用：加密接口已变更，暂无法解密"
+                ) from exc
+            except Exception:
+                failures += 1
+            remaining_segment_urls = segment_urls[1:]
+        else:
+            remaining_segment_urls = []
         for batch in iter_bounded_settled(
-            segment_urls,
+            remaining_segment_urls,
             self._fetch_segment_records,
             max_workers=8,
         ):
