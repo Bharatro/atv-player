@@ -3418,6 +3418,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             current_item.selected_danmaku_url,
         )
         if not restored:
+            auto_resolve = getattr(controller, "auto_resolve_danmaku", None)
+            if not callable(auto_resolve):
+                return
+            self._start_danmaku_source_task(
+                current_item,
+                error_prefix="弹幕自动下载失败",
+                task=lambda: auto_resolve(
+                    current_item,
+                    playlist=self.session.playlist,
+                    media_duration_seconds=self._current_media_duration_seconds(),
+                ),
+                configure_danmaku_on_success=True,
+                debug_label="自动下载",
+            )
             return
         selected_url = str(current_item.selected_danmaku_url or "").strip()
         if not selected_url or current_item.danmaku_xml or current_item.danmaku_pending:

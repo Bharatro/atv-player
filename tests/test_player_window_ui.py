@@ -19190,6 +19190,66 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert "当前播放: 第2集" in log_text
 
 
+def test_player_window_auto_downloads_danmaku_when_target_cache_is_missing(qtbot, monkeypatch) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.auto_calls: list[tuple[str, list[PlayItem] | None]] = []
+
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del item, playlist, media_duration_seconds
+            return False
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            raise AssertionError(f"unexpected cached source download: {item.title} {page_url}")
+
+        def auto_resolve_danmaku(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            *,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del media_duration_seconds
+            self.auto_calls.append((item.title, playlist))
+            item.danmaku_xml = '<i><d p="1,1,25,16777215">第十五集</d></i>'
+            return True
+
+    controller = FakeDanmakuController()
+    item = PlayItem(
+        title="15(5.41 GB)",
+        url="https://media.example/15.mp4",
+        media_title="百花杀",
+        index=14,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="series-1", vod_name="百花杀"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window.current_index = 0
+
+    monkeypatch.setattr(
+        window,
+        "_start_danmaku_source_task",
+        lambda _item, *, task, **_kwargs: task(),
+    )
+
+    window._maybe_restore_cached_danmaku_for_current_item()
+
+    assert controller.auto_calls == [("15(5.41 GB)", window.session.playlist)]
+    assert "第十五集" in item.danmaku_xml
+
+
 def test_player_window_playlist_click_reloads_same_danmaku_xml_with_fresh_subtitle_path(qtbot) -> None:
     shared_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">同一集弹幕</d></i>'
 

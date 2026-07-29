@@ -327,6 +327,54 @@ class GenericDanmakuController:
         candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
         self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
 
+    def auto_resolve_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+        *,
+        media_duration_seconds: int = 0,
+    ) -> bool:
+        """Find and download the default danmaku source for one playlist item."""
+        if item.danmaku_xml:
+            return True
+        query_override = (
+            item.danmaku_search_query
+            if item.danmaku_search_query_overridden
+            else None
+        )
+        self.refresh_danmaku_sources(
+            item,
+            query_override=query_override,
+            playlist=playlist,
+            media_duration_seconds=media_duration_seconds,
+        )
+        selected_url = str(item.selected_danmaku_url or "").strip()
+        if not selected_url:
+            return False
+        self.switch_danmaku_source(item, selected_url)
+        return bool(item.danmaku_xml)
+
+    def prefetch_next_episode_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem],
+    ) -> None:
+        if (
+            item.danmaku_xml
+            or item.danmaku_pending
+            or not self._search_episode(item, playlist)
+        ):
+            return
+        prefetch_label = self._search_query(item, playlist)
+        if not prefetch_label:
+            return
+        self._log_danmaku_event("弹幕预下载中", detail=prefetch_label)
+        if self.auto_resolve_danmaku(item, playlist):
+            self._log_danmaku_event(
+                "弹幕预下载成功",
+                detail=f"{self._count_danmaku_entries(item.danmaku_xml)} 条弹幕",
+            )
+
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = _find_selected_option(item, page_url)
         selected_provider = ""

@@ -266,6 +266,109 @@ def test_generic_danmaku_controller_refresh_emits_log_events(monkeypatch, tmp_pa
     ]
 
 
+def test_generic_danmaku_controller_auto_resolves_uncached_episode(monkeypatch) -> None:
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="tencent",
+                                name="百花杀 15集",
+                                url="https://v.qq.com/ep15",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/ep15",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            del option
+            self.resolve_calls.append(page_url)
+            return '<i><d p="1,1,25,16777215">第十五集</d></i>'
+
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", lambda *_args: "")
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", lambda *_args: None)
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(
+        title="15(5.41 GB)",
+        url="https://media.example/15.mp4",
+        vod_id="episode-15",
+        media_title="百花杀",
+        index=14,
+    )
+    playlist = [
+        PlayItem(title=f"{index:02d}(5 GB)", url=f"https://media.example/{index}.mp4", index=index - 1)
+        for index in range(1, 15)
+    ] + [item]
+
+    assert controller.auto_resolve_danmaku(item, playlist=playlist) is True
+
+    assert service.search_calls == ["百花杀 15集"]
+    assert service.resolve_calls == ["https://v.qq.com/ep15"]
+    assert "第十五集" in item.danmaku_xml
+    assert logs == [
+        "弹幕搜索中: 百花杀 15集",
+        "弹幕搜索成功: 找到 1 个候选",
+        "弹幕下载中: 腾讯 - 百花杀 15集",
+        "弹幕下载成功: 1 条弹幕",
+    ]
+
+
+def test_generic_danmaku_controller_prefetches_next_episode(monkeypatch) -> None:
+    controller = GenericDanmakuController(object())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    next_item = PlayItem(
+        title="第2集",
+        url="https://media.example/2.mp4",
+        media_title="百花杀",
+        index=1,
+    )
+    playlist = [
+        PlayItem(title="第1集", url="https://media.example/1.mp4", media_title="百花杀", index=0),
+        next_item,
+    ]
+    calls: list[PlayItem] = []
+
+    def fake_auto_resolve(item: PlayItem, playlist: list[PlayItem] | None = None, **_kwargs) -> bool:
+        assert playlist is not None
+        calls.append(item)
+        item.danmaku_xml = '<i><d p="1,1,25,16777215">第2集</d></i>'
+        return True
+
+    monkeypatch.setattr(controller, "auto_resolve_danmaku", fake_auto_resolve)
+
+    controller.prefetch_next_episode_danmaku(next_item, playlist)
+
+    assert calls == [next_item]
+    assert logs == [
+        "弹幕预下载中: 百花杀 2集",
+        "弹幕预下载成功: 1 条弹幕",
+    ]
+
+
 def test_generic_danmaku_controller_refresh_emits_all_actual_search_queries(monkeypatch, tmp_path: Path) -> None:
     class RecordingDanmakuService:
         def __init__(self) -> None:
