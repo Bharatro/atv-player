@@ -9,9 +9,9 @@ from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.providers.mgtv import MgtvDanmakuProvider
 
 
-def test_mgtv_search_filters_non_imgo_and_invalid_urls() -> None:
+def test_mgtv_search_filters_third_party_and_missing_clip_id() -> None:
     def fake_get(url: str, **kwargs):
-        assert url == "https://mobileso.bz.mgtv.com/msite/search/v2"
+        assert url == "https://mobileso.bz.mgtv.com/aphone/search/rebirth/v2"
         assert kwargs["params"]["q"] == "歌手2026"
         return httpx.Response(
             200,
@@ -19,22 +19,21 @@ def test_mgtv_search_filters_non_imgo_and_invalid_urls() -> None:
                 "data": {
                     "contents": [
                         {
-                            "type": "media",
+                            "type": "mediaRebirthV2",
                             "data": [
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "777",
                                     "title": "<em>歌手2026</em>",
-                                    "url": "https://www.mgtv.com/b/777/1.html",
                                 },
                                 {
                                     "source": "other",
+                                    "clipId": "888",
                                     "title": "外站结果",
-                                    "url": "https://example.com/b/888/1.html",
                                 },
                                 {
-                                    "source": "imgo",
+                                    "source": "",
                                     "title": "坏结果",
-                                    "url": "https://www.mgtv.com/not-a-play-url.html",
                                 },
                             ],
                         }
@@ -59,12 +58,12 @@ def test_mgtv_search_expands_collection_into_episode_candidates() -> None:
                 "data": {
                     "contents": [
                         {
-                            "type": "media",
+                            "type": "mediaRebirthV2",
                             "data": [
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "555",
                                     "title": "<em>歌手2026</em>",
-                                    "url": "https://www.mgtv.com/b/555/1.html",
                                 }
                             ],
                         }
@@ -98,22 +97,22 @@ def test_mgtv_search_skips_expansion_for_unrelated_search_hits() -> None:
                 "data": {
                     "contents": [
                         {
-                            "type": "media",
+                            "type": "mediaRebirthV2",
                             "data": [
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "555",
                                     "title": "黑夜告白",
-                                    "url": "https://www.mgtv.com/b/555/1.html",
                                 },
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "777",
                                     "title": "歌手2026",
-                                    "url": "https://www.mgtv.com/b/777/1.html",
                                 },
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "888",
                                     "title": "你好，星期六",
-                                    "url": "https://www.mgtv.com/b/888/1.html",
                                 },
                             ],
                         }
@@ -149,12 +148,12 @@ def test_mgtv_search_uses_cached_duration_for_duplicate_candidates() -> None:
                 "data": {
                     "contents": [
                         {
-                            "type": "media",
+                            "type": "mediaRebirthV2",
                             "data": [
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "555",
                                     "title": "歌手2026",
-                                    "url": "https://www.mgtv.com/b/555/1.html",
                                 }
                             ],
                         }
@@ -191,12 +190,12 @@ def test_mgtv_search_with_explicit_episode_only_probes_matching_candidate_durati
                 "data": {
                     "contents": [
                         {
-                            "type": "media",
+                            "type": "mediaRebirthV2",
                             "data": [
                                 {
-                                    "source": "imgo",
+                                    "source": "",
+                                    "clipId": "555",
                                     "title": "歌手2026",
-                                    "url": "https://www.mgtv.com/b/555/1.html",
                                 }
                             ],
                         }
@@ -232,40 +231,44 @@ def test_mgtv_search_raises_for_invalid_payload() -> None:
         provider.search("歌手2026")
 
 
-def test_mgtv_search_uses_full_query_params_required_by_api() -> None:
-    seen_params: dict | None = None
-    seen_headers: dict | None = None
+def test_mgtv_search_uses_android_rebirth_endpoint_and_params() -> None:
+    seen_url: dict[str, str] = {}
+    seen_params: dict[str, object] = {}
+    seen_headers: dict[str, str] = {}
 
     def fake_get(url: str, **kwargs):
-        nonlocal seen_params
-        nonlocal seen_headers
-        seen_params = kwargs["params"]
-        seen_headers = kwargs["headers"]
+        seen_url["url"] = url
+        seen_params.update(kwargs["params"])
+        seen_headers.update(kwargs["headers"])
         return httpx.Response(200, json={"data": {"contents": []}})
 
     provider = MgtvDanmakuProvider(get=fake_get)
 
     provider.search("夏末初见")
 
+    assert seen_url["url"] == "https://mobileso.bz.mgtv.com/aphone/search/rebirth/v2"
+    # did/mac/seqId are derived from the current time, so only assert their shape.
+    did = seen_params.pop("did")
+    mac = seen_params.pop("mac")
+    seq_id = seen_params.pop("seqId")
+    assert isinstance(did, str) and len(did) == 32 and did.isalnum()
+    assert mac == did
+    assert isinstance(seq_id, str) and len(seq_id) == 32
     assert seen_params == {
         "q": "夏末初见",
-        "pc": 30,
-        "pn": 1,
-        "sort": -99,
-        "ty": 0,
-        "du": 0,
-        "pt": 0,
-        "corr": 1,
+        "_support": 10100001,
+        "device": "23127PN0CC",
+        "osVersion": 16,
+        "appVersion": "9.3.3",
+        "ticket": "",
+        "userId": 0,
+        "osType": "android",
+        "type": 10,
         "abroad": 0,
-        "_support": 10000000000000000,
     }
     assert seen_headers == {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 16; 23127PN0CC Build/AP1A.240505.003)",
         "Accept": "application/json",
-        "Referer": "https://www.mgtv.com/",
     }
 
 
@@ -285,19 +288,19 @@ def test_mgtv_search_expands_month_tabs_and_filters_preview_titles() -> None:
     def fake_get(url: str, **kwargs):
         params = kwargs.get("params") or {}
         calls.append((url, params))
-        if "msite/search/v2" in url:
+        if "aphone/search/rebirth" in url:
             return httpx.Response(
                 200,
                 json={
                     "data": {
                         "contents": [
                             {
-                                "type": "media",
+                                "type": "mediaRebirthV2",
                                 "data": [
                                     {
-                                        "source": "imgo",
+                                        "source": "",
+                                        "clipId": "555",
                                         "title": "歌手2026",
-                                        "url": "https://www.mgtv.com/b/555/1.html",
                                     }
                                 ],
                             }

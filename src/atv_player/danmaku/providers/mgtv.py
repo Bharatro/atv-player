@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from math import ceil
 
 import httpx
@@ -16,29 +18,25 @@ _RGB_PATTERN = re.compile(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*
 
 class MgtvDanmakuProvider:
     key = "mgtv"
+    # The old /msite/search/v2 endpoint was retired by Mango TV (returns 403).
+    # The Android-app search surface /aphone/search/rebirth/v2 is still served.
+    _SEARCH_URL = "https://mobileso.bz.mgtv.com/aphone/search/rebirth/v2"
+    _SEARCH_USER_AGENT = (
+        "Dalvik/2.1.0 (Linux; U; Android 16; 23127PN0CC Build/AP1A.240505.003)"
+    )
     _SEARCH_EPISODE_FALLBACK_LIMIT = 3
 
     def __init__(self, get=httpx.get) -> None:
         self._get = get
         self._duration_cache: dict[tuple[str, str], int] = {}
+        self._device_id: str | None = None
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         requested_episode = extract_episode_number(original_name or name)
         response = self._get(
-            "https://mobileso.bz.mgtv.com/msite/search/v2",
-            params={
-                "q": name,
-                "pc": 30,
-                "pn": 1,
-                "sort": -99,
-                "ty": 0,
-                "du": 0,
-                "pt": 0,
-                "corr": 1,
-                "abroad": 0,
-                "_support": 10000000000000000,
-            },
-            headers=self._json_headers(),
+            self._SEARCH_URL,
+            params=self._search_params(name),
+            headers=self._search_headers(),
             follow_redirects=True,
             timeout=10.0,
         )
@@ -48,24 +46,28 @@ class MgtvDanmakuProvider:
             raise DanmakuSearchError(f"MGTV danmaku search failed: HTTP {response.status_code}") from exc
         contents = (payload.get("data") or {}).get("contents")
         if not isinstance(contents, list):
-            raise DanmakuSearchError("MGTV danmaku search failed: invalid payload")
+            body_code = payload.get("code")
+            detail = f" code={body_code}" if body_code is not None else ""
+            raise DanmakuSearchError(f"MGTV danmaku search failed: HTTP {response.status_code}{detail}")
 
         results: list[DanmakuSearchItem] = []
         for content in contents:
-            if str(content.get("type") or "") != "media":
+            if str(content.get("type") or "") != "mediaRebirthV2":
                 continue
             for item in content.get("data") or []:
-                if str(item.get("source") or "") != "imgo":
+                # The rebirth API marks Mango TV's own content with an empty
+                # source (or "imgo"); anything else is a third-party result.
+                source = str(item.get("source") or "")
+                if source and source != "imgo":
                     continue
-                raw_url = str(item.get("url") or "")
-                match = re.search(r"/b/(\d+)", raw_url)
-                if match is None:
+                collection_id = str(item.get("clipId") or "").strip()
+                if not collection_id:
                     continue
                 title = re.sub(r"<[^>]+>", "", str(item.get("title") or "")).strip()
                 if not title or should_filter_name(name, title):
                     continue
                 expanded_candidates = self._select_search_candidates(
-                    self._expand_candidate(title, match.group(1)),
+                    self._expand_candidate(title, collection_id),
                     requested_episode=requested_episode,
                 )
                 for episode_name, episode_url in expanded_candidates:
@@ -78,6 +80,38 @@ class MgtvDanmakuProvider:
                         )
                     )
         return results
+
+    def _ensure_device_id(self) -> str:
+        if not self._device_id:
+            timestamp = int(time.time() * 1000)
+            self._device_id = hashlib.md5(f"danmu-api-mango-{timestamp}".encode()).hexdigest()
+        return self._device_id
+
+    def _search_params(self, keyword: str) -> dict[str, object]:
+        device_id = self._ensure_device_id()
+        timestamp = int(time.time() * 1000)
+        seq_id = hashlib.md5(f"{device_id}.{timestamp}".encode()).hexdigest()
+        return {
+            "q": keyword,
+            "_support": 10100001,
+            "device": "23127PN0CC",
+            "osVersion": 16,
+            "appVersion": "9.3.3",
+            "did": device_id,
+            "mac": device_id,
+            "seqId": seq_id,
+            "ticket": "",
+            "userId": 0,
+            "osType": "android",
+            "type": 10,
+            "abroad": 0,
+        }
+
+    def _search_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": self._SEARCH_USER_AGENT,
+            "Accept": "application/json",
+        }
 
     def _select_search_candidates(
         self,
