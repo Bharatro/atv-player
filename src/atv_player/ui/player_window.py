@@ -152,7 +152,6 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
     ("sohu", "搜狐"),
-    ("migu", "咪咕"),
     ("renren", "人人"),
 ]
 

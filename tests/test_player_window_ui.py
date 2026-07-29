@@ -4463,7 +4463,6 @@ def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qt
         ("iqiyi", "爱奇艺"),
         ("mgtv", "芒果"),
         ("sohu", "搜狐"),
-        ("migu", "咪咕"),
         ("renren", "人人"),
     ]
 
