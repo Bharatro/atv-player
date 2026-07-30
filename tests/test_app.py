@@ -5023,6 +5023,48 @@ def test_advanced_settings_dialog_defaults_youtube_quality_to_1080p(qtbot) -> No
     assert dialog.youtube_max_height_combo.currentData() == 1080
 
 
+def test_advanced_settings_dialog_loads_dandan_base_url(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(dandan_base_url="http://192.168.1.10:9321/87654321")
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.dandan_base_url_edit.text() == "http://192.168.1.10:9321/87654321"
+
+
+def test_advanced_settings_dialog_saves_dandan_base_url(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    save_calls: list[str] = []
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: save_calls.append(config.dandan_base_url),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.dandan_base_url_edit.setText("  http://host:9321  ")
+    dialog._save()
+
+    assert config.dandan_base_url == "http://host:9321"  # whitespace stripped
+    assert save_calls == ["http://host:9321"]
+
+
+def test_advanced_settings_dialog_test_button_requires_url(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog.dandan_base_url_edit.setText("   ")
+    dialog._test_dandan_server()
+
+    assert dialog.dandan_test_status_label.text() == "请先填写服务器地址"
+    assert dialog._dandan_test_running is False
+
+
 def test_advanced_settings_dialog_saves_bilibili_grouped_playlist_tree_enabled(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
-from atv_player.danmaku.errors import DanmakuResolveError
+from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.utils import extract_episode_number, should_filter_name
 
-_BASE_URL = "https://api.danmaku.weeblify.app/ddp/v1"
 _HEADERS = {
     "Accept": "application/json",
     "Content-Type": "application/json",
@@ -22,12 +21,29 @@ _MAX_EPISODES_PER_SERIES = 200
 
 
 class DandanDanmakuProvider:
+    """弹弹Play 弹幕源，指向一台 dandanplay 协议兼容的自建服务器。
+
+    服务器地址（可含 token 路径段，如 ``http://host:9321/87654321``）由
+    ``base_url_loader`` 运行时提供。地址留空时该源视为关闭：不参与搜索、
+    不解析任何地址。
+    """
+
     key = "dandan"
 
-    def __init__(self, get: Callable[..., httpx.Response] = httpx.get) -> None:
+    def __init__(
+        self,
+        get: Callable[..., httpx.Response] = httpx.get,
+        base_url_loader: Callable[[], str] | None = None,
+    ) -> None:
         self._get = get
+        self._base_url_loader = base_url_loader or (lambda: "")
+
+    def _base(self) -> str:
+        return (self._base_url_loader() or "").strip().rstrip("/")
 
     def supports(self, page_url: str) -> bool:
+        if not self._base():
+            return False
         parsed = urlparse(page_url)
         return (
             parsed.scheme == self.key
@@ -40,11 +56,13 @@ class DandanDanmakuProvider:
         name: str,
         original_name: str | None = None,
     ) -> list[DanmakuSearchItem]:
+        if not self._base():
+            return []
         requested_episode = extract_episode_number(original_name or name)
         try:
-            payload = self._request_json(f"/v2/search/anime?keyword={quote(name)}")
-        except (httpx.HTTPError, TypeError, ValueError):
-            return []
+            payload = self._request_json("/v2/search/anime", params={"keyword": name})
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            raise DanmakuSearchError(f"弹弹Play服务器连接失败: {exc}") from exc
         animes = payload.get("animes") if isinstance(payload, dict) else None
         if not isinstance(animes, list):
             return []
@@ -59,22 +77,29 @@ class DandanDanmakuProvider:
         return self._prefer_requested_episode(items, requested_episode)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
+        if not self._base():
+            raise DanmakuResolveError("未配置弹弹Play服务器地址")
         episode_id = self._episode_id(page_url)
         try:
             payload = self._request_json(
-                f"/v2/comment/{episode_id}?from=0&withRelated=true&chConvert=0"
+                f"/v2/comment/{episode_id}",
+                params={"from": "0", "withRelated": "true", "chConvert": "0"},
             )
         except (httpx.HTTPError, TypeError, ValueError) as exc:
-            raise DanmakuResolveError("弹弹Play弹幕获取失败") from exc
+            raise DanmakuResolveError(f"弹弹Play服务器连接失败: {exc}") from exc
         comments = payload.get("comments") if isinstance(payload, dict) else None
         if not isinstance(comments, list):
             raise DanmakuResolveError("弹弹Play弹幕响应解析失败")
         return [record for row in comments if (record := self._record(row)) is not None]
 
-    def _request_json(self, path: str) -> object:
+    def _request_json(
+        self,
+        path: str,
+        params: dict[str, str] | None = None,
+    ) -> object:
         response = self._get(
-            _BASE_URL,
-            params={"path": path},
+            f"{self._base()}/api{path}",
+            params=params,
             headers=_HEADERS,
             timeout=8.0,
             follow_redirects=True,
@@ -166,3 +191,37 @@ class DandanDanmakuProvider:
             color=str(color if 0 <= color <= 0xFFFFFF else 0xFFFFFF),
             content=content,
         )
+
+
+def probe_dandan_server(
+    get: Callable[..., httpx.Response] = httpx.get,
+    base_url: str = "",
+    timeout: float = 5.0,
+) -> tuple[bool, str]:
+    """探测一台 dandanplay 兼容服务器是否可用，供设置页"测试连接"使用。
+
+    打真实 search 端点（而非免 token 的 ``/api/config``），可同时校验地址与
+    token。返回 ``(是否可用, 提示信息)``，永不向调用方抛异常。
+    """
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return (False, "未填写服务器地址")
+    try:
+        response = get(
+            f"{base}/api/v2/search/anime",
+            params={"keyword": "test"},
+            headers=_HEADERS,
+            timeout=timeout,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError as exc:
+        return (False, f"连接失败: {exc}")
+    if response.status_code >= 400:
+        return (False, f"HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - 探测绝不能向 UI 抛异常
+        return (False, "响应非 JSON")
+    if not isinstance(payload, dict) or not isinstance(payload.get("animes"), list):
+        return (False, "响应格式不符")
+    return (True, "连接正常")

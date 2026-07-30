@@ -4,61 +4,52 @@ import time
 import httpx
 import pytest
 
-from atv_player.danmaku.errors import DanmakuResolveError
-from atv_player.danmaku.providers.dandan import DandanDanmakuProvider
+from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
+from atv_player.danmaku.providers.dandan import DandanDanmakuProvider, probe_dandan_server
+
+BASE = "http://dd-test:9321"
+
+
+def _provider(get) -> DandanDanmakuProvider:
+    return DandanDanmakuProvider(get=get, base_url_loader=lambda: BASE)
 
 
 def test_dandan_search_expands_and_filters_requested_episode() -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, object]] = []
 
     def fake_get(url: str, **kwargs):
-        path = kwargs["params"]["path"]
-        calls.append(path)
-        if path.startswith("/v2/search/anime?"):
+        if url.endswith("/api/v2/search/anime"):
+            calls.append((url, kwargs.get("params")))
             return httpx.Response(
                 200,
                 json={"animes": [{"animeId": 100, "animeTitle": "葬送的芙莉莲"}]},
             )
-        if path == "/v2/bangumi/100":
+        if url.endswith("/api/v2/bangumi/100"):
             return httpx.Response(
                 200,
                 json={
                     "bangumi": {
                         "episodes": [
-                            {
-                                "episodeId": 10001,
-                                "episodeNumber": "1",
-                                "episodeTitle": "冒险的终点",
-                            },
-                            {
-                                "episodeId": 10002,
-                                "episodeNumber": "2",
-                                "episodeTitle": "无需魔法",
-                            },
+                            {"episodeId": 10001, "episodeNumber": "1", "episodeTitle": "冒险的终点"},
+                            {"episodeId": 10002, "episodeNumber": "2", "episodeTitle": "无需魔法"},
                         ]
                     }
                 },
             )
-        raise AssertionError(path)
+        raise AssertionError(url)
 
-    provider = DandanDanmakuProvider(get=fake_get)
-
-    items = provider.search("葬送的芙莉莲", original_name="葬送的芙莉莲 第2集")
+    items = _provider(fake_get).search("葬送的芙莉莲", original_name="葬送的芙莉莲 第2集")
 
     assert [(item.provider, item.name, item.url) for item in items] == [
         ("dandan", "葬送的芙莉莲 第2集 无需魔法", "dandan://episode/10002")
     ]
-    assert calls == [
-        "/v2/search/anime?keyword=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%8E%B2",
-        "/v2/bangumi/100",
-    ]
+    # standard path-segment routing against the configured base, keyword as a query param
+    assert calls == [("http://dd-test:9321/api/v2/search/anime", {"keyword": "葬送的芙莉莲"})]
 
 
 def test_dandan_resolve_maps_comments_and_skips_invalid_rows() -> None:
     def fake_get(url: str, **kwargs):
-        assert kwargs["params"]["path"] == (
-            "/v2/comment/10002?from=0&withRelated=true&chConvert=0"
-        )
+        assert url == "http://dd-test:9321/api/v2/comment/10002"
         return httpx.Response(
             200,
             json={
@@ -71,9 +62,7 @@ def test_dandan_resolve_maps_comments_and_skips_invalid_rows() -> None:
             },
         )
 
-    provider = DandanDanmakuProvider(get=fake_get)
-
-    records = provider.resolve("dandan://episode/10002")
+    records = _provider(fake_get).resolve("dandan://episode/10002")
 
     assert [(r.time_offset, r.pos, r.color, r.content) for r in records] == [
         (1.25, 1, "16711680", "滚动"),
@@ -82,25 +71,35 @@ def test_dandan_resolve_maps_comments_and_skips_invalid_rows() -> None:
 
 
 def test_dandan_supports_only_valid_internal_episode_urls() -> None:
-    provider = DandanDanmakuProvider()
+    provider = _provider(lambda *a, **k: httpx.Response(200, json={}))
 
     assert provider.supports("dandan://episode/10002") is True
     assert provider.supports("dandan://episode/") is False
     assert provider.supports("animeko://episode/10002") is False
 
 
-def test_dandan_search_failure_is_isolated() -> None:
+def test_dandan_unconfigured_source_is_off() -> None:
+    provider = DandanDanmakuProvider(get=lambda *a, **k: pytest.fail("no request expected"))
+
+    assert provider.supports("dandan://episode/10002") is False
+    assert provider.search("葬送的芙莉莲") == []
+    with pytest.raises(DanmakuResolveError, match="未配置"):
+        provider.resolve("dandan://episode/10002")
+
+
+def test_dandan_search_failure_raises_search_error() -> None:
     provider = DandanDanmakuProvider(
-        get=lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPError("down"))
+        get=lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPError("down")),
+        base_url_loader=lambda: BASE,
     )
 
-    assert provider.search("葬送的芙莉莲") == []
+    with pytest.raises(DanmakuSearchError, match="弹弹Play服务器连接失败"):
+        provider.search("葬送的芙莉莲")
 
 
 def test_dandan_search_keeps_results_when_another_series_detail_fails() -> None:
     def fake_get(url: str, **kwargs):
-        path = kwargs["params"]["path"]
-        if path.startswith("/v2/search/anime"):
+        if url.endswith("/api/v2/search/anime"):
             return httpx.Response(
                 200,
                 json={
@@ -110,18 +109,14 @@ def test_dandan_search_keeps_results_when_another_series_detail_fails() -> None:
                     ]
                 },
             )
-        if path == "/v2/bangumi/100":
+        if url.endswith("/api/v2/bangumi/100"):
             return httpx.Response(
                 200,
-                json={
-                    "bangumi": {
-                        "episodes": [{"episodeId": 10001, "episodeNumber": "1"}]
-                    }
-                },
+                json={"bangumi": {"episodes": [{"episodeId": 10001, "episodeNumber": "1"}]}},
             )
         raise httpx.HTTPError("second detail failed")
 
-    items = DandanDanmakuProvider(get=fake_get).search("迷宫饭")
+    items = _provider(fake_get).search("迷宫饭")
 
     assert [item.url for item in items] == ["dandan://episode/10001"]
 
@@ -133,8 +128,7 @@ def test_dandan_search_expands_series_details_concurrently() -> None:
 
     def fake_get(url: str, **kwargs):
         nonlocal active, max_active
-        path = kwargs["params"]["path"]
-        if path.startswith("/v2/search/anime"):
+        if url.endswith("/api/v2/search/anime"):
             return httpx.Response(
                 200,
                 json={
@@ -150,24 +144,20 @@ def test_dandan_search_expands_series_details_concurrently() -> None:
         time.sleep(0.03)
         with lock:
             active -= 1
-        anime_id = path.rsplit("/", 1)[-1]
+        anime_id = url.rsplit("/", 1)[-1]
         return httpx.Response(
             200,
-            json={
-                "bangumi": {
-                    "episodes": [{"episodeId": f"{anime_id}01", "episodeNumber": "1"}]
-                }
-            },
+            json={"bangumi": {"episodes": [{"episodeId": f"{anime_id}01", "episodeNumber": "1"}]}},
         )
 
-    DandanDanmakuProvider(get=fake_get).search("迷宫饭")
+    _provider(fake_get).search("迷宫饭")
 
     assert max_active > 1
 
 
 def test_dandan_resolve_skips_non_finite_timestamps() -> None:
     provider = DandanDanmakuProvider(
-        get=lambda *args, **kwargs: httpx.Response(
+        get=lambda *a, **k: httpx.Response(
             200,
             json={
                 "comments": [
@@ -176,18 +166,61 @@ def test_dandan_resolve_skips_non_finite_timestamps() -> None:
                     {"p": "1,1,16777215", "m": "valid"},
                 ]
             },
-        )
+        ),
+        base_url_loader=lambda: BASE,
     )
 
-    assert [record.content for record in provider.resolve("dandan://episode/1")] == [
-        "valid"
-    ]
+    assert [record.content for record in provider.resolve("dandan://episode/1")] == ["valid"]
 
 
 def test_dandan_resolve_failure_names_the_source() -> None:
     provider = DandanDanmakuProvider(
-        get=lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPError("down"))
+        get=lambda *a, **k: (_ for _ in ()).throw(httpx.HTTPError("down")),
+        base_url_loader=lambda: BASE,
     )
 
-    with pytest.raises(DanmakuResolveError, match="弹弹Play弹幕获取失败"):
+    with pytest.raises(DanmakuResolveError, match="弹弹Play服务器连接失败"):
         provider.resolve("dandan://episode/10002")
+
+
+# --- probe_dandan_server (used by the settings "测试连接" button) ---
+
+
+def test_probe_dandan_server_success() -> None:
+    ok, message = probe_dandan_server(
+        get=lambda *a, **k: httpx.Response(200, json={"animes": []}),
+        base_url=BASE,
+    )
+    assert ok is True
+    assert "连接正常" in message
+
+
+def test_probe_dandan_server_empty_base() -> None:
+    ok, _ = probe_dandan_server(get=lambda *a, **k: pytest.fail("no request"), base_url="")
+    assert ok is False
+
+
+def test_probe_dandan_server_http_error() -> None:
+    ok, message = probe_dandan_server(
+        get=lambda *a, **k: (_ for _ in ()).throw(httpx.ConnectError("refused")),
+        base_url=BASE,
+    )
+    assert ok is False
+    assert "连接失败" in message
+
+
+def test_probe_dandan_server_bad_status() -> None:
+    ok, message = probe_dandan_server(
+        get=lambda *a, **k: httpx.Response(401, text="unauthorized"),
+        base_url=BASE,
+    )
+    assert ok is False
+    assert "401" in message
+
+
+def test_probe_dandan_server_bad_shape() -> None:
+    ok, _ = probe_dandan_server(
+        get=lambda *a, **k: httpx.Response(200, json={"unexpected": True}),
+        base_url=BASE,
+    )
+    assert ok is False

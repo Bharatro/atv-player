@@ -464,6 +464,7 @@ class SettingsRepository:
                     danmaku_blocked_words TEXT NOT NULL DEFAULT '[]',
                     danmaku_duplicate_window_minutes INTEGER NOT NULL DEFAULT 0,
                     danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0,
+                    dandan_base_url TEXT NOT NULL DEFAULT '',
                     disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
@@ -581,6 +582,10 @@ class SettingsRepository:
             if "danmaku_convert_top_bottom_to_scroll" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0"
+                )
+            if "dandan_base_url" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN dandan_base_url TEXT NOT NULL DEFAULT ''"
                 )
             if "disabled_metadata_provider_ids" not in columns:
                 conn.execute(
@@ -1133,7 +1138,8 @@ class SettingsRepository:
                     ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
-                    home_mode
+                    home_mode,
+                    dandan_base_url
                 FROM app_config
                 WHERE id = 1
                 """
@@ -1228,6 +1234,7 @@ class SettingsRepository:
             following_episode_display_mode,
             following_episode_grid_columns,
             home_mode,
+            dandan_base_url,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -1349,6 +1356,7 @@ class SettingsRepository:
                 )
             ),
             home_mode=_normalize_home_mode(home_mode),
+            dandan_base_url=str(dandan_base_url or "").strip(),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1444,7 +1452,8 @@ class SettingsRepository:
                     ai_following_summary_enabled = ?,
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?,
-                    home_mode = ?
+                    home_mode = ?,
+                    dandan_base_url = ?
                 WHERE id = 1
                 """,
                 (
@@ -1560,6 +1569,7 @@ class SettingsRepository:
                         config.following_episode_grid_columns
                     ),
                     _normalize_home_mode(config.home_mode),
+                    str(config.dandan_base_url or "").strip(),
                 ),
             )
 

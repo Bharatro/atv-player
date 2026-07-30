@@ -931,6 +931,11 @@ def create_default_danmaku_service(
     ai_enrichment_service=None,
 ) -> DanmakuService:
     disabled = {str(item or "").strip() for item in (disabled_provider_ids or [])}
+    dandan_base_url_loader = (
+        lambda: str(config_loader().dandan_base_url or "")
+        if config_loader is not None
+        else ""
+    )
     providers = {
         "tencent": TencentDanmakuProvider(get=get, post=post),
         "youku": YoukuDanmakuProvider(get=get, post=post),
@@ -939,7 +944,7 @@ def create_default_danmaku_service(
         "mgtv": MgtvDanmakuProvider(get=get),
         "sohu": SohuDanmakuProvider(get=get),
         "renren": RenrenDanmakuProvider(get=get),
-        "dandan": DandanDanmakuProvider(get=get),
+        "dandan": DandanDanmakuProvider(get=get, base_url_loader=dandan_base_url_loader),
         "bahamut": BahamutDanmakuProvider(get=get),
         "animeko": AnimekoDanmakuProvider(get=get, post=post),
     }

@@ -163,6 +163,23 @@ def test_settings_repository_normalizes_invalid_home_mode(tmp_path: Path) -> Non
     assert loaded.home_mode == "browse"
 
 
+def test_settings_repository_round_trips_dandan_base_url(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.dandan_base_url == ""
+
+    config.dandan_base_url = "http://192.168.1.10:9321/87654321"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.dandan_base_url == "http://192.168.1.10:9321/87654321"
+
+    # blanking the URL (closing the source) also round-trips
+    loaded.dandan_base_url = ""
+    repo.save_config(loaded)
+    assert repo.load_config().dandan_base_url == ""
+
+
 def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 
