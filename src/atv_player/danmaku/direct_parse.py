@@ -3,13 +3,24 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from typing import Any
-from xml.sax.saxutils import escape
 
 import httpx
 
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.models import PlayItem
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
+from atv_player.danmaku.models import (
+    DanmakuRecord,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+)
+from atv_player.danmaku.preferences import (
+    DanmakuSeriesPreferenceStore,
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
+from atv_player.danmaku.processing import clean_records
+from atv_player.danmaku.utils import build_xml
+from atv_player.models import AppConfig, PlayItem
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 _DIRECT_PARSE_DANMAKU_API = "https://dmku.hls.one/"
@@ -35,8 +46,41 @@ def load_direct_parse_danmaku(
 
 
 class DirectParseDanmakuController:
-    def __init__(self, load: Callable[[str], dict[str, Any]] = load_direct_parse_danmaku) -> None:
+    def __init__(
+        self,
+        load: Callable[[str], dict[str, Any]] = load_direct_parse_danmaku,
+        config_loader: Callable[[], AppConfig] | None = None,
+        danmaku_preference_store: DanmakuSeriesPreferenceStore | None = None,
+    ) -> None:
         self._load = load
+        self._config_loader = config_loader or AppConfig
+        self._danmaku_preference_store = danmaku_preference_store
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
 
     def _page_url(self, item: PlayItem) -> str:
         return (item.original_url or item.vod_id or item.url).strip()
@@ -113,6 +157,29 @@ class DirectParseDanmakuController:
         save_cached_danmaku_xml(query_name, page_url, xml_text)
         return xml_text
 
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        previous_source_state = (
+            item.danmaku_candidates,
+            item.danmaku_xml,
+            item.selected_danmaku_provider,
+            item.selected_danmaku_url,
+            item.selected_danmaku_title,
+            item.danmaku_error,
+        )
+        try:
+            return self.switch_danmaku_source(item, normalized_url)
+        except Exception:
+            (
+                item.danmaku_candidates,
+                item.danmaku_xml,
+                item.selected_danmaku_provider,
+                item.selected_danmaku_url,
+                item.selected_danmaku_title,
+                item.danmaku_error,
+            ) = previous_source_state
+            raise
+
     def maybe_resolve(self, item: PlayItem) -> None:
         if item.danmaku_xml or item.danmaku_pending:
             return
@@ -136,24 +203,41 @@ class DirectParseDanmakuController:
         threading.Thread(target=run, daemon=True).start()
 
     def _payload_to_xml(self, payload: dict[str, Any]) -> str:
-        lines = ['<?xml version="1.0" encoding="UTF-8"?><i>']
+        records: list[DanmakuRecord] = []
         for entry in payload.get("danmuku") or []:
             if not isinstance(entry, list) or len(entry) < 5:
                 continue
             try:
-                time_offset = max(0.0, float(entry[0]))
+                parsed_time_offset = max(0.0, float(entry[0]))
             except (TypeError, ValueError):
                 continue
+            time_offset = (
+                int(parsed_time_offset)
+                if parsed_time_offset.is_integer()
+                else parsed_time_offset
+            )
             mode = self._danmaku_mode(entry[1] if len(entry) > 1 else "")
             color = self._danmaku_color(entry[2] if len(entry) > 2 else "")
             content = str(entry[4] or "").strip()
             if not content:
                 continue
-            lines.append(
-                f'<d p="{time_offset:g},{mode},25,{color},0,0,0,0">{escape(content)}</d>'
+            records.append(
+                DanmakuRecord(
+                    time_offset=time_offset,
+                    pos=mode,
+                    color=str(color),
+                    content=content,
+                )
             )
-        lines.append("</i>")
-        return "".join(lines)
+        config = self._config_loader()
+        return build_xml(
+            clean_records(
+                records,
+                blocked_words=config.danmaku_blocked_words,
+                duplicate_window_minutes=config.danmaku_duplicate_window_minutes,
+                convert_top_bottom=config.danmaku_convert_top_bottom_to_scroll,
+            )
+        )
 
     def _danmaku_mode(self, value: object) -> int:
         normalized = str(value or "").strip().lower()

@@ -9,6 +9,45 @@ from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 
 
+def test_app_config_defaults_disable_danmaku_cleaning() -> None:
+    config = AppConfig()
+
+    assert config.danmaku_blocked_words == []
+    assert config.danmaku_duplicate_window_minutes == 0
+    assert config.danmaku_convert_top_bottom_to_scroll is False
+
+
+def test_settings_repository_round_trips_danmaku_cleaning(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.danmaku_blocked_words = [" 广告 ", "剧透", "广告", ""]
+    config.danmaku_duplicate_window_minutes = 7
+    config.danmaku_convert_top_bottom_to_scroll = True
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.danmaku_blocked_words == ["广告", "剧透"]
+    assert loaded.danmaku_duplicate_window_minutes == 7
+    assert loaded.danmaku_convert_top_bottom_to_scroll is True
+
+
+def test_settings_repository_normalizes_invalid_danmaku_cleaning(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE app_config SET danmaku_blocked_words = ?, "
+            "danmaku_duplicate_window_minutes = ? WHERE id = 1",
+            ('["  spam  ", 3, "spam", ""]', 999),
+        )
+
+    loaded = repo.load_config()
+
+    assert loaded.danmaku_blocked_words == ["spam"]
+    assert loaded.danmaku_duplicate_window_minutes == 60
+
+
 def test_settings_repository_creates_stable_app_identity(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
 
@@ -66,14 +105,26 @@ def test_settings_repository_app_identity_row_is_database_immutable(tmp_path: Pa
 def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
-    config.disabled_danmaku_provider_ids = ["youku", "mgtv", "migu"]
-    config.disabled_metadata_provider_ids = ["tmdb", "official_douban", "migu"]
+    config.disabled_danmaku_provider_ids = [
+        "youku",
+        "mgtv",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
+    config.disabled_metadata_provider_ids = ["tmdb", "official_douban", "bangumi"]
 
     repo.save_config(config)
     loaded = repo.load_config()
 
-    assert loaded.disabled_danmaku_provider_ids == ["youku", "mgtv", "migu"]
-    assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban", "migu"]
+    assert loaded.disabled_danmaku_provider_ids == [
+        "youku",
+        "mgtv",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
+    assert loaded.disabled_metadata_provider_ids == ["tmdb", "official_douban", "bangumi"]
 
 
 def test_settings_repository_round_trips_builtin_tab_overrides(tmp_path: Path) -> None:
@@ -110,6 +161,23 @@ def test_settings_repository_normalizes_invalid_home_mode(tmp_path: Path) -> Non
     loaded = repo.load_config()
 
     assert loaded.home_mode == "browse"
+
+
+def test_settings_repository_round_trips_dandan_base_url(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.dandan_base_url == ""
+
+    config.dandan_base_url = "http://192.168.1.10:9321/87654321"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.dandan_base_url == "http://192.168.1.10:9321/87654321"
+
+    # blanking the URL (closing the source) also round-trips
+    loaded.dandan_base_url = ""
+    repo.save_config(loaded)
+    assert repo.load_config().dandan_base_url == ""
 
 
 def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:

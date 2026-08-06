@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from atv_player.danmaku.cache import (
     load_cached_danmaku_source_search_result,
@@ -12,8 +13,20 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_source_search_result,
     save_cached_danmaku_xml,
 )
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
-from atv_player.danmaku.utils import has_explicit_episode_marker, infer_playlist_episode_number
+from atv_player.danmaku.models import (
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
+from atv_player.danmaku.preferences import (
+    DanmakuSeriesPreferenceStore,
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
+from atv_player.danmaku.utils import (
+    has_explicit_episode_marker,
+    infer_playlist_episode_number,
+)
 from atv_player.models import PlayItem
 
 _TITLE_ONLY_ITEM_TITLES = {
@@ -25,6 +38,14 @@ _TITLE_ONLY_ITEM_TITLES = {
 }
 _DANMAKU_ENTRY_RE = re.compile(r"<d\b")
 logger = logging.getLogger(__name__)
+
+
+def normalize_danmaku_episode_url(value: str) -> str:
+    normalized = str(value or "").strip()
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("请输入完整的 http(s) 单集链接")
+    return normalized
 
 
 def _compose_danmaku_search_query(title: str, episode: str) -> str:
@@ -57,9 +78,40 @@ def _find_selected_option(item: PlayItem, page_url: str) -> DanmakuSourceOption 
 
 
 class GenericDanmakuController:
-    def __init__(self, danmaku_service: Any) -> None:
+    def __init__(
+        self,
+        danmaku_service: Any,
+        danmaku_preference_store: DanmakuSeriesPreferenceStore | None = None,
+    ) -> None:
         self._danmaku_service = danmaku_service
+        self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_log_handler: Callable[[str], None] | None = None
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
 
     def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
         self._danmaku_log_handler = handler
@@ -275,6 +327,54 @@ class GenericDanmakuController:
         candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
         self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
 
+    def auto_resolve_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+        *,
+        media_duration_seconds: int = 0,
+    ) -> bool:
+        """Find and download the default danmaku source for one playlist item."""
+        if item.danmaku_xml:
+            return True
+        query_override = (
+            item.danmaku_search_query
+            if item.danmaku_search_query_overridden
+            else None
+        )
+        self.refresh_danmaku_sources(
+            item,
+            query_override=query_override,
+            playlist=playlist,
+            media_duration_seconds=media_duration_seconds,
+        )
+        selected_url = str(item.selected_danmaku_url or "").strip()
+        if not selected_url:
+            return False
+        self.switch_danmaku_source(item, selected_url)
+        return bool(item.danmaku_xml)
+
+    def prefetch_next_episode_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem],
+    ) -> None:
+        if (
+            item.danmaku_xml
+            or item.danmaku_pending
+            or not self._search_episode(item, playlist)
+        ):
+            return
+        prefetch_label = self._search_query(item, playlist)
+        if not prefetch_label:
+            return
+        self._log_danmaku_event("弹幕预下载中", detail=prefetch_label)
+        if self.auto_resolve_danmaku(item, playlist):
+            self._log_danmaku_event(
+                "弹幕预下载成功",
+                detail=f"{self._count_danmaku_entries(item.danmaku_xml)} 条弹幕",
+            )
+
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = _find_selected_option(item, page_url)
         selected_provider = ""
@@ -311,4 +411,28 @@ class GenericDanmakuController:
             item.selected_danmaku_title = selected_option.name
         item.danmaku_error = ""
         self._log_danmaku_event("弹幕下载成功", detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕")
+        return xml_text
+
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        provider_key = self._danmaku_service.provider_key_for_url(normalized_url)
+        source_title = (item.title or item.media_title or "单集弹幕").strip()
+        self._log_danmaku_event("弹幕下载中", detail=f"{provider_key} - {source_title}")
+        query_name = item.danmaku_search_query.strip() or self._search_query(item)
+        reg_src = self._reg_src(item)
+        xml_text = load_cached_danmaku_xml(query_name, normalized_url)
+        if not xml_text:
+            xml_text = self._danmaku_service.resolve_danmu(normalized_url)
+            save_cached_danmaku_xml(query_name, normalized_url, xml_text)
+        if reg_src:
+            save_cached_danmaku_xml(query_name, reg_src, xml_text)
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = provider_key
+        item.selected_danmaku_url = normalized_url
+        item.selected_danmaku_title = source_title
+        item.danmaku_error = ""
+        self._log_danmaku_event(
+            "弹幕下载成功",
+            detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕",
+        )
         return xml_text

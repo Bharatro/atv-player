@@ -1,6 +1,8 @@
+import json
 import threading
 import time
 
+import httpx
 import pytest
 
 from atv_player.ai.enrichment import DanmakuQueryRefinement
@@ -12,7 +14,9 @@ from atv_player.danmaku.models import (
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
+from atv_player.danmaku.providers.youku import YoukuDanmakuProvider
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
+from atv_player.models import AppConfig
 
 
 class FakeProvider:
@@ -105,6 +109,98 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert youku.search_calls == []
 
 
+def test_search_danmu_keeps_subtitle_named_episode_for_explicit_request() -> None:
+    # Tencent names episodes by plot subtitle without the show name, e.g.
+    # "第十三集 <剧情>". Such a real episode must still match an explicit
+    # "<剧名> 13集" request instead of being dropped (regression: 《百花杀》第13集
+    # 搜不到，返回了其它集数却没有13集).
+    ep13 = DanmakuSearchItem(
+        provider="tencent",
+        name="第十三集 朱字当众揭穿我藏在凤椅下，皇后一句谁先取她的命",
+        url="https://v.qq.com/x/cover/mzc003wpj912rrn/l3285j9s4lh.html",
+        ratio=0.9,
+        simi=0.8,
+    )
+    tencent = FakeProvider("tencent", [ep13], [])
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("百花杀 13集", "https://v.qq.com/x/cover/mzc003wpj912rrn/l3285j9s4lh.html")
+
+    assert any(item.url == ep13.url for item in results)
+
+
+def test_search_danmu_finds_youku_suspense_episode_four() -> None:
+    detail_payload = {
+        "moduleList": [
+            {
+                "components": [
+                    {
+                        "type": 10013,
+                        "itemList": [
+                            {
+                                "action_value": "XNjUxODE2NjYyNA==",
+                                "title": "第1集 矢量",
+                                "stage": 1,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "XNjUxODE2NjYyOA==",
+                                "title": "第4集 专线",
+                                "stage": 4,
+                                "videoType": "正片",
+                            },
+                            {
+                                "action_value": "preview04",
+                                "title": "第4集 专线（预告）",
+                                "stage": 4,
+                                "videoType": "预告片",
+                            },
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+
+    def fake_get(url: str, **kwargs):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "悬案"},
+                                "videoLink": (
+                                    "https://v.youku.com/v_show/"
+                                    "id_XNjUxODE2NjYyNA==.html"
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        detail_text = json.dumps(detail_payload, ensure_ascii=False)
+        return httpx.Response(
+            200,
+            text=f"<script>window.__INITIAL_DATA__ ={detail_text};</script>",
+        )
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+    service = DanmakuService({"youku": provider}, provider_order=["youku"])
+
+    results = service.search_danmu("悬案 4集", provider_filter="youku")
+
+    assert [(item.name, item.url) for item in results] == [
+        (
+            "悬案 第4集 专线",
+            "https://v.youku.com/v_show/id_XNjUxODE2NjYyOA==.html",
+        ),
+    ]
+
+
 def test_danmaku_service_uses_ai_refined_query_before_original() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -150,7 +246,26 @@ def test_danmaku_service_falls_back_when_ai_query_empty() -> None:
 def test_create_default_danmaku_service_excludes_disabled_providers() -> None:
     service = create_default_danmaku_service(disabled_provider_ids=["youku", "mgtv"])
 
-    assert service.provider_order == ["tencent", "bilibili", "iqiyi", "sohu", "migu", "renren"]
+    assert service.provider_order == [
+        "tencent",
+        "bilibili",
+        "iqiyi",
+        "sohu",
+        "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
+
+
+def test_default_service_can_disable_new_anime_providers() -> None:
+    service = create_default_danmaku_service(
+        disabled_provider_ids=["dandan", "bahamut", "animeko"]
+    )
+
+    assert "dandan" not in service.provider_order
+    assert "bahamut" not in service.provider_order
+    assert "animeko" not in service.provider_order
 
 
 def test_create_default_danmaku_service_can_disable_renren_provider() -> None:
@@ -583,6 +698,46 @@ def test_rerank_danmaku_source_search_result_prefers_matching_episode_over_histo
     )
 
     assert reranked.default_option_url == "https://www.iqiyi.com/v_ep8.html"
+
+
+def test_rerank_prefers_reg_src_cover_among_same_named_shows() -> None:
+    # Two same-named shows both have an ep13 candidate. reg_src identifies the
+    # user's show by Tencent cover id; its candidate must rank first even when the
+    # other show's candidate is listed first (multi-show disambiguation).
+    service = DanmakuService({}, provider_order=[])
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="百花杀 13集",
+                        url="https://v.qq.com/x/cover/mzc003wpj912rrn/ep13.html",
+                        duration_seconds=2800,
+                        episode_match=True,
+                    ),
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="百花杀 13集",
+                        url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep13.html",
+                        duration_seconds=2800,
+                        episode_match=True,
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="百花杀 13集",
+        reg_src="https://v.qq.com/x/cover/mzc00200nfe7al6/y4102qxof84.html",
+        media_duration_seconds=2800,
+    )
+
+    assert "mzc00200nfe7al6" in reranked.default_option_url
 
 
 def test_rerank_danmaku_source_search_result_drops_promotional_no_episode_items_for_explicit_episode_query() -> None:
@@ -1410,6 +1565,36 @@ def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:
     assert tencent.resolve_calls == ["https://video.tencent/item"]
 
 
+def test_provider_key_for_url_returns_first_enabled_supporting_provider() -> None:
+    tencent = FakeProvider("tencent", [], [])
+    youku = FakeProvider("youku", [], [])
+    service = DanmakuService(
+        {"tencent": tencent, "youku": youku},
+        provider_order=["tencent", "youku"],
+    )
+
+    assert service.provider_key_for_url("https://video.youku/item") == "youku"
+
+
+def test_provider_key_for_url_rejects_dynamically_disabled_provider() -> None:
+    disabled = ["youku"]
+    service = DanmakuService(
+        {"youku": FakeProvider("youku", [], [])},
+        provider_order=["youku"],
+        disabled_provider_ids_loader=lambda: disabled,
+    )
+
+    with pytest.raises(ProviderNotSupportedError, match="不支持的弹幕来源"):
+        service.provider_key_for_url("https://video.youku/item")
+
+
+def test_provider_key_for_url_rejects_unknown_url() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    with pytest.raises(ProviderNotSupportedError, match="不支持的弹幕来源"):
+        service.provider_key_for_url("https://unknown.example/video/1")
+
+
 def test_resolve_danmu_prefers_selected_option_provider_when_url_is_ambiguous() -> None:
     class AmbiguousProvider(FakeProvider):
         def supports(self, page_url: str) -> bool:
@@ -1494,8 +1679,10 @@ def test_default_service_has_fixed_provider_order() -> None:
         "iqiyi",
         "mgtv",
         "sohu",
-        "migu",
         "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
     ]
 
 
@@ -1536,8 +1723,10 @@ def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
         "iqiyi",
         "mgtv",
         "sohu",
-        "migu",
         "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
     ]
 
 
@@ -1545,6 +1734,52 @@ def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
     assert "iqiyi" in service.provider_order
+
+
+def test_new_anime_provider_labels_are_user_facing() -> None:
+    providers = {
+        key: FakeProvider(
+            key,
+            [
+                DanmakuSearchItem(
+                    provider=key,
+                    name="迷宫饭 第1集",
+                    url=f"{key}://episode/1",
+                )
+            ],
+            [],
+        )
+        for key in ("dandan", "bahamut", "animeko")
+    }
+    service = DanmakuService(
+        providers,
+        provider_order=["dandan", "bahamut", "animeko"],
+    )
+
+    result = service.search_danmu_sources("迷宫饭 第1集")
+
+    assert [(group.provider, group.provider_label) for group in result.groups] == [
+        ("dandan", "弹弹Play"),
+        ("bahamut", "巴哈姆特"),
+        ("animeko", "Animeko"),
+    ]
+
+
+def test_resolve_routes_cached_internal_url_without_context() -> None:
+    animeko = FakeProvider(
+        "animeko",
+        [],
+        [DanmakuRecord(1.0, 1, "16777215", "缓存")],
+    )
+    service = DanmakuService(
+        {"animeko": animeko},
+        provider_order=["animeko"],
+    )
+
+    xml = service.resolve_danmu("animeko://episode/4201")
+
+    assert "缓存" in xml
+    assert animeko.resolve_calls == ["animeko://episode/4201"]
 
 
 def test_search_danmu_sources_uses_sohu_provider_label() -> None:
@@ -1574,3 +1809,182 @@ def test_default_service_still_rejects_unknown_urls() -> None:
 
     with pytest.raises(ProviderNotSupportedError):
         service.resolve_danmu("https://unknown.example/video/1")
+
+
+class FakeDoubanDiscovery:
+    def __init__(self, subjects, vendors_by_id) -> None:
+        self._subjects = subjects
+        self._vendors_by_id = vendors_by_id
+        self.search_calls: list[str] = []
+        self.vendor_calls: list[str] = []
+
+    def search_subjects(self, keyword: str):
+        self.search_calls.append(keyword)
+        return list(self._subjects)
+
+    def fetch_vendors(self, douban_id: str):
+        self.vendor_calls.append(douban_id)
+        return list(self._vendors_by_id.get(douban_id, []))
+
+
+class ExpandableFakeProvider(FakeProvider):
+    """A provider whose MbSearch returns nothing, but can expand a douban page URL."""
+
+    def __init__(self, key, expand_items):
+        super().__init__(key, [], [])
+        self._expand_items = expand_items
+        self.expand_calls: list[str] = []
+
+    def search(self, name, original_name=None):
+        self.search_calls.append(name)
+        self.original_name_calls.append(original_name)
+        return []
+
+    def expand_page_url(self, page_url, query_name):
+        self.expand_calls.append(page_url)
+        return list(self._expand_items)
+
+
+def test_search_danmu_falls_back_to_douban_discovery_when_builtin_search_empty() -> None:
+    from atv_player.danmaku.discovery.douban import DoubanSubject, DoubanVendor
+
+    ep13 = DanmakuSearchItem(
+        provider="tencent",
+        name="百花杀 13集",
+        url="https://v.qq.com/x/cover/mzc00200nfe7al6/ep13.html",
+        duration_seconds=2700,
+    )
+    tencent = ExpandableFakeProvider("tencent", [ep13])
+    discovery = FakeDoubanDiscovery(
+        subjects=[DoubanSubject(douban_id="35876897", title="百花杀", year="2024", type_name="电视剧")],
+        vendors_by_id={"35876897": [DoubanVendor(provider="tencent", media_id="mzc00200nfe7al6")]},
+    )
+    service = DanmakuService(
+        {"tencent": tencent},
+        provider_order=["tencent"],
+        douban_discovery=discovery,
+    )
+
+    results = service.search_danmu("百花杀 13集")
+
+    assert any(item.url == ep13.url for item in results)
+    assert discovery.search_calls == ["百花杀"]
+    assert tencent.expand_calls == ["https://v.qq.com/x/cover/mzc00200nfe7al6/"]
+
+
+class _EmptySearchTencent:
+    key = "tencent"
+
+    def search(self, name, original_name=None):
+        return []
+
+    def resolve(self, page_url):
+        return []
+
+    def supports(self, page_url):
+        return "qq.com" in page_url
+
+
+class _EmptyDiscovery:
+    def search_subjects(self, keyword):
+        return []
+
+    def fetch_vendors(self, douban_id):
+        return []
+
+
+def test_search_danmu_falls_back_to_other_when_builtin_and_douban_miss() -> None:
+    from atv_player.danmaku.providers.other import OtherDanmakuProvider
+
+    other = OtherDanmakuProvider(get=lambda *a, **k: None, server="https://dmku.hls.one/")
+    service = DanmakuService(
+        {"tencent": _EmptySearchTencent()},
+        provider_order=["tencent"],
+        douban_discovery=_EmptyDiscovery(),
+        other_provider=other,
+    )
+
+    results = service.search_danmu("冷门剧 5集", "https://v.qq.com/x/cover/xyz/abc.html")
+
+    assert any(it.provider == "other" for it in results)
+    assert results[0].url == "https://v.qq.com/x/cover/xyz/abc.html"
+
+
+def test_resolve_danmu_routes_to_other_when_selected() -> None:
+    from atv_player.danmaku.models import DanmakuSourceOption
+    from atv_player.danmaku.providers.other import OtherDanmakuProvider
+
+    class FakeOther(OtherDanmakuProvider):
+        def __init__(self):
+            super().__init__(get=lambda *a, **k: None, server="x")
+            self.resolved = []
+
+        def resolve(self, page_url):
+            self.resolved.append(page_url)
+            from atv_player.danmaku.models import DanmakuRecord
+
+            return [DanmakuRecord(time_offset=1.0, pos=1, color="16777215", content="x")]
+
+    other = FakeOther()
+    service = DanmakuService(
+        {"tencent": _EmptySearchTencent()},
+        provider_order=["tencent"],
+        other_provider=other,
+    )
+    option = DanmakuSourceOption(provider="other", name="冷门剧 5集", url="https://v.qq.com/x/cover/xyz/abc.html")
+
+    xml = service.resolve_danmu("https://v.qq.com/x/cover/xyz/abc.html", option)
+
+    assert other.resolved == ["https://v.qq.com/x/cover/xyz/abc.html"]
+    assert "<d " in xml
+
+
+def test_service_ignores_removed_danmaku_environment_variables(monkeypatch) -> None:
+    monkeypatch.setenv("ATV_DANMU_BLOCKED_WORDS", "/normal/")
+    monkeypatch.setenv("ATV_DANMU_GROUP_MINUTE", "5")
+    monkeypatch.setenv("ATV_DANMU_CONVERT_TOP_BOTTOM", "1")
+    monkeypatch.setenv("ATV_DANMU_OFFSET", "demo:99")
+    provider = FakeProvider(
+        "fake",
+        [],
+        [DanmakuRecord(time_offset=10.0, pos=5, color="16777215", content="normal")],
+    )
+    service = DanmakuService(
+        {"fake": provider},
+        provider_order=["fake"],
+        config_loader=lambda: AppConfig(),
+    )
+
+    xml = service.resolve_danmu("https://fake.example/video")
+
+    assert "normal" in xml
+    assert 'p="10.0,5,' in xml
+
+
+def test_service_applies_persisted_danmaku_cleaning_in_order() -> None:
+    provider = FakeProvider(
+        "fake",
+        [],
+        [
+            DanmakuRecord(time_offset=1.0, pos=5, color="16777215", content="SPAM duplicate"),
+            DanmakuRecord(time_offset=2.0, pos=5, color="16777215", content="duplicate"),
+            DanmakuRecord(time_offset=3.0, pos=4, color="16777215", content="duplicate"),
+            DanmakuRecord(time_offset=70.0, pos=4, color="16777215", content="duplicate"),
+        ],
+    )
+    service = DanmakuService(
+        {"fake": provider},
+        provider_order=["fake"],
+        config_loader=lambda: AppConfig(
+            danmaku_blocked_words=["spam"],
+            danmaku_duplicate_window_minutes=1,
+            danmaku_convert_top_bottom_to_scroll=True,
+        ),
+    )
+
+    xml = service.resolve_danmu("https://fake.example/video")
+
+    assert "SPAM" not in xml
+    assert xml.count(">duplicate</d>") == 2
+    assert 'p="2.0,1,' in xml
+    assert 'p="70.0,1,' in xml

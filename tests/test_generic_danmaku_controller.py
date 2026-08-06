@@ -1,10 +1,162 @@
 from pathlib import Path
 
+import pytest
+
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.generic as generic_danmaku_module
 from atv_player.danmaku.generic import GenericDanmakuController
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.models import (
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.models import PlayItem
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "v.qq.com/x/1", "ftp://v.qq.com/x/1", "https:///x/1"],
+)
+def test_normalize_danmaku_episode_url_rejects_incomplete_urls(value: str) -> None:
+    with pytest.raises(ValueError, match=r"完整的 http\(s\) 单集链接"):
+        generic_danmaku_module.normalize_danmaku_episode_url(value)
+
+
+def test_normalize_danmaku_episode_url_strips_surrounding_whitespace() -> None:
+    assert (
+        generic_danmaku_module.normalize_danmaku_episode_url(
+            "  https://v.qq.com/x/cover/demo/ep1.html  "
+        )
+        == "https://v.qq.com/x/cover/demo/ep1.html"
+    )
+
+
+def test_generic_controller_downloads_episode_url_without_replacing_candidates(
+    monkeypatch,
+) -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+
+        def provider_key_for_url(self, page_url: str) -> str:
+            assert page_url == "https://v.qq.com/x/cover/demo/ep1.html"
+            return "tencent"
+
+        def resolve_danmu(self, page_url: str) -> str:
+            self.resolve_calls.append(page_url)
+            return '<i><d p="1,1,25,16777215">manual</d></i>'
+
+    saved: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "load_cached_danmaku_xml",
+        lambda _name, _url: "",
+    )
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "save_cached_danmaku_xml",
+        lambda name, url, xml: saved.append((name, url, xml)),
+    )
+    candidates = [
+        DanmakuSourceGroup(
+            provider="youku",
+            provider_label="优酷",
+            options=[
+                DanmakuSourceOption(
+                    provider="youku",
+                    name="旧候选",
+                    url="https://youku/old",
+                )
+            ],
+        )
+    ]
+    service = RecordingService()
+    controller = GenericDanmakuController(service)
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        vod_id="item-1",
+        media_title="成何体统",
+        danmaku_search_query="成何体统 1集",
+        danmaku_candidates=candidates,
+    )
+
+    xml = controller.download_danmaku_from_url(
+        item,
+        "  https://v.qq.com/x/cover/demo/ep1.html  ",
+    )
+
+    assert "manual" in xml
+    assert service.resolve_calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    assert item.danmaku_candidates is candidates
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep1.html"
+    assert item.selected_danmaku_title == "第1集"
+    assert [(name, url) for name, url, _xml in saved] == [
+        ("成何体统 1集", "https://v.qq.com/x/cover/demo/ep1.html"),
+        ("成何体统 1集", "item-1"),
+    ]
+
+
+def test_generic_controller_episode_url_failure_preserves_loaded_source(
+    monkeypatch,
+) -> None:
+    class FailingService:
+        def provider_key_for_url(self, _page_url: str) -> str:
+            return "tencent"
+
+        def resolve_danmu(self, _page_url: str) -> str:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "load_cached_danmaku_xml",
+        lambda _name, _url: "",
+    )
+    controller = GenericDanmakuController(FailingService())
+    candidates = [
+        DanmakuSourceGroup(provider="youku", provider_label="优酷", options=[])
+    ]
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        media_title="成何体统",
+        danmaku_search_query="成何体统 1集",
+        danmaku_candidates=candidates,
+        danmaku_xml="<i>old</i>",
+        selected_danmaku_provider="youku",
+        selected_danmaku_url="https://youku/old",
+        selected_danmaku_title="旧来源",
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        controller.download_danmaku_from_url(
+            item,
+            "https://v.qq.com/x/cover/demo/ep1.html",
+        )
+
+    assert item.danmaku_candidates is candidates
+    assert item.danmaku_xml == "<i>old</i>"
+    assert item.selected_danmaku_provider == "youku"
+    assert item.selected_danmaku_url == "https://youku/old"
+    assert item.selected_danmaku_title == "旧来源"
+
+
+def test_generic_danmaku_controller_delegates_episode_offset(tmp_path: Path) -> None:
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = GenericDanmakuController(object(), danmaku_preference_store=store)
+    item = PlayItem(
+        title="第12集",
+        url="",
+        media_title="剑来",
+        selected_danmaku_provider="tencent",
+    )
+
+    controller.save_danmaku_offset(item, -2.5, playlist=[item])
+
+    assert controller.load_danmaku_offset(item, playlist=[item]) == -2.5
+    assert item.danmaku_offset_seconds == -2.5
 
 
 def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episode(monkeypatch, tmp_path: Path) -> None:
@@ -111,6 +263,109 @@ def test_generic_danmaku_controller_refresh_emits_log_events(monkeypatch, tmp_pa
     assert logs == [
         "弹幕搜索中: 成何体统 1集",
         "弹幕搜索成功: 找到 1 个候选",
+    ]
+
+
+def test_generic_danmaku_controller_auto_resolves_uncached_episode(monkeypatch) -> None:
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="tencent",
+                                name="百花杀 15集",
+                                url="https://v.qq.com/ep15",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/ep15",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            del option
+            self.resolve_calls.append(page_url)
+            return '<i><d p="1,1,25,16777215">第十五集</d></i>'
+
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", lambda *_args: "")
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", lambda *_args: None)
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service)
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(
+        title="15(5.41 GB)",
+        url="https://media.example/15.mp4",
+        vod_id="episode-15",
+        media_title="百花杀",
+        index=14,
+    )
+    playlist = [
+        PlayItem(title=f"{index:02d}(5 GB)", url=f"https://media.example/{index}.mp4", index=index - 1)
+        for index in range(1, 15)
+    ] + [item]
+
+    assert controller.auto_resolve_danmaku(item, playlist=playlist) is True
+
+    assert service.search_calls == ["百花杀 15集"]
+    assert service.resolve_calls == ["https://v.qq.com/ep15"]
+    assert "第十五集" in item.danmaku_xml
+    assert logs == [
+        "弹幕搜索中: 百花杀 15集",
+        "弹幕搜索成功: 找到 1 个候选",
+        "弹幕下载中: 腾讯 - 百花杀 15集",
+        "弹幕下载成功: 1 条弹幕",
+    ]
+
+
+def test_generic_danmaku_controller_prefetches_next_episode(monkeypatch) -> None:
+    controller = GenericDanmakuController(object())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    next_item = PlayItem(
+        title="第2集",
+        url="https://media.example/2.mp4",
+        media_title="百花杀",
+        index=1,
+    )
+    playlist = [
+        PlayItem(title="第1集", url="https://media.example/1.mp4", media_title="百花杀", index=0),
+        next_item,
+    ]
+    calls: list[PlayItem] = []
+
+    def fake_auto_resolve(item: PlayItem, playlist: list[PlayItem] | None = None, **_kwargs) -> bool:
+        assert playlist is not None
+        calls.append(item)
+        item.danmaku_xml = '<i><d p="1,1,25,16777215">第2集</d></i>'
+        return True
+
+    monkeypatch.setattr(controller, "auto_resolve_danmaku", fake_auto_resolve)
+
+    controller.prefetch_next_episode_danmaku(next_item, playlist)
+
+    assert calls == [next_item]
+    assert logs == [
+        "弹幕预下载中: 百花杀 2集",
+        "弹幕预下载成功: 1 条弹幕",
     ]
 
 

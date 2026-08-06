@@ -16,15 +16,15 @@ def test_global_catalog_categories_expose_seven_modules_and_representative_filte
     categories = controller.load_categories()
 
     assert [(category.type_id, category.type_name) for category in categories] == [
-        ("anime", "动漫全境聚合"),
         ("genre_rank", "全球影剧类别"),
         ("movies", "全能电影榜单"),
         ("variety", "全球综艺频道"),
         ("trends", "影剧流行风向"),
         ("platform", "平台分流片库"),
-        ("top10", "流媒体 TOP10"),
+        ("top10", "流媒体TOP10"),
+        ("anime", "动漫全境聚合"),
     ]
-    anime = categories[0]
+    anime = categories[-1]
     assert anime.filters[0] == CategoryFilter(
         key="anime_source",
         name="选择数据源",
@@ -39,8 +39,8 @@ def test_global_catalog_categories_expose_seven_modules_and_representative_filte
             CategoryFilterOption(name="MAL 权威榜单", value="mal"),
         ],
     )
-    assert any(filter_group.key == "platform" for filter_group in categories[5].filters)
-    assert any(filter_group.key == "region" for filter_group in categories[6].filters)
+    assert any(filter_group.key == "platform" for filter_group in categories[4].filters)
+    assert any(filter_group.key == "region" for filter_group in categories[5].filters)
 
 
 def test_global_catalog_tmdb_anime_maps_discover_results_to_vod_items() -> None:
@@ -213,7 +213,7 @@ def test_global_catalog_service_returns_error_item_on_tmdb_failure() -> None:
     assert items == [
         VodItem(
             vod_id="global_catalog:error",
-            vod_name="环球片单加载失败",
+            vod_name="全球片单加载失败",
             vod_content="当前榜单暂时无法获取",
         )
     ]

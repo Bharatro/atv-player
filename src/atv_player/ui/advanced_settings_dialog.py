@@ -37,6 +37,7 @@ from atv_player.controllers.youtube_category_config import (
     load_youtube_category_config,
     parse_youtube_category_config,
 )
+from atv_player.danmaku.providers.dandan import probe_dandan_server
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
 from atv_player.source_preferences import DANMAKU_SOURCE_PREFERENCES, METADATA_SOURCE_PREFERENCES
@@ -46,6 +47,7 @@ from atv_player.ui.theme import (
     build_form_combobox_qss,
     build_form_line_edit_qss,
     build_navigation_tabbar_qss,
+    build_player_spinbox_qss,
     configure_form_flat_combobox,
     current_tokens,
 )
@@ -92,6 +94,7 @@ class _InitialContentSignals(QObject):
     logs_loaded = Signal(object)
     logs_failed = Signal(str)
     tmdb_speed_test_finished = Signal(object)
+    dandan_test_finished = Signal(object)
 
 
 class AdvancedSettingsDialog(ThemedDialogBase):
@@ -120,6 +123,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
         self.appearance_tab = QWidget()
         self.metadata_tab = QWidget()
+        self.danmaku_tab = QWidget()
         self.ai_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
@@ -143,10 +147,25 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_group = QGroupBox("元数据增强配置")
         self.metadata_source_group = QGroupBox("刮削源")
         self.danmaku_source_group = QGroupBox("弹幕源")
+        self.dandan_server_group = QGroupBox("弹弹Play 服务器")
+        self.danmaku_cleaning_group = QGroupBox("弹幕清洗")
         self.metadata_enabled_checkbox = QCheckBox("启用元数据增强")
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.metadata_source_checkboxes: dict[str, QCheckBox] = {}
         self.danmaku_source_checkboxes: dict[str, QCheckBox] = {}
+        self.dandan_base_url_edit = QLineEdit()
+        self.dandan_base_url_edit.setPlaceholderText(
+            "http://host:9321 或 http://host:9321/87654321；留空=关闭此源"
+        )
+        self.dandan_test_button = QPushButton("测试连接")
+        self.dandan_test_status_label = QLabel("")
+        self.dandan_test_status_label.setWordWrap(True)
+        self._dandan_test_running = False
+        self.danmaku_blocked_words_edit = QPlainTextEdit()
+        self.danmaku_duplicate_window_spinbox = QSpinBox()
+        self.danmaku_duplicate_window_spinbox.setRange(0, 60)
+        self.danmaku_duplicate_window_spinbox.setSuffix(" 分钟")
+        self.danmaku_convert_top_bottom_checkbox = QCheckBox("顶部/底部弹幕转为滚动弹幕")
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -298,6 +317,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._initial_content_signals.logs_loaded.connect(self.log_console.apply_records)
         self._initial_content_signals.logs_failed.connect(self.log_console.set_status_message)
         self._initial_content_signals.tmdb_speed_test_finished.connect(self._apply_tmdb_speed_results)
+        self._initial_content_signals.dandan_test_finished.connect(self._apply_dandan_test_result)
         self.logging_enabled_checkbox = self.log_console.logging_enabled_checkbox
         self.cache_group = QGroupBox("缓存管理")
         self.cache_root_label = QLabel("")
@@ -344,6 +364,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             checkbox = QCheckBox(source.label)
             checkbox.setChecked(source.id not in disabled_danmaku_sources)
             self.danmaku_source_checkboxes[source.id] = checkbox
+        self.danmaku_blocked_words_edit.setPlainText("\n".join(config.danmaku_blocked_words))
+        self.danmaku_duplicate_window_spinbox.setValue(config.danmaku_duplicate_window_minutes)
+        self.danmaku_convert_top_bottom_checkbox.setChecked(config.danmaku_convert_top_bottom_to_scroll)
+        self.dandan_base_url_edit.setText(config.dandan_base_url)
         self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
         self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
         self.douban_cookie_edit.setPlainText(config.metadata_douban_cookie)
@@ -443,11 +467,28 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.danmaku_source_group.setLayout(
             _build_source_checkbox_layout(list(self.danmaku_source_checkboxes.values()))
         )
+        dandan_server_layout = QFormLayout()
+        dandan_url_row = QHBoxLayout()
+        dandan_url_row.addWidget(self.dandan_base_url_edit, 1)
+        dandan_url_row.addWidget(self.dandan_test_button)
+        dandan_server_layout.addRow("服务器地址", dandan_url_row)
+        dandan_server_layout.addRow("状态", self.dandan_test_status_label)
+        self.dandan_server_group.setLayout(dandan_server_layout)
+        danmaku_cleaning_layout = QFormLayout()
+        danmaku_cleaning_layout.addRow("屏蔽词（每行一个）", self.danmaku_blocked_words_edit)
+        danmaku_cleaning_layout.addRow("重复内容窗口", self.danmaku_duplicate_window_spinbox)
+        danmaku_cleaning_layout.addRow(self.danmaku_convert_top_bottom_checkbox)
+        self.danmaku_cleaning_group.setLayout(danmaku_cleaning_layout)
         metadata_tab_layout = QVBoxLayout(self.metadata_tab)
         metadata_tab_layout.addWidget(self.metadata_group)
         metadata_tab_layout.addWidget(self.metadata_source_group)
-        metadata_tab_layout.addWidget(self.danmaku_source_group)
         metadata_tab_layout.addStretch(1)
+
+        danmaku_tab_layout = QVBoxLayout(self.danmaku_tab)
+        danmaku_tab_layout.addWidget(self.danmaku_source_group)
+        danmaku_tab_layout.addWidget(self.dandan_server_group)
+        danmaku_tab_layout.addWidget(self.danmaku_cleaning_group)
+        danmaku_tab_layout.addStretch(1)
 
         ai_layout = QFormLayout()
         ai_layout.addRow(self.ai_enabled_checkbox)
@@ -548,6 +589,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
+        self.settings_tabs.addTab(self.danmaku_tab, "弹幕")
         self.settings_tabs.addTab(self.ai_tab, "AI")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
         self.settings_tabs.addTab(self.cache_tab, "缓存管理")
@@ -565,6 +607,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.metadata_enabled_checkbox.toggled.connect(self._sync_metadata_inputs)
         self.tmdb_endpoint_combo.currentIndexChanged.connect(self._sync_tmdb_endpoint_inputs)
         self.tmdb_speed_test_button.clicked.connect(self._test_tmdb_endpoints)
+        self.dandan_test_button.clicked.connect(self._test_dandan_server)
         self.network_proxy_mode_combo.currentIndexChanged.connect(self._sync_network_proxy_inputs)
         self.youtube_category_source_combo.currentIndexChanged.connect(self._sync_youtube_category_source_inputs)
         self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
@@ -663,9 +706,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.mpv_network_timeout_edit,
             self.mpv_default_readahead_edit,
             self.m3u_proxy_segment_prefetch_size_edit,
+            self.dandan_base_url_edit,
         ):
             edit.setStyleSheet(line_edit_qss)
             edit.setFixedHeight(42)
+        self.danmaku_duplicate_window_spinbox.setStyleSheet(
+            build_player_spinbox_qss(tokens, min_height=40)
+        )
+        self.danmaku_duplicate_window_spinbox.setFixedHeight(42)
         if self.ai_chat_model_combo.lineEdit() is not None:
             self.ai_chat_model_combo.lineEdit().setStyleSheet(line_edit_qss)
         self.log_console.apply_theme()
@@ -866,6 +914,36 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             args=(api_key,),
             daemon=True,
         ).start()
+
+    def _test_dandan_server(self) -> None:
+        if self._dandan_test_running:
+            return
+        base_url = self.dandan_base_url_edit.text().strip()
+        if not base_url:
+            self.dandan_test_status_label.setText("请先填写服务器地址")
+            return
+        self._dandan_test_running = True
+        self.dandan_test_button.setEnabled(False)
+        self.dandan_test_button.setText("测试中...")
+        self.dandan_test_status_label.setText("")
+        threading.Thread(
+            target=self._test_dandan_server_in_background,
+            args=(base_url,),
+            daemon=True,
+        ).start()
+
+    def _test_dandan_server_in_background(self, base_url: str) -> None:
+        ok, message = probe_dandan_server(get=httpx.get, base_url=base_url)
+        self._emit_initial_content_signal(
+            self._initial_content_signals.dandan_test_finished, (ok, message)
+        )
+
+    def _apply_dandan_test_result(self, result: tuple[bool, str]) -> None:
+        ok, message = result
+        self._dandan_test_running = False
+        self.dandan_test_button.setEnabled(True)
+        self.dandan_test_button.setText("测试连接")
+        self.dandan_test_status_label.setText(("✅ " if ok else "❌ ") + message)
 
     def _test_tmdb_endpoints_in_background(self, api_key: str) -> None:
         results: list[dict[str, object]] = []
@@ -1278,11 +1356,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             for provider_id, checkbox in self.danmaku_source_checkboxes.items()
             if not checkbox.isChecked()
         ]
+        self._config.dandan_base_url = self.dandan_base_url_edit.text().strip()
         self._config.disabled_metadata_provider_ids = [
             provider_id
             for provider_id, checkbox in self.metadata_source_checkboxes.items()
             if not checkbox.isChecked()
         ]
+        words = [line.strip() for line in self.danmaku_blocked_words_edit.toPlainText().splitlines()]
+        self._config.danmaku_blocked_words = list(dict.fromkeys(word for word in words if word))
+        self._config.danmaku_duplicate_window_minutes = self.danmaku_duplicate_window_spinbox.value()
+        self._config.danmaku_convert_top_bottom_to_scroll = self.danmaku_convert_top_bottom_checkbox.isChecked()
         self._config.metadata_douban_cookie = self.douban_cookie_edit.toPlainText().strip()
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_tmdb_proxy_base_url = self._current_tmdb_proxy_base_url()

@@ -52,6 +52,25 @@ _EXPLICIT_EPISODE_PATTERNS = (
     r"\bE\s*0*([0-9]+)\b",
 )
 
+# Matches an episode title that LEADS with its episode marker (no show-name
+# prefix), e.g. "第十三集 <剧情>" / "13集 ..." / "EP13 ...". Platforms such as
+# Tencent name episodes this way, so the show name is absent and name-similarity
+# against the query cannot judge relevance — such candidates must be kept and
+# matched by episode number instead.
+_LEADING_EPISODE_MARKER = re.compile(
+    r"^\s*(?:第\s*[0-9零一二两三四五六七八九十百]+\s*[集话期部回]"
+    r"|0*[0-9]+\s*[集话期]"
+    r"|S\d+\s*E\s*0*[0-9]+"
+    r"|EP\s*0*[0-9]+"
+    r"|E\s*0*[0-9]+"
+    r"|[0-9]+\s*$)",
+    re.IGNORECASE,
+)
+
+
+def _starts_with_episode_marker(name: str) -> bool:
+    return _LEADING_EPISODE_MARKER.match(name or "") is not None
+
 _TECHNICAL_FILENAME_MARKERS = (
     "2160p",
     "1080p",
@@ -464,6 +483,17 @@ def match_provider(reg_src: str) -> str | None:
     return None
 
 
+def extract_cover_id(url: str) -> str:
+    """Tencent (v.qq.com) cover id from an episode/cover URL, else empty.
+
+    Used to disambiguate same-named shows: the user's playing URL (reg_src) carries
+    the authoritative cover id, so a candidate whose cover id matches is the user's
+    show, not a different same-named title.
+    """
+    match = re.search(r"/x/cover(?:_seo)?/([^/]+)/", url or "")
+    return match.group(1) if match is not None else ""
+
+
 def _simplify_name(name: str) -> str:
     value = normalize_name(name).casefold()
     value = re.sub(
@@ -512,7 +542,27 @@ def episode_title_matches(target: str, candidate: str) -> bool:
     return candidate_base == target_base or candidate_base.startswith(target_base)
 
 
+def episode_matches_request(candidate: str, requested_episode: int, target: str) -> bool:
+    """Whether ``candidate`` is episode ``requested_episode`` of the show in ``target``.
+
+    Platforms such as Tencent name episodes by plot subtitle without repeating the
+    show name (e.g. "第十三集 <剧情>"); for such marker-led titles an episode-number
+    match with no sequel mismatch is enough. For titles that carry a show-name
+    prefix, fall back to :func:`episode_title_matches` so a different show sharing
+    the same episode number is still rejected.
+    """
+    if extract_episode_number(candidate) != requested_episode:
+        return False
+    if _has_sequel_number_mismatch(target, candidate):
+        return False
+    if _starts_with_episode_marker(candidate):
+        return True
+    return episode_title_matches(target, candidate)
+
+
 def should_filter_name(target: str, candidate: str) -> bool:
+    if _starts_with_episode_marker(candidate):
+        return False
     if _has_sequel_number_mismatch(target, candidate):
         return True
     left = _simplify_name(target)
@@ -524,11 +574,21 @@ def should_filter_name(target: str, candidate: str) -> bool:
     return similarity_score(left, right) < 0.55
 
 
+_XML_ILLEGAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _sanitize_xml_text(value: str) -> str:
+    # Strip XML-1.0-illegal control characters (keep \t \n \r). A single such char
+    # in any danmaku would make the whole payload unparseable -> empty render.
+    return _XML_ILLEGAL_CONTROL_RE.sub("", value)
+
+
 def build_xml(records: Sequence[DanmakuRecord]) -> str:
     parts = ['<?xml version="1.0" encoding="UTF-8"?><i>']
     for record in records:
+        content = _sanitize_xml_text(record.content)
         parts.append(
-            f'<d p="{record.time_offset},{record.pos},25,{record.color}">{escape(record.content, quote=False)}</d>'
+            f'<d p="{record.time_offset},{record.pos},25,{record.color}">{escape(content, quote=False)}</d>'
         )
     parts.append("</i>")
     return "".join(parts)

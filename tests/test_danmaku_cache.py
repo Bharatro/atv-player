@@ -1,8 +1,29 @@
 import os
 import time
+from hashlib import sha256
 
 import atv_player.danmaku.cache as danmaku_cache_module
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+
+
+def test_danmaku_ass_cache_path_includes_offset(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path)
+    xml = '<i><d p="5,1,25,16777215">x</d></i>'
+
+    zero = danmaku_cache_module.danmaku_ass_cache_path(xml, 1, time_offset_seconds=0.0)
+    shifted = danmaku_cache_module.danmaku_ass_cache_path(xml, 1, time_offset_seconds=-3.0)
+
+    assert zero != shifted
+
+
+def test_danmaku_xml_cache_path_invalidates_v1_entries(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    name = "剑来 10集"
+    reg_src = "/play/10"
+    old_digest = sha256("\0".join(("v1", name, reg_src)).encode("utf-8")).hexdigest()
+    old_path = tmp_path / "app-cache" / "danmaku" / f"{old_digest}.xml"
+
+    assert danmaku_cache_module.danmaku_xml_cache_path(name, reg_src) != old_path
 
 
 def test_load_or_create_danmaku_ass_cache_reuses_existing_file(monkeypatch, tmp_path) -> None:

@@ -1484,6 +1484,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             danmaku_controller_factory=None,
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
+            danmaku_preference_store=None,
     ) -> None:
         super().__init__(title="alist-tvbox Desktop Player", resizable=True)
         self._init_async_guard()
@@ -1502,6 +1503,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
+        self._danmaku_preference_store = danmaku_preference_store
         self.config = config
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
@@ -4755,7 +4757,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _build_direct_parse_danmaku_controller(self) -> object | None:
         if self._direct_parse_danmaku_loader is None:
             return None
-        return DirectParseDanmakuController(load=self._direct_parse_danmaku_loader)
+        return DirectParseDanmakuController(
+            load=self._direct_parse_danmaku_loader,
+            config_loader=lambda: self.config,
+            danmaku_preference_store=self._danmaku_preference_store,
+        )
 
     def _build_direct_parse_playlist(self, payload: dict[str, Any]) -> list[PlayItem]:
         playlist: list[PlayItem] = []

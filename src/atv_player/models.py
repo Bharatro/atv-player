@@ -60,6 +60,10 @@ class AppConfig:
     m3u_proxy_segment_prefetch_size: int = 2
     episode_title_enhancement_enabled: bool = True
     disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
+    danmaku_blocked_words: list[str] = field(default_factory=list)
+    danmaku_duplicate_window_minutes: int = 0
+    danmaku_convert_top_bottom_to_scroll: bool = False
+    dandan_base_url: str = ""
     disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"
@@ -213,6 +217,7 @@ class PlayItem:
     danmaku_xml: str = ""
     danmaku_pending: bool = False
     danmaku_series_key: str = ""
+    danmaku_offset_seconds: float = 0.0
     danmaku_search_title: str = ""
     danmaku_search_episode: str = ""
     danmaku_search_query: str = ""

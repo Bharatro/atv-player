@@ -23,7 +23,12 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_source_search_result,
     save_cached_danmaku_xml,
 )
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
+from atv_player.danmaku.preferences import (
+    load_item_danmaku_offset,
+    save_item_danmaku_offset,
+)
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import (
     episode_title_matches,
@@ -796,6 +801,32 @@ class SpiderPluginController:
         self._items_by_vod_id: dict[str, VodItem] = {}
         self._search_supports_category = self._detect_search_supports_category()
 
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        value = load_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            playlist,
+        )
+        item.danmaku_offset_seconds = value
+        return value
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        item.danmaku_offset_seconds = save_item_danmaku_offset(
+            self._danmaku_preference_store,
+            item,
+            value,
+            playlist,
+        )
+
     def _ensure_spider_initialized(self) -> None:
         if self._spider_initialized:
             return
@@ -1345,7 +1376,9 @@ class SpiderPluginController:
                 if not is_prefetch:
                     self._log_danmaku_event("弹幕下载中", detail=download_detail)
                 cached_candidate_xml = load_cached_danmaku_xml(search_name, candidate.url)
-                resolved_xml = cached_candidate_xml or self._resolve_danmaku_xml(candidate.url, candidate)
+                resolved_xml = cached_candidate_xml or self._resolve_danmaku_xml(
+                    candidate.url, candidate
+                )
                 if not is_prefetch_valid():
                     return
                 item.danmaku_xml = resolved_xml
@@ -1428,6 +1461,9 @@ class SpiderPluginController:
                 title=existing.title if existing is not None else "",
                 search_title=item.danmaku_search_title,
                 updated_at=int(time.time()),
+                episode_source_offsets=(
+                    existing.episode_source_offsets if existing is not None else {}
+                ),
             )
         )
 
@@ -1572,6 +1608,9 @@ class SpiderPluginController:
                 title=item.selected_danmaku_title or (existing.title if existing is not None else ""),
                 search_title=item.danmaku_search_title or (existing.search_title if existing is not None else ""),
                 updated_at=int(time.time()),
+                episode_source_offsets=(
+                    existing.episode_source_offsets if existing is not None else {}
+                ),
             )
         )
 
@@ -1841,11 +1880,16 @@ class SpiderPluginController:
             if page_url:
                 save_cached_danmaku_xml(cache_query_name, page_url, xml_text)
 
-    def _resolve_danmaku_xml(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
+    def _resolve_danmaku_xml(
+        self,
+        page_url: str,
+        option: DanmakuSourceOption | None = None,
+    ) -> str:
         resolve_method = self._danmaku_service.resolve_danmu
+        kwargs = {}
         if option is not None and "option" in inspect.signature(resolve_method).parameters:
-            return resolve_method(page_url, option=option)
-        return resolve_method(page_url)
+            kwargs["option"] = option
+        return resolve_method(page_url, **kwargs)
 
     def _apply_danmaku_source_search_result(self, item: PlayItem, result) -> None:
         item.danmaku_candidates = result.groups
@@ -2072,6 +2116,39 @@ class SpiderPluginController:
         self._schedule_series_level_danmaku_source_cache_warm(item, reg_src)
         danmaku_count = _count_danmaku_entries(xml_text)
         self._log_danmaku_event("弹幕下载成功", detail=_build_danmaku_success_detail(item, danmaku_count))
+        return xml_text
+
+    def download_danmaku_from_url(self, item: PlayItem, page_url: str) -> str:
+        normalized_url = normalize_danmaku_episode_url(page_url)
+        danmaku_service = self._danmaku_service
+        if danmaku_service is None:
+            raise RuntimeError("弹幕服务不可用")
+        provider_key = danmaku_service.provider_key_for_url(normalized_url)
+        source_title = (item.title or item.media_title or "单集弹幕").strip()
+        self._log_danmaku_event("弹幕下载中", detail=f"{provider_key} - {source_title}")
+        query_name = (item.danmaku_search_query or _build_danmaku_search_name(item)).strip()
+        reg_src = str(item.vod_id or item.url or "").strip()
+        xml_text = load_cached_danmaku_xml(query_name, normalized_url)
+        if not xml_text:
+            xml_text = self._resolve_danmaku_xml(normalized_url)
+        self._save_danmaku_xml_cache(
+            item,
+            query_name,
+            reg_src,
+            xml_text,
+            page_url=normalized_url,
+        )
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = provider_key
+        item.selected_danmaku_url = normalized_url
+        item.selected_danmaku_title = source_title
+        item.danmaku_error = ""
+        self._save_danmaku_source_preference(item)
+        danmaku_count = _count_danmaku_entries(xml_text)
+        self._log_danmaku_event(
+            "弹幕下载成功",
+            detail=_build_danmaku_success_detail(item, danmaku_count),
+        )
         return xml_text
 
     def prefetch_next_episode_danmaku(

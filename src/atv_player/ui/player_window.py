@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
+from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
@@ -151,7 +152,6 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
     ("sohu", "搜狐"),
-    ("migu", "咪咕"),
     ("renren", "人人"),
 ]
 
@@ -771,6 +771,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_dialog: QDialog | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
+        self._danmaku_source_url_edit: QLineEdit | None = None
+        self._danmaku_source_url_download_button: QPushButton | None = None
         self._danmaku_source_search_provider_combo: QComboBox | None = None
         self._danmaku_source_status_label: QLabel | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
@@ -778,6 +780,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_rerun_button: QPushButton | None = None
         self._danmaku_source_clear_button: QPushButton | None = None
         self._danmaku_source_switch_button: QPushButton | None = None
+        self._danmaku_source_offset_spin: QDoubleSpinBox | None = None
+        self._danmaku_source_offset_reset_button: QPushButton | None = None
+        self._pending_danmaku_offset_item: PlayItem | None = None
         self._metadata_scrape_title_edit: QLineEdit | None = None
         self._metadata_scrape_year_edit: QLineEdit | None = None
         self._metadata_scrape_category_combo: QComboBox | None = None
@@ -897,6 +902,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
+        self._danmaku_offset_save_timer = QTimer(self)
+        self._danmaku_offset_save_timer.setSingleShot(True)
+        self._danmaku_offset_save_timer.setInterval(250)
+        self._danmaku_offset_save_timer.timeout.connect(self._apply_pending_danmaku_offset)
         self._primary_external_subtitle_retry_timer = QTimer(self)
         self._primary_external_subtitle_retry_timer.setSingleShot(True)
         self._primary_external_subtitle_retry_timer.timeout.connect(self._retry_apply_primary_external_subtitle)
@@ -928,6 +937,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video = self.video_widget
         self._pending_post_load_item: PlayItem | None = None
         self._pending_post_load_pause = False
+        self._pending_file_loaded_danmaku_item: PlayItem | None = None
         self._pending_ytdlp_metadata_hydration: tuple[PlayItem, int] | None = None
         self._danmaku_render_request_id = 0
         self._pending_danmaku_render_item: PlayItem | None = None
@@ -1487,6 +1497,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         dialog_line_edit_qss = build_form_line_edit_qss(tokens)
         dialog_spinbox_qss = build_form_spinbox_qss(tokens)
+        compact_dialog_spinbox_qss = build_form_spinbox_qss(
+            tokens,
+            border_radius=10,
+            min_height=30,
+        )
         skip_spinbox_qss = build_player_spinbox_qss(player_tokens)
         for combo in self._sidebar_comboboxes():
             combo.setStyleSheet(sidebar_combo_qss)
@@ -1535,7 +1550,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         for edit in self._dialog_line_edits():
             edit.setStyleSheet(dialog_line_edit_qss)
         for spinbox in self._dialog_spinboxes():
-            spinbox.setStyleSheet(dialog_spinbox_qss)
+            spinbox.setStyleSheet(
+                compact_dialog_spinbox_qss
+                if spinbox is self._danmaku_source_offset_spin
+                else dialog_spinbox_qss
+            )
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
         self.progress.setProperty("track_height", 4)
@@ -1624,6 +1643,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             edits.append(self._danmaku_source_title_edit)
         if self._danmaku_source_episode_edit is not None:
             edits.append(self._danmaku_source_episode_edit)
+        if self._danmaku_source_url_edit is not None:
+            edits.append(self._danmaku_source_url_edit)
         return edits
 
     def _dialog_spinboxes(self) -> list[QWidget]:
@@ -1636,6 +1657,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             spinboxes.append(self._danmaku_opacity_spin)
         if self._danmaku_scroll_speed_spin is not None:
             spinboxes.append(self._danmaku_scroll_speed_spin)
+        if self._danmaku_source_offset_spin is not None:
+            spinboxes.append(self._danmaku_source_offset_spin)
         return spinboxes
 
     def _set_fixed_control_height(self, widget: QWidget | None, height: int) -> None:
@@ -1652,6 +1675,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _refresh_danmaku_source_search_row_heights(self) -> None:
         self._set_fixed_control_height(self._danmaku_source_title_edit, 40)
         self._set_fixed_control_height(self._danmaku_source_episode_edit, 40)
+        self._set_fixed_control_height(self._danmaku_source_url_edit, 40)
         self._set_fixed_control_height(self._danmaku_source_search_provider_combo, 42)
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
@@ -3216,6 +3240,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._restore_video_cursor()
 
     def open_session(self, session, start_paused: bool = False) -> None:
+        self._pending_file_loaded_danmaku_item = None
         self._reset_auto_switched_failure_sources()
         self._invalidate_play_item_resolution()
         if session.source_groups:
@@ -3392,6 +3417,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             current_item.selected_danmaku_url,
         )
         if not restored:
+            auto_resolve = getattr(controller, "auto_resolve_danmaku", None)
+            if not callable(auto_resolve):
+                return
+            self._start_danmaku_source_task(
+                current_item,
+                error_prefix="弹幕自动下载失败",
+                task=lambda: auto_resolve(
+                    current_item,
+                    playlist=self.session.playlist,
+                    media_duration_seconds=self._current_media_duration_seconds(),
+                ),
+                configure_danmaku_on_success=True,
+                debug_label="自动下载",
+            )
             return
         selected_url = str(current_item.selected_danmaku_url or "").strip()
         if not selected_url or current_item.danmaku_xml or current_item.danmaku_pending:
@@ -3720,6 +3759,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause,
             len(current_item.external_subtitles),
         )
+        if self.video is self.video_widget:
+            self._pending_file_loaded_danmaku_item = current_item
         try:
             self._video_load(
                 current_item.url,
@@ -3731,6 +3772,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 ytdl_format=playback_ytdl_format,
             )
         except Exception:
+            if self._pending_file_loaded_danmaku_item is current_item:
+                self._pending_file_loaded_danmaku_item = None
             if defer_post_load_configuration:
                 self._pending_post_load_item = None
                 self._pending_post_load_pause = False
@@ -3790,7 +3833,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_video_file_loaded(self) -> None:
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
+        pending_danmaku_item = self._pending_file_loaded_danmaku_item
+        self._pending_file_loaded_danmaku_item = None
         pending_item = self._pending_post_load_item
+        if (
+            pending_danmaku_item is not None
+            and pending_item is not pending_danmaku_item
+            and self.session is not None
+            and 0 <= self.current_index < len(self.session.playlist)
+            and self.session.playlist[self.current_index] is pending_danmaku_item
+        ):
+            self._configure_danmaku_for_current_item()
         if pending_item is None:
             return
 
@@ -4025,6 +4078,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if callable(reset_prefetch):
                 reset_prefetch(self.session)
         self.current_index = index
+        self._sync_danmaku_offset_controls(self.session.playlist[self.current_index])
         self._sync_bilibili_tree_active_group_from_current_index()
         try:
             self.playlist.setCurrentRow(self.current_index)
@@ -4901,7 +4955,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._schedule_followup_subtitle_refresh_if_needed(current_item)
             self._refresh_audio_state()
             self._refresh_video_quality_state()
-            self._configure_danmaku_for_current_item()
+            pending_prepare = self._pending_playback_prepare
+            if pending_prepare is None or pending_prepare.index != self.current_index:
+                self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]
         self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
@@ -6835,6 +6891,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             font_size=font_size,
             opacity=opacity,
             outline_strength=outline_strength,
+            time_offset_seconds=current_item.danmaku_offset_seconds if current_item is not None else 0.0,
         )
 
     def _current_danmaku_render_settings(self) -> dict[str, object]:
@@ -8607,12 +8664,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         search_row.setColumnStretch(1, 1)
         search_row.setColumnStretch(2, 1)
         layout.addLayout(search_row)
+        url_row = QHBoxLayout()
+        url_row.addWidget(QLabel("单集链接", host))
+        self._danmaku_source_url_edit = QLineEdit(host)
+        self._danmaku_source_url_edit.setPlaceholderText("https://v.qq.com/...")
+        url_row.addWidget(self._danmaku_source_url_edit, 1)
+        self._danmaku_source_url_download_button = QPushButton("下载", host)
+        url_row.addWidget(self._danmaku_source_url_download_button)
+        layout.addLayout(url_row)
         columns = QHBoxLayout()
         self._danmaku_source_provider_list = QListWidget(host)
         self._danmaku_source_option_list = QListWidget(host)
         columns.addWidget(self._danmaku_source_provider_list, 1)
         columns.addWidget(self._danmaku_source_option_list, 2)
         layout.addLayout(columns)
+        offset_row = QHBoxLayout()
+        offset_row.addWidget(QLabel("弹幕偏移", host))
+        self._danmaku_source_offset_spin = QDoubleSpinBox(host)
+        self._danmaku_source_offset_spin.setRange(-600.0, 600.0)
+        self._danmaku_source_offset_spin.setDecimals(1)
+        self._danmaku_source_offset_spin.setSingleStep(0.5)
+        self._danmaku_source_offset_spin.setSuffix(" 秒")
+        self._danmaku_source_offset_spin.setFixedHeight(32)
+        offset_row.addWidget(self._danmaku_source_offset_spin)
+        self._danmaku_source_offset_reset_button = QPushButton("重置", host)
+        offset_row.addWidget(self._danmaku_source_offset_reset_button)
+        offset_row.addStretch(1)
+        layout.addLayout(offset_row)
         self._danmaku_source_status_label = QLabel("", host)
         layout.addWidget(self._danmaku_source_status_label)
         actions = QHBoxLayout()
@@ -8627,6 +8705,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
         clear_button.clicked.connect(self._clear_current_item_danmaku_source)
         switch_button.clicked.connect(self._switch_current_item_danmaku_source)
+        self._danmaku_source_url_download_button.clicked.connect(
+            self._download_current_item_danmaku_url
+        )
+        self._danmaku_source_url_edit.returnPressed.connect(
+            self._download_current_item_danmaku_url
+        )
         actions.addWidget(rerun_button)
         actions.addWidget(reset_button)
         actions.addWidget(clear_button)
@@ -8635,6 +8719,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_provider_list.currentRowChanged.connect(self._handle_danmaku_source_provider_changed)
         self._danmaku_source_search_provider_combo.currentIndexChanged.connect(
             self._handle_danmaku_search_provider_changed
+        )
+        offset_spin = self._danmaku_source_offset_spin
+        offset_spin.valueChanged.connect(self._queue_danmaku_offset_save)
+        self._danmaku_source_offset_reset_button.clicked.connect(
+            lambda: offset_spin.setValue(0.0)
         )
         self._danmaku_source_dialog = dialog
         self._apply_theme()
@@ -8770,6 +8859,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        self._sync_danmaku_offset_controls(current_item)
         self._refresh_danmaku_source_dialog_actions(current_item)
         dialog.show()
         self._refresh_danmaku_source_search_row_heights()
@@ -8825,20 +8915,105 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._set_danmaku_search_provider_combo_value(current_item.danmaku_search_provider)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        if self._current_play_item() is current_item:
+            self._sync_danmaku_offset_controls(current_item)
         self._refresh_danmaku_source_dialog_actions(current_item)
         self._refresh_danmaku_source_entry_points()
 
     def _has_active_danmaku_source_task(self, item: PlayItem | None) -> bool:
         return item is not None and self._active_danmaku_source_task_counts.get(id(item), 0) > 0
 
+    def _load_current_danmaku_offset(self, current_item: PlayItem | None = None) -> float:
+        item = current_item or self._current_play_item()
+        if item is None:
+            return 0.0
+        value = 0.0
+        session = self.session
+        controller = session.danmaku_controller if session is not None else None
+        loader = getattr(controller, "load_danmaku_offset", None)
+        if session is not None and item.selected_danmaku_provider and callable(loader):
+            try:
+                value = float(cast(float | int | str, loader(item, session.playlist)))
+            except Exception as exc:
+                self._append_log(f"弹幕偏移读取失败: {exc}")
+                value = 0.0
+        value = max(-600.0, min(value, 600.0))
+        item.danmaku_offset_seconds = value
+        return value
+
+    def _set_danmaku_offset_controls_enabled(self, current_item: PlayItem | None) -> None:
+        enabled = bool(
+            current_item is not None
+            and current_item.danmaku_xml
+            and current_item.selected_danmaku_provider
+            and not self._has_active_danmaku_source_task(current_item)
+        )
+        if self._danmaku_source_offset_spin is not None:
+            self._danmaku_source_offset_spin.setEnabled(enabled)
+        if self._danmaku_source_offset_reset_button is not None:
+            self._danmaku_source_offset_reset_button.setEnabled(enabled)
+
+    def _sync_danmaku_offset_controls(self, current_item: PlayItem | None = None) -> None:
+        item = current_item or self._current_play_item()
+        self._danmaku_offset_save_timer.stop()
+        self._pending_danmaku_offset_item = None
+        value = self._load_current_danmaku_offset(item)
+        if self._danmaku_source_offset_spin is not None:
+            self._danmaku_source_offset_spin.blockSignals(True)
+            self._danmaku_source_offset_spin.setValue(value)
+            self._danmaku_source_offset_spin.blockSignals(False)
+        self._set_danmaku_offset_controls_enabled(item)
+
+    def _queue_danmaku_offset_save(self, _value: float) -> None:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return
+        self._pending_danmaku_offset_item = current_item
+        self._danmaku_offset_save_timer.start()
+
+    def _apply_pending_danmaku_offset(self) -> None:
+        current_item = self._current_play_item()
+        pending_item = self._pending_danmaku_offset_item
+        self._pending_danmaku_offset_item = None
+        if (
+            current_item is None
+            or current_item is not pending_item
+            or self._danmaku_source_offset_spin is None
+        ):
+            return
+        value = self._danmaku_source_offset_spin.value()
+        current_item.danmaku_offset_seconds = value
+        session = self.session
+        controller = session.danmaku_controller if session is not None else None
+        saver = getattr(controller, "save_danmaku_offset", None)
+        if session is not None and callable(saver):
+            try:
+                saver(current_item, value, session.playlist)
+            except Exception as exc:
+                self._append_log(f"弹幕偏移保存失败: {exc}")
+        if current_item.danmaku_xml:
+            self._configure_danmaku_for_current_item()
+
     def _refresh_danmaku_source_dialog_actions(self, current_item: PlayItem | None) -> None:
+        has_active_task = self._has_active_danmaku_source_task(current_item)
+        controller = self.session.danmaku_controller if self.session is not None else None
+        supports_url_download = callable(
+            getattr(controller, "download_danmaku_from_url", None)
+        )
+        url_download_enabled = bool(
+            current_item is not None and not has_active_task and supports_url_download
+        )
+        if self._danmaku_source_url_edit is not None:
+            self._danmaku_source_url_edit.setEnabled(url_download_enabled)
+        if self._danmaku_source_url_download_button is not None:
+            self._danmaku_source_url_download_button.setEnabled(url_download_enabled)
         if self._danmaku_source_rerun_button is not None:
             self._danmaku_source_rerun_button.setEnabled(current_item is not None)
         if self._danmaku_source_clear_button is not None:
             self._danmaku_source_clear_button.setEnabled(
                 bool(
                     current_item is not None
-                    and not self._has_active_danmaku_source_task(current_item)
+                    and not has_active_task
                     and current_item.danmaku_xml
                 )
             )
@@ -8846,12 +9021,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._danmaku_source_switch_button.setEnabled(
                 bool(
                     current_item is not None
-                    and not self._has_active_danmaku_source_task(current_item)
+                    and not has_active_task
                     and any(group.options for group in current_item.danmaku_candidates)
                 )
             )
         if self._danmaku_source_status_label is not None:
             self._danmaku_source_status_label.setText(current_item.danmaku_status_text if current_item is not None else "")
+        self._set_danmaku_offset_controls_enabled(current_item)
 
     def _start_danmaku_source_task(
         self,
@@ -8862,6 +9038,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         configure_danmaku_on_success: bool = False,
         debug_label: str = "",
         queue_if_active: bool = False,
+        status_error_prefix: str = "",
     ) -> None:
         item_id = id(item)
         active_count = self._active_danmaku_source_task_counts.get(item_id, 0)
@@ -8875,9 +9052,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         def run() -> None:
             succeeded = False
+            failure_status = ""
             try:
                 task()
                 succeeded = True
+            except Exception as exc:
+                if status_error_prefix:
+                    failure_status = f"{status_error_prefix}: {exc}"
+                raise
             finally:
                 remaining = self._active_danmaku_source_task_counts.get(item_id, 1) - 1
                 if remaining > 0:
@@ -8885,7 +9067,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 else:
                     self._active_danmaku_source_task_counts.pop(item_id, None)
                     item.danmaku_pending = self._danmaku_source_task_pending_state.pop(item_id, False)
-                    item.danmaku_status_text = ""
+                    item.danmaku_status_text = "" if succeeded else failure_status
                 self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
 
         self._enqueue_controller_task(error_prefix, run)
@@ -9022,6 +9204,45 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             configure_danmaku_on_success=True,
             debug_label="手动切换",
             queue_if_active=True,
+        )
+
+    def _download_current_item_danmaku_url(self) -> None:
+        current_item = self._current_play_item()
+        session = self.session
+        edit = self._danmaku_source_url_edit
+        if current_item is None or session is None or edit is None:
+            return
+        if self._has_active_danmaku_source_task(current_item):
+            return
+        raw_url = edit.text().strip()
+        if not raw_url:
+            current_item.danmaku_status_text = "请输入单集链接"
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        try:
+            page_url = normalize_danmaku_episode_url(raw_url)
+        except ValueError as exc:
+            current_item.danmaku_status_text = str(exc)
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        download = getattr(session.danmaku_controller, "download_danmaku_from_url", None)
+        if not callable(download):
+            current_item.danmaku_status_text = "当前弹幕源不支持单集链接下载"
+            self._refresh_danmaku_source_dialog_actions(current_item)
+            return
+        edit.setText(page_url)
+        current_item.danmaku_status_text = "下载中（单集链接）..."
+
+        def run_download() -> None:
+            download(current_item, page_url)
+
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="单集链接弹幕下载失败",
+            task=run_download,
+            configure_danmaku_on_success=True,
+            debug_label="单集链接下载",
+            status_error_prefix="单集链接弹幕下载失败",
         )
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:

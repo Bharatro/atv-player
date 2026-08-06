@@ -959,3 +959,31 @@ def test_bilibili_resolve_downloads_segments_with_max_concurrency_of_four() -> N
 
     assert len(records) == 6
     assert state["max_active"] == 4
+
+
+def test_expand_page_url_expands_season_from_douban_ss_url() -> None:
+    # 豆瓣发现给的是 ss{seasonId} 播放页 URL；expand_page_url 应展开整季分集。
+    provider = BilibiliDanmakuProvider(get=lambda *a, **k: None)
+
+    def fake_season_payload(ep_id, season_id):
+        assert ep_id is None
+        assert season_id == 26801
+        return {
+            "result": {
+                "main_section": {
+                    "episodes": [
+                        {"ep_id": 1001, "cid": 5001, "title": "1", "long_title": "第一集"},
+                        {"ep_id": 1002, "cid": 5002, "title": "2", "long_title": "第二集"},
+                    ]
+                }
+            }
+        }
+
+    provider._season_payload = fake_season_payload
+
+    items = provider.expand_page_url("https://www.bilibili.com/bangumi/play/ss26801", "鬼灭之刃")
+
+    ep_ids = [item.ep_id for item in items]
+    assert 1001 in ep_ids and 1002 in ep_ids
+    # 展开的 item 应写入 _metadata_by_url，供 resolve 复用
+    assert all(provider._metadata_by_url.get(item.url) is item for item in items if item.ep_id)

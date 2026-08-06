@@ -1,4 +1,31 @@
-from atv_player.danmaku.subtitle import render_danmaku_ass, render_danmaku_srt
+from atv_player.danmaku.subtitle import _parse_danmaku_xml_records, render_danmaku_ass, render_danmaku_srt
+
+
+def test_render_danmaku_ass_applies_fixed_offset_without_mutating_xml() -> None:
+    xml = '<i><d p="5,1,25,16777215">晚三秒</d></i>'
+
+    shifted = render_danmaku_ass(xml, time_offset_seconds=-3.0)
+    repeated = render_danmaku_ass(xml, time_offset_seconds=-3.0)
+
+    assert "Dialogue: 0,0:00:02.00" in shifted
+    assert repeated == shifted
+    assert 'p="5' in xml
+
+
+def test_parse_danmaku_xml_records_recovers_from_illegal_control_chars() -> None:
+    # Cached/external XML may carry XML-1.0-illegal control chars (e.g. \x08 inside
+    # a danmaku). The parser must recover instead of dropping the whole document
+    # (regression: 12万+弹幕因单条 \x08 导致 "弹幕加载失败: 弹幕为空").
+    xml_text = (
+        '<?xml version="1.0" encoding="UTF-8"?><i>'
+        '<d p="1.0,1,25,16777215">护照上\x08不是吗</d>'
+        '<d p="2.0,1,25,16777215">ok</d>'
+        "</i>"
+    )
+
+    records = _parse_danmaku_xml_records(xml_text)
+
+    assert [record.content for record in records] == ["护照上不是吗", "ok"]
 
 
 def test_render_danmaku_srt_builds_top_line_timeline_from_xml() -> None:

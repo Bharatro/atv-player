@@ -3201,6 +3201,197 @@ def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> No
     assert window._danmaku_source_provider_list.count() == 1
 
 
+class FakeOffsetDanmakuController:
+    def __init__(self, offsets: dict[tuple[str, str], float] | None = None) -> None:
+        self.offsets = dict(offsets or {})
+        self.saved: list[float] = []
+
+    def load_danmaku_offset(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> float:
+        del playlist
+        return self.offsets.get((item.title, item.selected_danmaku_provider), 0.0)
+
+    def save_danmaku_offset(
+        self,
+        item: PlayItem,
+        value: float,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        del playlist
+        normalized = float(value)
+        self.offsets[(item.title, item.selected_danmaku_provider)] = normalized
+        self.saved.append(normalized)
+
+
+def build_window_with_loaded_danmaku(
+    qtbot,
+    controller: object,
+    *,
+    items: list[PlayItem] | None = None,
+) -> tuple[PlayerWindow, list[PlayItem]]:
+    playlist = items or [
+        PlayItem(
+            title="第1集",
+            url="https://stream.example/1.m3u8",
+            media_title="红果短剧",
+            danmaku_xml='<i><d p="5,1,25,16777215">ok</d></i>',
+            selected_danmaku_provider="tencent",
+            selected_danmaku_url="https://v.qq.com/1",
+        )
+    ]
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=playlist,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = session
+    window.current_index = 0
+    return window, playlist
+
+
+def test_danmaku_source_dialog_shows_saved_episode_offset(qtbot) -> None:
+    controller = FakeOffsetDanmakuController({("第1集", "tencent"): -3.0})
+    window, _items = build_window_with_loaded_danmaku(qtbot, controller)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_offset_spin is not None
+    assert window._danmaku_source_offset_spin.minimum() == -600.0
+    assert window._danmaku_source_offset_spin.maximum() == 600.0
+    assert window._danmaku_source_offset_spin.singleStep() == 0.5
+    assert window._danmaku_source_offset_spin.value() == -3.0
+    assert window._danmaku_source_offset_spin.isEnabled() is True
+    assert window._danmaku_source_offset_spin.height() == 32
+
+
+def test_danmaku_source_offset_change_debounces_save_and_rerender(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController()
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(items[0].danmaku_offset_seconds),
+    )
+
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_offset_spin.setValue(-2.0)
+    window._danmaku_source_offset_spin.setValue(-3.0)
+
+    qtbot.waitUntil(lambda: controller.saved == [-3.0], timeout=1000)
+    assert renders == [-3.0]
+
+
+def test_danmaku_source_offset_controls_disable_without_xml_provider_or_while_loading(qtbot) -> None:
+    controller = FakeOffsetDanmakuController()
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    item = items[0]
+    item.danmaku_xml = ""
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+    item.danmaku_xml = '<i><d p="5,1,25,16777215">ok</d></i>'
+    item.selected_danmaku_provider = ""
+    window._sync_danmaku_offset_controls(item)
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+    item.selected_danmaku_provider = "tencent"
+    window._active_danmaku_source_task_counts[id(item)] = 1
+    window._sync_danmaku_offset_controls(item)
+    assert window._danmaku_source_offset_spin.isEnabled() is False
+
+
+def test_danmaku_source_offset_reset_saves_zero_and_rerenders(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController({("第1集", "tencent"): -3.0})
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(items[0].danmaku_offset_seconds),
+    )
+
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_offset_reset_button.click()
+
+    qtbot.waitUntil(lambda: controller.saved == [0.0], timeout=1000)
+    assert renders == [0.0]
+
+
+def test_danmaku_source_switch_loads_provider_offset_before_rerender(qtbot, monkeypatch) -> None:
+    controller = FakeOffsetDanmakuController(
+        {
+            ("第1集", "tencent"): -3.0,
+            ("第1集", "youku"): 2.5,
+        }
+    )
+    window, items = build_window_with_loaded_danmaku(qtbot, controller)
+    item = items[0]
+    renders: list[float] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(item.danmaku_offset_seconds),
+    )
+    window._open_danmaku_source_dialog()
+
+    item.selected_danmaku_provider = "youku"
+    window._handle_danmaku_source_task_finished(item, configure_danmaku=True)
+
+    assert item.danmaku_offset_seconds == 2.5
+    assert window._danmaku_source_offset_spin.value() == 2.5
+    assert renders == [2.5]
+
+
+def test_danmaku_source_episode_change_restores_episode_offset(qtbot, monkeypatch) -> None:
+    items = [
+        PlayItem(
+            title="第1集",
+            url="https://stream.example/1.m3u8",
+            danmaku_xml='<i><d p="5,1,25,16777215">one</d></i>',
+            selected_danmaku_provider="tencent",
+        ),
+        PlayItem(
+            title="第2集",
+            url="https://stream.example/2.m3u8",
+            danmaku_xml='<i><d p="5,1,25,16777215">two</d></i>',
+            selected_danmaku_provider="tencent",
+        ),
+    ]
+    controller = FakeOffsetDanmakuController(
+        {
+            ("第1集", "tencent"): -3.0,
+            ("第2集", "tencent"): 4.0,
+        }
+    )
+    window, _items = build_window_with_loaded_danmaku(qtbot, controller, items=items)
+    window._open_danmaku_source_dialog()
+    monkeypatch.setattr(window, "_load_current_item", lambda **_kwargs: None)
+
+    window._play_item_at_index(1)
+
+    assert items[1].danmaku_offset_seconds == 4.0
+    assert window._danmaku_source_offset_spin.value() == 4.0
+
+
+def test_danmaku_source_offset_missing_controller_apis_falls_back_to_zero(qtbot) -> None:
+    window, items = build_window_with_loaded_danmaku(qtbot, object())
+    items[0].danmaku_offset_seconds = 9.0
+
+    window._open_danmaku_source_dialog()
+
+    assert items[0].danmaku_offset_seconds == 0.0
+    assert window._danmaku_source_offset_spin.value() == 0.0
+
+
 def test_player_window_saves_danmaku_render_mode_from_dialog(qtbot) -> None:
     saved = {"called": 0}
     config = AppConfig()
@@ -4018,6 +4209,221 @@ def test_player_window_rerun_danmaku_search_passes_selected_provider_filter(qtbo
     assert item.danmaku_search_provider == "youku"
 
 
+def test_player_window_danmaku_source_dialog_has_episode_url_download_controls(qtbot) -> None:
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=object(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_url_edit is not None
+    assert window._danmaku_source_url_download_button is not None
+    assert window._danmaku_source_url_download_button.text() == "下载"
+    assert window._danmaku_source_title_edit is not None
+    assert window._danmaku_source_episode_edit is not None
+    assert (
+        window._danmaku_source_url_edit.height()
+        == window._danmaku_source_title_edit.height()
+        == window._danmaku_source_episode_edit.height()
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("", "请输入单集链接"),
+        ("v.qq.com/x/1", "请输入完整的 http(s) 单集链接"),
+        ("https:///x/1", "请输入完整的 http(s) 单集链接"),
+    ],
+)
+def test_player_window_rejects_invalid_episode_url_without_starting_task(
+    qtbot,
+    value: str,
+    message: str,
+) -> None:
+    class RecordingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def download_danmaku_from_url(self, _item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            return ""
+
+    controller = RecordingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(value)
+
+    window._download_current_item_danmaku_url()
+
+    assert controller.calls == []
+    assert window._danmaku_source_status_label.text() == message
+
+
+def test_player_window_downloads_episode_url_and_reloads_danmaku(qtbot, monkeypatch) -> None:
+    class BlockingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def download_danmaku_from_url(self, item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            self.started.set()
+            assert self.release.wait(timeout=1)
+            item.danmaku_xml = '<i><d p="1,1,25,16777215">manual</d></i>'
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = url
+            item.selected_danmaku_title = "第1集"
+            return item.danmaku_xml
+
+    controller = BlockingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    renders: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: renders.append(item.danmaku_xml),
+    )
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        " https://v.qq.com/x/cover/demo/ep1.html "
+    )
+
+    window._danmaku_source_url_download_button.click()
+
+    assert controller.started.wait(timeout=1)
+    assert item.danmaku_pending is True
+    assert window._danmaku_source_url_download_button.isEnabled() is False
+    controller.release.set()
+    qtbot.waitUntil(
+        lambda: window._danmaku_source_url_download_button.isEnabled() is True
+    )
+    assert item.danmaku_pending is False
+    assert renders
+    assert all("manual" in xml for xml in renders)
+    assert controller.calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/x/cover/demo/ep1.html"
+    assert window._danmaku_source_url_download_button.isEnabled() is True
+
+
+def test_player_window_episode_url_enter_starts_download(qtbot) -> None:
+    class RecordingController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def download_danmaku_from_url(self, item: PlayItem, url: str) -> str:
+            self.calls.append(url)
+            item.danmaku_xml = "<i>manual</i>"
+            return item.danmaku_xml
+
+    controller = RecordingController()
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8")
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        "https://v.qq.com/x/cover/demo/ep1.html"
+    )
+
+    window._danmaku_source_url_edit.returnPressed.emit()
+
+    qtbot.waitUntil(
+        lambda: controller.calls == ["https://v.qq.com/x/cover/demo/ep1.html"]
+    )
+
+
+def test_player_window_episode_url_failure_keeps_source_and_shows_status(qtbot) -> None:
+    class FailingController:
+        def download_danmaku_from_url(self, _item: PlayItem, _url: str) -> str:
+            raise RuntimeError("boom")
+
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        danmaku_xml="<i>old</i>",
+        selected_danmaku_provider="youku",
+        selected_danmaku_url="https://youku/old",
+        selected_danmaku_title="旧来源",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FailingController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._danmaku_source_url_edit.setText(
+        "https://v.qq.com/x/cover/demo/ep1.html"
+    )
+
+    window._download_current_item_danmaku_url()
+
+    qtbot.waitUntil(lambda: item.danmaku_pending is False)
+    qtbot.waitUntil(
+        lambda: window._danmaku_source_status_label.text()
+        == "单集链接弹幕下载失败: boom"
+    )
+    qtbot.waitUntil(
+        lambda: "单集链接弹幕下载失败: boom" in window.log_view.toPlainText()
+    )
+    assert item.danmaku_xml == "<i>old</i>"
+    assert item.selected_danmaku_provider == "youku"
+    assert item.selected_danmaku_url == "https://youku/old"
+    assert item.selected_danmaku_title == "旧来源"
+
+
 def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qtbot) -> None:
     item = PlayItem(
         title="第1集",
@@ -4057,7 +4463,6 @@ def test_player_window_danmaku_search_provider_combo_includes_builtin_sources(qt
         ("iqiyi", "爱奇艺"),
         ("mgtv", "芒果"),
         ("sohu", "搜狐"),
-        ("migu", "咪咕"),
         ("renren", "人人"),
     ]
 
@@ -5014,7 +5419,7 @@ def test_player_window_skips_mpv_warmup_when_async_playback_loader_returns_quick
     assert video.warm_up_calls == 0
 
 
-def test_player_window_preloads_ytdlp_passthrough_before_initial_load(qtbot) -> None:
+def test_player_window_preloads_ytdlp_passthrough_without_redundant_metadata_hydration(qtbot) -> None:
     class PassThroughM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:
             return False
@@ -5096,7 +5501,9 @@ def test_player_window_preloads_ytdlp_passthrough_before_initial_load(qtbot) -> 
     qtbot.waitUntil(lambda: loader_calls == ["https://www.youtube.com/watch?v=abc123xyz89"])
     qtbot.waitUntil(lambda: video.load_calls == [("https://stream.test/1080/video.mp4", "")])
     window._handle_video_file_loaded()
-    qtbot.waitUntil(lambda: hydration_calls == ["https://stream.test/1080/video.mp4"], timeout=3000)
+    assert window._pending_ytdlp_metadata_hydration is None
+    window._start_pending_ytdlp_metadata_hydration_if_current()
+    assert hydration_calls == []
 
 
 def test_player_window_switches_resolved_ytdlp_quality_via_loader_instead_of_page_url(qtbot) -> None:
@@ -6084,7 +6491,7 @@ def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -
     window.open_session(session)
 
     assert window.playlist_group_combo.isHidden() is False
-    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线", "极速线"]
+    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线(2)", "极速线(2)"]
     assert [window.playlist.item(i).text() for i in range(window.playlist.count())] == ["第1集", "第2集"]
     assert window.playlist.currentRow() == 1
 
@@ -18472,7 +18879,14 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
     qtbot.addWidget(window)
     window.session = PlayerSession(
         vod=VodItem(vod_id="v1", vod_name="红果短剧"),
-        playlist=[PlayItem(title="随便起名", original_title="第1集", url="https://media.example/1.mp4")],
+        playlist=[
+            PlayItem(
+                title="随便起名",
+                original_title="第1集",
+                url="https://media.example/1.mp4",
+                danmaku_offset_seconds=-3.0,
+            )
+        ],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
@@ -18492,6 +18906,7 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
 
     assert path == tmp_path / "demo.ass"
     assert captured["intro_episode_label"] == "第1集"
+    assert captured["time_offset_seconds"] == -3.0
 
 
 def test_player_window_build_danmaku_subtitle_file_passes_readability_settings(qtbot, monkeypatch, tmp_path) -> None:
@@ -18772,6 +19187,66 @@ def test_player_window_playlist_click_restores_cached_danmaku_for_target_item(qt
     assert "第二集弹幕" in session.playlist[1].danmaku_xml
     log_text = window.log_view.toPlainText()
     assert "当前播放: 第2集" in log_text
+
+
+def test_player_window_auto_downloads_danmaku_when_target_cache_is_missing(qtbot, monkeypatch) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.auto_calls: list[tuple[str, list[PlayItem] | None]] = []
+
+        def load_cached_danmaku_sources(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del item, playlist, media_duration_seconds
+            return False
+
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            raise AssertionError(f"unexpected cached source download: {item.title} {page_url}")
+
+        def auto_resolve_danmaku(
+            self,
+            item: PlayItem,
+            playlist: list[PlayItem] | None = None,
+            *,
+            media_duration_seconds: int = 0,
+        ) -> bool:
+            del media_duration_seconds
+            self.auto_calls.append((item.title, playlist))
+            item.danmaku_xml = '<i><d p="1,1,25,16777215">第十五集</d></i>'
+            return True
+
+    controller = FakeDanmakuController()
+    item = PlayItem(
+        title="15(5.41 GB)",
+        url="https://media.example/15.mp4",
+        media_title="百花杀",
+        index=14,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="series-1", vod_name="百花杀"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window.current_index = 0
+
+    monkeypatch.setattr(
+        window,
+        "_start_danmaku_source_task",
+        lambda _item, *, task, **_kwargs: task(),
+    )
+
+    window._maybe_restore_cached_danmaku_for_current_item()
+
+    assert controller.auto_calls == [("15(5.41 GB)", window.session.playlist)]
+    assert "第十五集" in item.danmaku_xml
 
 
 def test_player_window_playlist_click_reloads_same_danmaku_xml_with_fresh_subtitle_path(qtbot) -> None:
@@ -20245,7 +20720,7 @@ def test_player_window_async_session_loader_preserves_resume_offset(qtbot) -> No
     )
 
 
-def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_does_not_restart_on_hydration(qtbot) -> None:
+def test_player_window_async_loader_preloads_prefilled_ytdlp_url_before_initial_playback(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
             self.load_calls: list[tuple[str, bool, int, dict[str, str], str]] = []
@@ -20305,20 +20780,20 @@ def test_player_window_async_loader_with_prefilled_url_starts_immediately_and_do
 
     window.open_session(session)
 
+    assert window.video.load_calls == []
+
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
     assert window.video.load_calls == [
         (
             "https://www.youtube.com/watch?v=test123",
             False,
             0,
-            {},
+            {"Referer": "https://www.youtube.com/"},
             "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best",
         )
     ]
-
-    ready.set()
-
-    qtbot.waitUntil(lambda: window.playlist.item(0).text() == "Hydrated Video", timeout=1000)
-    assert len(window.video.load_calls) == 1
 
 
 def test_player_window_async_loader_does_not_play_plain_youtube_page_url_before_resolution(qtbot) -> None:
@@ -20556,6 +21031,50 @@ def test_player_window_hydrate_only_loader_refreshes_media_controls(qtbot, monke
         "refresh-quality",
         "configure-danmaku",
     ]
+
+
+@pytest.mark.parametrize(
+    ("pending_prepare_index", "expected_configure_calls"),
+    [
+        (0, []),
+        (1, ["configure-danmaku"]),
+    ],
+)
+def test_player_window_hydrate_only_defers_danmaku_during_matching_prepare(
+    qtbot,
+    monkeypatch,
+    pending_prepare_index: int,
+    expected_configure_calls: list[str],
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    window._playback_loader_request_id = 7
+    window._pending_playback_loader = player_window_module._PendingPlaybackLoader(
+        index=0,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        hydrate_only=True,
+    )
+    window._pending_playback_prepare = player_window_module._PendingPlaybackPrepare(
+        index=pending_prepare_index,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        source_url="http://m/1.m3u8",
+    )
+    configure_calls: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: configure_calls.append("configure-danmaku"),
+    )
+
+    window._handle_playback_loader_succeeded(window._playback_loader_request_id, None)
+
+    assert configure_calls == expected_configure_calls
 
 
 def test_player_window_ignores_stale_async_loader_result_after_switching_items(qtbot) -> None:
@@ -23058,6 +23577,86 @@ def test_player_window_context_menu_exit_playback_returns_to_main(qtbot, monkeyp
     qtbot.waitUntil(
         lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)] and controller.stop_calls == [1]
     )
+
+
+def test_player_window_reconfigures_danmaku_after_matching_video_file_loaded(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    current_item = window.session.playlist[0]
+
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        window.video_widget,
+        "load",
+        lambda url, pause=False, start_seconds=0, **_kwargs: calls.append(("load", url)),
+    )
+    monkeypatch.setattr(window.video_widget, "set_speed", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_volume", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_muted", lambda value: None)
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: calls.append(("danmaku", window.session.playlist[window.current_index])),
+    )
+
+    window._start_current_item_playback()
+
+    assert calls == [("load", current_item.url), ("danmaku", current_item)]
+    assert window._pending_file_loaded_danmaku_item is current_item
+
+    window._handle_video_file_loaded()
+
+    assert calls == [
+        ("load", current_item.url),
+        ("danmaku", current_item),
+        ("danmaku", current_item),
+    ]
+    assert window._pending_file_loaded_danmaku_item is None
+
+
+def test_player_window_ignores_stale_file_loaded_danmaku_item(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    original_item = window.session.playlist[0]
+
+    configure_items: list[PlayItem] = []
+    monkeypatch.setattr(window.video_widget, "load", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window.video_widget, "set_speed", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_volume", lambda value: None)
+    monkeypatch.setattr(window.video_widget, "set_muted", lambda value: None)
+    monkeypatch.setattr(
+        window,
+        "_configure_danmaku_for_current_item",
+        lambda: configure_items.append(window.session.playlist[window.current_index]),
+    )
+
+    window._start_current_item_playback()
+    window.current_index = 1
+    window._handle_video_file_loaded()
+
+    assert configure_items == [original_item]
+    assert window._pending_file_loaded_danmaku_item is None
+
+
+def test_player_window_clears_pending_file_loaded_danmaku_item_when_video_load_fails(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+
+    def fail_load(*_args, **_kwargs) -> None:
+        raise RuntimeError("load failed")
+
+    monkeypatch.setattr(window, "_video_load", fail_load)
+
+    with pytest.raises(RuntimeError, match="load failed"):
+        window._start_current_item_playback()
+
+    assert window._pending_file_loaded_danmaku_item is None
 
 
 def test_player_window_applies_post_load_configuration_immediately_on_windows(qtbot, monkeypatch) -> None:

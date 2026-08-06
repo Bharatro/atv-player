@@ -4,6 +4,7 @@ import platform
 from pathlib import Path
 import sys
 import time
+from typing import Any, cast
 import uuid
 
 from atv_player.models import AppConfig, AppIdentity
@@ -54,6 +55,34 @@ def _normalize_danmaku_line_count(value: object) -> int:
     except (TypeError, ValueError):
         return 1
     return max(1, min(normalized, 10))
+
+
+def _normalize_danmaku_blocked_words(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            continue
+        word = raw.strip()
+        if not word or word in seen:
+            continue
+        seen.add(word)
+        output.append(word)
+    return output
+
+
+def _normalize_danmaku_duplicate_window_minutes(value: object) -> int:
+    try:
+        return max(0, min(int(cast(Any, value)), 60))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _normalize_danmaku_render_mode(value: object) -> str:
@@ -432,6 +461,10 @@ class SettingsRepository:
                     metadata_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     episode_title_enhancement_enabled INTEGER NOT NULL DEFAULT 1,
                     disabled_danmaku_provider_ids TEXT NOT NULL DEFAULT '[]',
+                    danmaku_blocked_words TEXT NOT NULL DEFAULT '[]',
+                    danmaku_duplicate_window_minutes INTEGER NOT NULL DEFAULT 0,
+                    danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0,
+                    dandan_base_url TEXT NOT NULL DEFAULT '',
                     disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
@@ -537,6 +570,22 @@ class SettingsRepository:
             if "disabled_danmaku_provider_ids" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN disabled_danmaku_provider_ids TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "danmaku_blocked_words" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN danmaku_blocked_words TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "danmaku_duplicate_window_minutes" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN danmaku_duplicate_window_minutes INTEGER NOT NULL DEFAULT 0"
+                )
+            if "danmaku_convert_top_bottom_to_scroll" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0"
+                )
+            if "dandan_base_url" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN dandan_base_url TEXT NOT NULL DEFAULT ''"
                 )
             if "disabled_metadata_provider_ids" not in columns:
                 conn.execute(
@@ -862,6 +911,9 @@ class SettingsRepository:
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     disabled_danmaku_provider_ids,
+                    danmaku_blocked_words,
+                    danmaku_duplicate_window_minutes,
+                    danmaku_convert_top_bottom_to_scroll,
                     disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
@@ -939,7 +991,7 @@ class SettingsRepository:
                     home_mode
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
                 )
@@ -1008,6 +1060,9 @@ class SettingsRepository:
                     metadata_enhancement_enabled,
                     episode_title_enhancement_enabled,
                     disabled_danmaku_provider_ids,
+                    danmaku_blocked_words,
+                    danmaku_duplicate_window_minutes,
+                    danmaku_convert_top_bottom_to_scroll,
                     disabled_metadata_provider_ids,
                     metadata_douban_cookie,
                     metadata_tmdb_api_key,
@@ -1083,7 +1138,8 @@ class SettingsRepository:
                     ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
-                    home_mode
+                    home_mode,
+                    dandan_base_url
                 FROM app_config
                 WHERE id = 1
                 """
@@ -1099,6 +1155,9 @@ class SettingsRepository:
             metadata_enhancement_enabled,
             episode_title_enhancement_enabled,
             disabled_danmaku_provider_ids,
+            danmaku_blocked_words,
+            danmaku_duplicate_window_minutes,
+            danmaku_convert_top_bottom_to_scroll,
             disabled_metadata_provider_ids,
             metadata_douban_cookie,
             metadata_tmdb_api_key,
@@ -1175,6 +1234,7 @@ class SettingsRepository:
             following_episode_display_mode,
             following_episode_grid_columns,
             home_mode,
+            dandan_base_url,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -1188,6 +1248,15 @@ class SettingsRepository:
             disabled_danmaku_provider_ids=_normalize_disabled_provider_ids(
                 disabled_danmaku_provider_ids,
                 VALID_DANMAKU_PROVIDER_IDS,
+            ),
+            danmaku_blocked_words=_normalize_danmaku_blocked_words(
+                danmaku_blocked_words
+            ),
+            danmaku_duplicate_window_minutes=_normalize_danmaku_duplicate_window_minutes(
+                danmaku_duplicate_window_minutes
+            ),
+            danmaku_convert_top_bottom_to_scroll=bool(
+                danmaku_convert_top_bottom_to_scroll
             ),
             disabled_metadata_provider_ids=_normalize_disabled_provider_ids(
                 disabled_metadata_provider_ids,
@@ -1287,6 +1356,7 @@ class SettingsRepository:
                 )
             ),
             home_mode=_normalize_home_mode(home_mode),
+            dandan_base_url=str(dandan_base_url or "").strip(),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1304,6 +1374,9 @@ class SettingsRepository:
                     metadata_enhancement_enabled = ?,
                     episode_title_enhancement_enabled = ?,
                     disabled_danmaku_provider_ids = ?,
+                    danmaku_blocked_words = ?,
+                    danmaku_duplicate_window_minutes = ?,
+                    danmaku_convert_top_bottom_to_scroll = ?,
                     disabled_metadata_provider_ids = ?,
                     metadata_douban_cookie = ?,
                     metadata_tmdb_api_key = ?,
@@ -1379,7 +1452,8 @@ class SettingsRepository:
                     ai_following_summary_enabled = ?,
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?,
-                    home_mode = ?
+                    home_mode = ?,
+                    dandan_base_url = ?
                 WHERE id = 1
                 """,
                 (
@@ -1398,6 +1472,16 @@ class SettingsRepository:
                         ),
                         ensure_ascii=False,
                     ),
+                    json.dumps(
+                        _normalize_danmaku_blocked_words(
+                            config.danmaku_blocked_words
+                        ),
+                        ensure_ascii=False,
+                    ),
+                    _normalize_danmaku_duplicate_window_minutes(
+                        config.danmaku_duplicate_window_minutes
+                    ),
+                    int(config.danmaku_convert_top_bottom_to_scroll),
                     json.dumps(
                         _normalize_disabled_provider_ids(
                             config.disabled_metadata_provider_ids,
@@ -1485,6 +1569,7 @@ class SettingsRepository:
                         config.following_episode_grid_columns
                     ),
                     _normalize_home_mode(config.home_mode),
+                    str(config.dandan_base_url or "").strip(),
                 ),
             )
 

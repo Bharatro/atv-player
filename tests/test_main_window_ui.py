@@ -1855,7 +1855,7 @@ def test_main_window_keeps_personal_tabs_before_dynamic_spider_tabs(qtbot) -> No
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -1886,7 +1886,7 @@ def test_main_window_places_global_catalog_after_douban(qtbot) -> None:
     )
     qtbot.addWidget(window)
 
-    assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "环球片单", "电报影视"]
+    assert [window.nav_tabs.tabText(i) for i in range(3)] == ["豆瓣电影", "全球片单", "电报影视"]
     assert window._builtin_tab_definitions[1].key == "global_catalog"
 
 
@@ -2173,7 +2173,7 @@ def test_main_window_applies_builtin_tab_overrides_but_keeps_header_shortcuts(qt
         "文件浏览",
         "我的收藏",
         "我的追更",
-        "环球片单",
+        "全球片单",
         "Emby",
         "Jellyfin",
         "飞牛影视",
@@ -2208,7 +2208,7 @@ def test_main_window_refreshes_builtin_tabs_after_saving_overrides(qtbot) -> Non
     )
 
     assert config.builtin_tab_overrides_json == '{"order":["history","douban"],"hidden":["history"],"renames":{"douban":"电影"}}'
-    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:3] == ["电影", "环球片单", "电报影视"]
+    assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())][:3] == ["电影", "全球片单", "电报影视"]
 
 
 def test_main_window_builtin_tab_context_menu_renames_tab(qtbot, monkeypatch) -> None:
@@ -2376,7 +2376,7 @@ def test_main_window_header_management_actions_use_icon_buttons_with_tooltips(qt
         "我的收藏",
         "我的追更",
         "播放记录",
-        "插件管理",
+        "源管理",
         "直播源管理",
         "高级设置",
         "退出登录",
@@ -2436,7 +2436,7 @@ def test_main_window_hides_pansou_tab_until_global_search_has_results(qtbot) -> 
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -2511,12 +2511,7 @@ def test_main_window_does_not_precreate_global_search_popup_during_startup_plugi
     assert load_started.wait(timeout=1)
     QApplication.processEvents()
 
-    top_level_popups = [
-        widget
-        for widget in QApplication.topLevelWidgets()
-        if isinstance(widget, main_window_module.GlobalSearchPopup)
-    ]
-    assert top_level_popups == []
+    assert window._global_search_popup is None
 
     release_load.set()
 
@@ -2628,7 +2623,7 @@ def test_main_window_replaces_loading_placeholder_with_loaded_plugin_tabs(qtbot)
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2688,7 +2683,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
         lambda: len(window._plugin_pages) == 1
         and [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -2709,7 +2704,7 @@ def test_main_window_shows_incrementally_loaded_plugin_tabs_before_startup_load_
     qtbot.waitUntil(
         lambda: [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
             "豆瓣电影",
-            "环球片单",
+            "全球片单",
             "电报影视",
             "网络直播",
             "Emby",
@@ -3239,7 +3234,7 @@ def test_main_window_hides_overflow_plugin_tabs_behind_more_button(qtbot, monkey
 
     assert [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())] == [
         "豆瓣电影",
-        "环球片单",
+        "全球片单",
         "电报影视",
         "网络直播",
         "Emby",
@@ -4369,9 +4364,9 @@ def test_main_window_uses_centered_rounded_search_box_with_icon_controls(qtbot) 
     window.show()
 
     assert window.global_search_edit.parentWidget() is not None
-    assert window.global_search_container.width() == 400
-    assert window.global_search_container.minimumWidth() == 400
-    assert window.global_search_container.maximumWidth() == 400
+    assert window.global_search_container.width() == 444
+    assert window.global_search_container.minimumWidth() == 444
+    assert window.global_search_container.maximumWidth() == 444
     assert window.global_search_edit.placeholderText() == "搜索"
     assert window.global_search_edit.isClearButtonEnabled() is True
     assert window.global_search_edit.styleSheet()
@@ -6857,6 +6852,30 @@ def test_main_window_global_search_offline_download_opens_placeholder_player_imm
     assert real_request.source_vod_id == magnet
 
 
+def test_main_window_direct_parse_danmaku_controller_uses_current_cleaning_config(qtbot) -> None:
+    config = AppConfig(danmaku_blocked_words=["广告"])
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        plugin_manager=FakePluginManager(),
+        direct_parse_danmaku_loader=lambda _url: {},
+    )
+    qtbot.addWidget(window)
+
+    controller = window._build_direct_parse_danmaku_controller()
+
+    assert controller is not None
+    assert controller._config_loader() is config
+
+
 def test_main_window_global_search_builds_episode_playlist_from_direct_parse_detail(qtbot, monkeypatch) -> None:
     class FakeParserService:
         def __init__(self) -> None:
@@ -7190,7 +7209,7 @@ def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.plugin_manager_button.toolTip() == "源管理"
     assert window.live_source_manager_button.toolTip() == "直播源管理"
 
 
@@ -7211,7 +7230,7 @@ def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) 
     qtbot.addWidget(window)
     window.show()
 
-    assert window.plugin_manager_button.toolTip() == "插件管理"
+    assert window.plugin_manager_button.toolTip() == "源管理"
     assert window.live_source_manager_button.toolTip() == "直播源管理"
     assert not hasattr(window, "parse_manager_button")
 
@@ -7613,7 +7632,23 @@ def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:
     assert len(saved) == 1
 
 
-def test_advanced_settings_dialog_exposes_migu_danmaku_source_only(qtbot) -> None:
+def test_advanced_settings_dialog_populates_danmaku_cleaning(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(
+        danmaku_blocked_words=["广告", "剧透"],
+        danmaku_duplicate_window_minutes=5,
+        danmaku_convert_top_bottom_to_scroll=True,
+    )
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.danmaku_blocked_words_edit.toPlainText() == "广告\n剧透"
+    assert dialog.danmaku_duplicate_window_spinbox.value() == 5
+    assert dialog.danmaku_convert_top_bottom_checkbox.isChecked() is True
+
+
+def test_advanced_settings_dialog_saves_normalized_danmaku_cleaning(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     saved: list[AppConfig] = []
@@ -7621,14 +7656,15 @@ def test_advanced_settings_dialog_exposes_migu_danmaku_source_only(qtbot) -> Non
     dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
     qtbot.addWidget(dialog)
 
-    assert dialog.danmaku_source_checkboxes["migu"].text() == "咪咕"
-    assert "migu" not in dialog.metadata_source_checkboxes
-
-    dialog.danmaku_source_checkboxes["migu"].setChecked(False)
+    dialog.danmaku_blocked_words_edit.setPlainText(" 广告 \n剧透\n广告\n")
+    dialog.danmaku_duplicate_window_spinbox.setValue(3)
+    dialog.danmaku_convert_top_bottom_checkbox.setChecked(True)
     dialog._save()
 
-    assert "migu" in config.disabled_danmaku_provider_ids
-    assert "migu" not in config.disabled_metadata_provider_ids
+    assert config.danmaku_blocked_words == ["广告", "剧透"]
+    assert config.danmaku_duplicate_window_minutes == 3
+    assert config.danmaku_convert_top_bottom_to_scroll is True
+    assert saved == [config]
 
 
 def test_advanced_settings_dialog_exposes_renren_danmaku_source(qtbot) -> None:
@@ -7647,6 +7683,34 @@ def test_advanced_settings_dialog_exposes_renren_danmaku_source(qtbot) -> None:
 
     assert "renren" in config.disabled_danmaku_provider_ids
     assert "renren" not in config.disabled_metadata_provider_ids
+
+
+def test_advanced_settings_dialog_exposes_anime_danmaku_sources(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert {
+        key: dialog.danmaku_source_checkboxes[key].text()
+        for key in ("dandan", "bahamut", "animeko")
+    } == {
+        "dandan": "弹弹Play",
+        "bahamut": "巴哈姆特",
+        "animeko": "Animeko",
+    }
+
+    dialog.danmaku_source_checkboxes["dandan"].setChecked(False)
+    dialog.danmaku_source_checkboxes["bahamut"].setChecked(False)
+    dialog.danmaku_source_checkboxes["animeko"].setChecked(False)
+    dialog._save()
+
+    assert config.disabled_danmaku_provider_ids[-3:] == [
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
 
 
 def test_advanced_settings_dialog_arranges_source_checkboxes_in_columns(qtbot) -> None:

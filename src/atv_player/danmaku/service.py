@@ -10,9 +10,11 @@ from atv_player.ai.enrichment import DanmakuQueryRefinementInput
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.providers import (
+    AnimekoDanmakuProvider,
+    BahamutDanmakuProvider,
     BilibiliDanmakuProvider,
+    DandanDanmakuProvider,
     IqiyiDanmakuProvider,
-    MiguDanmakuProvider,
     MgtvDanmakuProvider,
     RenrenDanmakuProvider,
     SohuDanmakuProvider,
@@ -21,9 +23,12 @@ from atv_player.danmaku.providers import (
 )
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
 from atv_player.danmaku.providers.base import DanmakuProvider
+from atv_player.models import AppConfig
 from atv_player.danmaku.utils import (
     build_xml,
+    episode_matches_request,
     episode_title_matches,
+    extract_cover_id,
     extract_episode_number,
     extract_variety_issue_key,
     has_explicit_episode_marker,
@@ -35,6 +40,10 @@ from atv_player.danmaku.utils import (
     strip_episode_suffix,
     strip_variety_issue_suffix,
 )
+
+from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
+from atv_player.danmaku.processing import clean_records
+from atv_player.danmaku.providers.other import OtherDanmakuProvider
 
 
 logger = logging.getLogger(__name__)
@@ -89,8 +98,10 @@ _PROVIDER_LABELS = {
     "iqiyi": "爱奇艺",
     "mgtv": "芒果",
     "sohu": "搜狐",
-    "migu": "咪咕",
     "renren": "人人",
+    "dandan": "弹弹Play",
+    "bahamut": "巴哈姆特",
+    "animeko": "Animeko",
 }
 
 
@@ -211,13 +222,13 @@ def _filter_search_items_by_media_duration_gap(
         item
         for item in items
         if extract_episode_number(item.name) == requested_episode
-        and episode_title_matches(normalized_query, item.name)
+        and episode_matches_request(item.name, requested_episode, normalized_query)
     ]
     if not preserved_exact_matches:
         return filtered
     if any(
         extract_episode_number(item.name) == requested_episode
-        and episode_title_matches(normalized_query, item.name)
+        and episode_matches_request(item.name, requested_episode, normalized_query)
         for item in filtered
     ):
         return filtered
@@ -253,13 +264,13 @@ def _filter_source_options_by_media_duration_gap(
         option
         for option in options
         if extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
     ]
     if not preserved_exact_matches:
         return filtered
     if any(
         extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
         for option in filtered
     ):
         return filtered
@@ -303,7 +314,7 @@ def _source_option_query_match_priority(query_name: str, option: DanmakuSourceOp
     exact_episode_match = int(
         requested_episode is not None
         and extract_episode_number(option.name) == requested_episode
-        and episode_title_matches(normalized_query, option.name)
+        and episode_matches_request(option.name, requested_episode, normalized_query)
     )
     return variety_issue_match, exact_episode_match
 
@@ -314,13 +325,20 @@ class DanmakuService:
         providers: dict[str, DanmakuProvider],
         provider_order: list[str],
         disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+        config_loader: Callable[[], AppConfig] | None = None,
         ai_enrichment_service=None,
+        douban_discovery=None,
+        other_provider=None,
     ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
         self._disabled_provider_ids_loader = disabled_provider_ids_loader
+        self._config_loader = config_loader or AppConfig
         self._ai_enrichment_service = ai_enrichment_service
+        self._douban_discovery = douban_discovery
+        if other_provider is not None:
+            self._providers['other'] = other_provider
 
     def _disabled_provider_ids(self) -> set[str]:
         if self._disabled_provider_ids_loader is None:
@@ -345,6 +363,15 @@ class DanmakuService:
         if matched is not None:
             return [matched]
         return [key for key in self._provider_order if self._provider_enabled(key)]
+
+    def provider_key_for_url(self, page_url: str) -> str:
+        for key in self._provider_order:
+            if not self._provider_enabled(key):
+                continue
+            provider = self._providers.get(key)
+            if provider is not None and provider.supports(page_url):
+                return key
+        raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
     @property
     def provider_order(self) -> list[str]:
@@ -442,7 +469,7 @@ class DanmakuService:
             if explicit_episode_request and requested_episode is not None:
                 has_matching_episode = any(
                     extract_episode_number(option.name) == requested_episode
-                    and episode_title_matches(normalized_query, option.name)
+                    and episode_matches_request(option.name, requested_episode, normalized_query)
                     for option in options
                 )
                 if has_matching_episode:
@@ -456,6 +483,7 @@ class DanmakuService:
                 ranked_rows.append((group, option, stable_index))
                 stable_index += 1
         if media_duration_seconds > 0:
+            reg_src_cover_id = extract_cover_id(reg_src)
             ranked_rows.sort(
                 key=lambda row: self._danmaku_source_option_sort_key(
                     row[1],
@@ -463,6 +491,7 @@ class DanmakuService:
                     preferred_provider=preferred_provider,
                     preferred_page_url=preferred_page_url,
                     reg_src=reg_src,
+                    reg_src_cover_id=reg_src_cover_id,
                     media_duration_seconds=media_duration_seconds,
                     stable_index=row[2],
                 )
@@ -527,7 +556,7 @@ class DanmakuService:
                 item
                 for item in results
                 if extract_episode_number(item.name) == requested_episode
-                and episode_title_matches(match_query, item.name)
+                and episode_matches_request(item.name, requested_episode, match_query)
             ]
             if not matching and preferred_key is not None and not provider_filter:
                 fallback_keys = [
@@ -540,7 +569,7 @@ class DanmakuService:
                         item
                         for item in results
                         if extract_episode_number(item.name) == requested_episode
-                        and episode_title_matches(match_query, item.name)
+                        and episode_matches_request(item.name, requested_episode, match_query)
                     ]
             no_episode = [
                 item
@@ -598,6 +627,24 @@ class DanmakuService:
                 self._provider_rank.get(item.provider, len(self._provider_order)),
             )
 
+        if not results:
+            discovered = self._discover_via_douban(match_query, normalized, provider_filter)
+            if discovered:
+                results = discovered
+            elif (
+                "other" in self._providers
+                and reg_src.startswith("http")
+                and not provider_filter
+            ):
+                results = [
+                    DanmakuSearchItem(
+                        provider="other",
+                        name=normalized or match_query,
+                        url=reg_src,
+                        duration_seconds=0,
+                    )
+                ]
+
         return sorted(
             results,
             key=sort_key,
@@ -628,6 +675,55 @@ class DanmakuService:
                     results.append(replace(item, ratio=ratio, simi=simi))
         return results
 
+    def _discover_via_douban(
+        self, match_query: str, normalized: str, provider_filter: str
+    ) -> list[DanmakuSearchItem]:
+        if self._douban_discovery is None:
+            return []
+        keyword = strip_episode_suffix(strip_variety_issue_suffix(match_query)) or match_query
+        if not keyword:
+            return []
+        try:
+            subjects = self._douban_discovery.search_subjects(keyword)
+        except Exception:
+            logger.exception("Douban discovery search failed keyword=%s", keyword)
+            return []
+        discovered: list[DanmakuSearchItem] = []
+        seen_urls: set[str] = set()
+        for subject in subjects:
+            if should_filter_name(keyword, subject.title):
+                continue
+            try:
+                vendors = self._douban_discovery.fetch_vendors(subject.douban_id)
+            except Exception:
+                logger.exception("Douban fetch_vendors failed id=%s", subject.douban_id)
+                continue
+            for vendor in vendors:
+                if provider_filter and vendor.provider != provider_filter:
+                    continue
+                provider = self._providers.get(vendor.provider)
+                if provider is None or not self._provider_enabled(vendor.provider):
+                    continue
+                expand = getattr(provider, 'expand_page_url', None)
+                if not callable(expand):
+                    continue
+                page_url = vendor_to_page_url(vendor)
+                if not page_url:
+                    continue
+                try:
+                    items = expand(page_url, normalized)
+                except Exception:
+                    logger.exception("Douban expand failed provider=%s url=%s", vendor.provider, page_url)
+                    continue
+                for item in items or []:
+                    if item.url in seen_urls:
+                        continue
+                    seen_urls.add(item.url)
+                    discovered.append(item)
+            if discovered:
+                break
+        return discovered
+
     def _danmaku_source_option_sort_key(
         self,
         option: DanmakuSourceOption,
@@ -636,6 +732,7 @@ class DanmakuService:
         preferred_provider: str,
         preferred_page_url: str,
         reg_src: str,
+        reg_src_cover_id: str = "",
         media_duration_seconds: int,
         stable_index: int,
     ) -> tuple[int, ...]:
@@ -643,11 +740,17 @@ class DanmakuService:
         preferred_page = int(bool(preferred_page_url) and option.url == preferred_page_url)
         preferred_provider_match = int(bool(preferred_provider) and option.provider == preferred_provider)
         reg_src_provider_match = int(option.provider == self._preferred_provider_key(reg_src))
+        # Among same-named shows on the same provider, prefer the candidate whose
+        # cover id matches the user's playing URL (multi-show disambiguation).
+        reg_src_cover_match = int(
+            bool(reg_src_cover_id) and extract_cover_id(option.url) == reg_src_cover_id
+        )
         duration_known = int(option.duration_seconds > 0 and media_duration_seconds > 0)
         duration_gap = abs(option.duration_seconds - media_duration_seconds) if duration_known else 10**9
         return (
             -variety_issue_match,
             -exact_episode_match,
+            -reg_src_cover_match,
             -preferred_page,
             -preferred_provider_match,
             -reg_src_provider_match,
@@ -780,6 +883,19 @@ class DanmakuService:
             resolve_context=merged_context,
         )
 
+    def _process_records(self, records):
+        try:
+            config = self._config_loader()
+        except Exception:
+            logger.exception("Failed to load danmaku cleaning config")
+            return list(records)
+        return clean_records(
+            records,
+            blocked_words=config.danmaku_blocked_words,
+            duplicate_window_minutes=config.danmaku_duplicate_window_minutes,
+            convert_top_bottom=config.danmaku_convert_top_bottom_to_scroll,
+        )
+
     def resolve_danmu(self, page_url: str, option: DanmakuSourceOption | None = None) -> str:
         provider_keys = list(self._provider_order)
         selected_option_matches = option is not None and option.url == page_url and bool(option.provider)
@@ -801,6 +917,7 @@ class DanmakuService:
             records = provider.resolve(page_url)
             if not records:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+            records = self._process_records(records)
             return build_xml(records)
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
 
@@ -810,9 +927,15 @@ def create_default_danmaku_service(
     post=httpx.post,
     disabled_provider_ids: list[str] | None = None,
     disabled_provider_ids_loader: Callable[[], list[str]] | None = None,
+    config_loader: Callable[[], AppConfig] | None = None,
     ai_enrichment_service=None,
 ) -> DanmakuService:
     disabled = {str(item or "").strip() for item in (disabled_provider_ids or [])}
+    dandan_base_url_loader = (
+        lambda: str(config_loader().dandan_base_url or "")
+        if config_loader is not None
+        else ""
+    )
     providers = {
         "tencent": TencentDanmakuProvider(get=get, post=post),
         "youku": YoukuDanmakuProvider(get=get, post=post),
@@ -820,19 +943,38 @@ def create_default_danmaku_service(
         "iqiyi": IqiyiDanmakuProvider(get=get),
         "mgtv": MgtvDanmakuProvider(get=get),
         "sohu": SohuDanmakuProvider(get=get),
-        "migu": MiguDanmakuProvider(get=get, post=post),
         "renren": RenrenDanmakuProvider(get=get),
+        "dandan": DandanDanmakuProvider(get=get, base_url_loader=dandan_base_url_loader),
+        "bahamut": BahamutDanmakuProvider(get=get),
+        "animeko": AnimekoDanmakuProvider(get=get, post=post),
     }
+    fixed_order = [
+        "tencent",
+        "youku",
+        "bilibili",
+        "iqiyi",
+        "mgtv",
+        "sohu",
+        "renren",
+        "dandan",
+        "bahamut",
+        "animeko",
+    ]
     provider_order = [
         key
-        for key in ["tencent", "youku", "bilibili", "iqiyi", "mgtv", "sohu", "migu", "renren"]
+        for key in fixed_order
         if key not in disabled
     ]
     if disabled_provider_ids_loader is None and disabled:
         disabled_provider_ids_loader = lambda: list(disabled)
+    douban_discovery = DoubanDiscovery(get=get, post=post)
+    other_provider = OtherDanmakuProvider(get=get, server="https://dmku.hls.one/")
     return DanmakuService(
         providers,
         provider_order=provider_order,
         disabled_provider_ids_loader=disabled_provider_ids_loader,
+        config_loader=config_loader,
         ai_enrichment_service=ai_enrichment_service,
+        douban_discovery=douban_discovery,
+        other_provider=other_provider,
     )
