@@ -6909,6 +6909,30 @@ def test_player_window_rewritten_episode_title_uses_original_filename_for_toolti
     assert window.playlist.item(0).toolTip() == "S01E01.mkv"
 
 
+def test_player_window_playlist_keeps_file_size_when_episode_title_is_rewritten(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="示例剧集"),
+        playlist=[
+            PlayItem(
+                title="S01E01.mkv(1.25 GB)",
+                original_title="S01E01.mkv(1.25 GB)",
+                episode_display_title="第1集 星门初启",
+                url="http://b/1.m3u8",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.playlist.item(0).text() == "第1集 星门初启 (1.25 GB)"
+
+
 def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

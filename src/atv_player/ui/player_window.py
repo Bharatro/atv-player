@@ -85,6 +85,7 @@ from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
+from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
 from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
@@ -2362,11 +2363,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         for item in self.session.playlist:
             display_title = playlist_item_display_title(item, self.playlist_title_mode)
-            widget_item = QListWidgetItem(display_title)
+            widget_item = QListWidgetItem(self._playlist_item_display_text(item, display_title))
             widget_item.setToolTip(self._playlist_item_tooltip(item, display_title))
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
         self._sync_playlist_item_styles()
+
+    @staticmethod
+    def _playlist_item_display_text(item: PlayItem, display_title: str) -> str:
+        """Keep drive/file sizes visible after episode-title rewriting."""
+        size = int(getattr(item, "size", 0) or 0)
+        if size <= 0:
+            for candidate in (getattr(item, "original_title", ""), getattr(item, "title", "")):
+                size = parse_size_bytes(candidate)
+                if size > 0:
+                    break
+        if size <= 0 or re.search(r"\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB)\b", display_title, re.IGNORECASE):
+            return display_title
+        return f"{display_title} ({format_size_bytes(size)})"
 
     def _playlist_item_tooltip(self, item: PlayItem, display_title: str) -> str:
         tooltip = display_title
@@ -2394,7 +2408,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.bilibili_playlist_tree.addTopLevelItem(group_item)
             for item_index, play_item in enumerate(playlist):
                 display_title = playlist_item_display_title(play_item, self.playlist_title_mode)
-                leaf = QTreeWidgetItem([display_title])
+                leaf = QTreeWidgetItem([self._playlist_item_display_text(play_item, display_title)])
                 leaf.setData(0, Qt.ItemDataRole.UserRole, ("leaf", group_index, item_index))
                 leaf.setToolTip(0, self._playlist_item_tooltip(play_item, display_title))
                 group_item.addChild(leaf)

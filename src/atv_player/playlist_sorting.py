@@ -54,6 +54,20 @@ def parse_size_bytes(value: object) -> int:
     return max(0, int(float(match.group(1)) * units[match.group(2).upper()]))
 
 
+def format_size_bytes(value: object) -> str:
+    """Format a byte count for compact file-list labels."""
+    size = parse_size_bytes(value)
+    units = ("B", "KB", "MB", "GB", "TB")
+    number = float(size)
+    for unit in units:
+        if number < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(number)} B"
+            return f"{number:.2f}".rstrip("0").rstrip(".") + f" {unit}"
+        number /= 1024
+    return f"{number:.2f}".rstrip("0").rstrip(".") + " TB"
+
+
 def _natural_key(value: str):
     cleaned = str(value or "").strip().casefold()
     if not cleaned:
