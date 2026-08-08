@@ -12593,6 +12593,9 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "字幕延迟",
+        "音频延迟",
+        "画面调节",
         "弹幕配置",
         "刮削",
         "弹幕源",
@@ -12626,6 +12629,111 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "重置",
     ]
     assert [action.text() for action in _submenu_actions(menu, "音轨")] == ["自动选择", "国语 (默认)", "English Dub"]
+    assert [action.text() for action in _submenu_actions(menu, "字幕延迟")] == [
+        "提前 0.5秒",
+        "默认",
+        "延后 0.5秒",
+        "",
+        "提前 0.1秒",
+        "延后 0.1秒",
+        "重置",
+    ]
+    assert [action.text() for action in _submenu_actions(menu, "画面调节")] == [
+        "需软解或 copy-back 硬解模式",
+    ]
+
+
+def test_player_window_picture_adjustment_gated_by_render_profile(qtbot) -> None:
+    class ProfileConfig:
+        def __init__(self, profile: str) -> None:
+            self.mpv_render_profile = profile
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.config = ProfileConfig("auto")
+    assert window._picture_adjustment_supported() is False
+
+    window.config = ProfileConfig("copy-back")
+    assert window._picture_adjustment_supported() is True
+
+    window.config = ProfileConfig("software")
+    assert window._picture_adjustment_supported() is True
+
+
+def test_player_window_delay_and_picture_menu_handlers_drive_video(qtbot) -> None:
+    class P0Video:
+        def __init__(self) -> None:
+            self.subtitle_delay_calls: list[float] = []
+            self.audio_delay_calls: list[float] = []
+            self.picture_calls: list[tuple[str, int]] = []
+
+        def set_subtitle_delay(self, seconds: float) -> None:
+            self.subtitle_delay_calls.append(seconds)
+
+        def set_audio_delay(self, seconds: float) -> None:
+            self.audio_delay_calls.append(seconds)
+
+        def set_brightness(self, value: int) -> None:
+            self.picture_calls.append(("brightness", value))
+
+        def set_contrast(self, value: int) -> None:
+            self.picture_calls.append(("contrast", value))
+
+        def set_saturation(self, value: int) -> None:
+            self.picture_calls.append(("saturation", value))
+
+        def set_hue(self, value: int) -> None:
+            self.picture_calls.append(("hue", value))
+
+        def set_gamma(self, value: int) -> None:
+            self.picture_calls.append(("gamma", value))
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = P0Video()
+
+    window._set_subtitle_delay_from_menu(1.5)
+    assert window.video.subtitle_delay_calls == [1.5]
+    assert window._subtitle_delay == 1.5
+
+    window._step_subtitle_delay(0.1)
+    assert window.video.subtitle_delay_calls == [1.5, 1.6]
+    assert window._subtitle_delay == 1.6
+
+    window._set_picture_from_menu("brightness", 30)
+    assert window.video.picture_calls == [("brightness", 30)]
+    assert window._picture_adjustments["brightness"] == 30
+
+    window._step_picture("brightness", -5)
+    assert window.video.picture_calls == [("brightness", 30), ("brightness", 25)]
+    assert window._picture_adjustments["brightness"] == 25
+
+
+def test_player_window_delay_shortcuts_drive_video(qtbot) -> None:
+    class DelayVideo:
+        def __init__(self) -> None:
+            self.subtitle_delay_calls: list[float] = []
+            self.audio_delay_calls: list[float] = []
+
+        def set_subtitle_delay(self, seconds: float) -> None:
+            self.subtitle_delay_calls.append(seconds)
+
+        def set_audio_delay(self, seconds: float) -> None:
+            self.audio_delay_calls.append(seconds)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = DelayVideo()
+
+    send_key(window, Qt.Key.Key_Z, text="z")
+    assert window.video.subtitle_delay_calls == [-0.1]
+
+    send_key(window, Qt.Key.Key_X, text="x")
+    assert window.video.subtitle_delay_calls == [-0.1, 0.0]
+
+    send_key(window, Qt.Key.Key_Z, Qt.KeyboardModifier.ShiftModifier, text="Z")
+    assert window.video.audio_delay_calls == [-0.1]
 
 
 def test_player_window_builds_video_context_menu_with_dash_quality_submenu(qtbot) -> None:
@@ -13363,6 +13471,9 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "字幕延迟",
+        "音频延迟",
+        "画面调节",
         "弹幕配置",
         "刮削",
         "弹幕源",

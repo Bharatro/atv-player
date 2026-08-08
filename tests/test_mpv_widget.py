@@ -2501,6 +2501,127 @@ def test_mpv_widget_reads_and_writes_secondary_subtitle_position(qtbot) -> None:
     assert widget.secondary_subtitle_position() == 30
 
 
+def test_mpv_widget_reads_and_writes_subtitle_delay(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"sub-delay": 0.0}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.subtitle_delay() == 0.0
+
+    widget.set_subtitle_delay(1.5)
+
+    assert widget.subtitle_delay() == 1.5
+
+
+def test_mpv_widget_reads_and_writes_audio_delay(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"audio-delay": 0.0}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.audio_delay() == 0.0
+
+    widget.set_audio_delay(-0.5)
+
+    assert widget.audio_delay() == -0.5
+
+
+def test_mpv_widget_delay_setters_clamp_to_range(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    widget.set_subtitle_delay(999.0)
+    assert widget.subtitle_delay() == 10.0
+    widget.set_subtitle_delay(-999.0)
+    assert widget.subtitle_delay() == -10.0
+    widget.set_audio_delay(999.0)
+    assert widget.audio_delay() == 10.0
+    widget.set_audio_delay(-999.0)
+    assert widget.audio_delay() == -10.0
+
+
+def test_mpv_widget_reads_and_writes_picture_adjustment(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    for prop in ("brightness", "contrast", "saturation", "hue", "gamma"):
+        getter = getattr(widget, prop)
+        setter = getattr(widget, "set_" + prop)
+        assert getter() == 0
+        setter(25)
+        assert getter() == 25
+
+
+def test_mpv_widget_picture_adjustment_clamps_to_range(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    for prop in ("brightness", "contrast", "saturation", "hue", "gamma"):
+        setter = getattr(widget, "set_" + prop)
+        getter = getattr(widget, prop)
+        setter(999)
+        assert getter() == 100
+        setter(-999)
+        assert getter() == -100
+
+
 def test_mpv_widget_reports_secondary_subtitle_position_unsupported_when_property_is_missing(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

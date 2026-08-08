@@ -104,6 +104,7 @@ from atv_player.models import (
 from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
 from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
+from atv_player.player.controls import PlayerControls
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
@@ -704,6 +705,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _SEEK_SHORTCUT_SECONDS = 15
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
+    _PICTURE_ADJUSTMENT_PROPS: tuple[tuple[str, str], ...] = (
+        ("brightness", "亮度"),
+        ("contrast", "对比度"),
+        ("saturation", "饱和度"),
+        ("hue", "色调"),
+        ("gamma", "伽马"),
+    )
     _CURSOR_HIDE_DELAY_MS = 2000
     _MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS = 1.0
     _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
@@ -806,6 +814,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.current_speed = 1.0
         self.is_playing = True
         self._is_muted = bool(getattr(self.config, "player_muted", False))
+        self._subtitle_delay = 0.0
+        self._audio_delay = 0.0
+        self._picture_adjustments: dict[str, int] = {
+            "brightness": 0,
+            "contrast": 0,
+            "saturation": 0,
+            "hue": 0,
+            "gamma": 0,
+        }
         self._was_maximized_before_fullscreen = False
         self._quit_requested = False
         self._app_quit_requested = False
@@ -1016,6 +1033,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
+        self.controls = PlayerControls(self)
+        self.controls.bind(config=self.config)
         self._pending_post_load_item: PlayItem | None = None
         self._pending_post_load_pause = False
         self._pending_file_loaded_danmaku_item: PlayItem | None = None
@@ -4015,9 +4034,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _apply_post_load_player_configuration(self, current_item: PlayItem) -> None:
         if self._pending_post_load_pause:
             self._pending_post_load_pause = False
-            self.video.pause()
-        self.video.set_speed(self.current_speed)
-        self.video.set_volume(self.volume_slider.value())
+            self.controls.pause()
+        self.controls.set_speed(self.current_speed)
+        self.controls.set_volume(self.volume_slider.value())
         self._apply_muted_state()
         if self._uses_event_driven_track_refresh():
             self._reset_subtitle_combo()
@@ -5966,7 +5985,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _seek_relative(self, seconds: int) -> None:
         try:
-            self.video.seek_relative(seconds)
+            self.controls.seek_relative(seconds)
             self._mark_recent_user_seek(None)
         except Exception as exc:
             self._append_log(f"跳转失败: {exc}")
@@ -5988,7 +6007,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _toggle_mute(self) -> None:
         try:
-            self.video.toggle_mute()
+            self.controls.toggle_mute()
             self._is_muted = not self._is_muted
             self._update_mute_button_icon()
             if self.config is not None and self.config.player_muted != self._is_muted:
@@ -6001,14 +6020,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not hasattr(self.video, "set_muted"):
             return
         try:
-            self.video.set_muted(self._is_muted)
+            self.controls.set_muted(self._is_muted)
         except Exception as exc:
             self._append_log(f"静音恢复失败: {exc}")
 
     def _change_speed(self, text: str) -> None:
         try:
             self.current_speed = float(text.rstrip("x"))
-            self.video.set_speed(self.current_speed)
+            self.controls.set_speed(self.current_speed)
         except Exception as exc:
             self._append_log(f"倍速设置失败: {exc}")
 
@@ -8144,6 +8163,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
         menu.addMenu(self._build_audio_menu(menu))
+        menu.addMenu(self._build_subtitle_delay_menu(menu))
+        menu.addMenu(self._build_audio_delay_menu(menu))
+        menu.addMenu(self._build_picture_menu(menu))
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
@@ -9836,6 +9858,105 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         return menu
 
+    def _build_subtitle_delay_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("字幕延迟", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for label, value in (("提前 0.5秒", -0.5), ("默认", 0.0), ("延后 0.5秒", 0.5)):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(abs(self._subtitle_delay - value) < 1e-6)
+            action.triggered.connect(
+                lambda _c=False, v=value: self._set_subtitle_delay_from_menu(v)
+            )
+            group.addAction(action)
+        menu.addSeparator()
+        menu.addAction("提前 0.1秒", lambda: self._step_subtitle_delay(-0.1))
+        menu.addAction("延后 0.1秒", lambda: self._step_subtitle_delay(0.1))
+        menu.addAction("重置", lambda: self._set_subtitle_delay_from_menu(0.0))
+        return menu
+
+    def _build_audio_delay_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("音频延迟", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for label, value in (("提前 0.5秒", -0.5), ("默认", 0.0), ("延后 0.5秒", 0.5)):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(abs(self._audio_delay - value) < 1e-6)
+            action.triggered.connect(
+                lambda _c=False, v=value: self._set_audio_delay_from_menu(v)
+            )
+            group.addAction(action)
+        menu.addSeparator()
+        menu.addAction("提前 0.1秒", lambda: self._step_audio_delay(-0.1))
+        menu.addAction("延后 0.1秒", lambda: self._step_audio_delay(0.1))
+        menu.addAction("重置", lambda: self._set_audio_delay_from_menu(0.0))
+        return menu
+
+    def _build_picture_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("画面调节", parent)
+        if not self._picture_adjustment_supported():
+            notice = menu.addAction("需软解或 copy-back 硬解模式")
+            notice.setEnabled(False)
+            return menu
+        for prop, label in self._PICTURE_ADJUSTMENT_PROPS:
+            sub = menu.addMenu(label)
+            group = QActionGroup(sub)
+            group.setExclusive(True)
+            current = self._picture_adjustments.get(prop, 0)
+            for preset_label, value in (("减弱", -25), ("默认", 0), ("增强", 25)):
+                action = sub.addAction(preset_label)
+                action.setCheckable(True)
+                action.setChecked(current == value)
+                action.triggered.connect(
+                    lambda _c=False, p=prop, v=value: self._set_picture_from_menu(p, v)
+                )
+                group.addAction(action)
+            sub.addSeparator()
+            sub.addAction("减弱 5", lambda p=prop: self._step_picture(p, -5))
+            sub.addAction("增强 5", lambda p=prop: self._step_picture(p, 5))
+            sub.addAction("重置", lambda p=prop: self._set_picture_from_menu(p, 0))
+        return menu
+
+    def _picture_adjustment_supported(self) -> bool:
+        profile = str(getattr(self.config, "mpv_render_profile", "auto") or "auto")
+        return profile in ("software", "copy-back")
+
+    def _set_subtitle_delay_from_menu(self, seconds: float) -> None:
+        clamped = max(-10.0, min(float(seconds), 10.0))
+        try:
+            self.controls.set_subtitle_delay(clamped)
+            self._subtitle_delay = clamped
+        except Exception as exc:
+            self._append_log(f"字幕延迟设置失败: {exc}")
+
+    def _step_subtitle_delay(self, delta: float) -> None:
+        self._set_subtitle_delay_from_menu(self._subtitle_delay + delta)
+
+    def _set_audio_delay_from_menu(self, seconds: float) -> None:
+        clamped = max(-10.0, min(float(seconds), 10.0))
+        try:
+            self.controls.set_audio_delay(clamped)
+            self._audio_delay = clamped
+        except Exception as exc:
+            self._append_log(f"音频延迟设置失败: {exc}")
+
+    def _step_audio_delay(self, delta: float) -> None:
+        self._set_audio_delay_from_menu(self._audio_delay + delta)
+
+    def _set_picture_from_menu(self, prop: str, value: int) -> None:
+        clamped = max(-100, min(int(value), 100))
+        try:
+            self.controls.set_picture(prop, clamped)
+            self._picture_adjustments[prop] = clamped
+        except Exception as exc:
+            self._append_log(f"画面调节失败: {exc}")
+
+    def _step_picture(self, prop: str, delta: int) -> None:
+        current = self._picture_adjustments.get(prop, 0)
+        self._set_picture_from_menu(prop, current + delta)
+
     def _build_subtitle_scale_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
         menu = QMenu(title, parent)
         if secondary and not self._secondary_subtitle_scale_supported:
@@ -10059,7 +10180,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _change_volume(self, value: int) -> None:
         try:
-            self.video.set_volume(value)
+            self.controls.set_volume(value)
         except Exception as exc:
             self._append_log(f"音量设置失败: {exc}")
             return
@@ -10131,6 +10252,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             ),
             (QKeySequence(Qt.Key.Key_PageUp), self.play_previous),
             (QKeySequence(Qt.Key.Key_PageDown), self.play_next),
+            (QKeySequence(Qt.Key.Key_Z), lambda: self._step_subtitle_delay(-0.1)),
+            (QKeySequence(Qt.Key.Key_X), lambda: self._step_subtitle_delay(0.1)),
+            (QKeySequence("Shift+Z"), lambda: self._step_audio_delay(-0.1)),
+            (QKeySequence("Shift+X"), lambda: self._step_audio_delay(0.1)),
         ]
         for sequence, handler in bindings:
             shortcut = QShortcut(sequence, self)
@@ -10147,7 +10272,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _seek_to_position(self, seconds: int) -> None:
         try:
-            self.video.seek(seconds)
+            self.controls.seek(seconds)
             self._mark_recent_user_seek(seconds)
         except Exception as exc:
             self._recent_user_seek_target_seconds = seconds
@@ -10546,7 +10671,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._close_video_context_menu()
         self._remember_restore_state()
         try:
-            self.video.pause()
+            self.controls.pause()
         except Exception:
             pass
         self.is_playing = False
@@ -10614,9 +10739,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def toggle_playback(self) -> None:
         if self.is_playing:
-            self.video.pause()
+            self.controls.pause()
         else:
-            self.video.resume()
+            self.controls.resume()
         self.is_playing = not self.is_playing
         self._sync_native_always_on_top(failure_message="播放时置顶同步失败")
         self._set_last_player_paused(not self.is_playing)
@@ -11055,6 +11180,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.play_next()
             event.accept()
             return
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            shifted = event.text().lower()
+            if shifted == "z":
+                self._step_audio_delay(-0.1)
+                event.accept()
+                return
+            if shifted == "x":
+                self._step_audio_delay(0.1)
+                event.accept()
+                return
         key_text = event.text().lower()
         if key_text == "m":
             self._toggle_mute()
@@ -11082,6 +11217,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         if key_text == "=":
             self._reset_speed()
+            event.accept()
+            return
+        if key_text == "z":
+            self._step_subtitle_delay(-0.1)
+            event.accept()
+            return
+        if key_text == "x":
+            self._step_subtitle_delay(0.1)
             event.accept()
             return
         super().keyPressEvent(event)

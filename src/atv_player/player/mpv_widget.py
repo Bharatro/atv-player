@@ -83,7 +83,7 @@ _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
 _WINDOWS_MPV_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv.dll")
-_VALID_RENDER_PROFILES = {"auto", "compat", "balanced", "vulkan", "quality", "performance", "software"}
+_VALID_RENDER_PROFILES = {"auto", "compat", "balanced", "vulkan", "quality", "performance", "copy-back", "software"}
 
 
 def _version_sort_key(value: str) -> tuple[int, ...]:
@@ -188,6 +188,8 @@ def _explicit_render_profile_options(profile: str) -> dict[str, object]:
             "deband": "no",
             "interpolation": "no",
         }
+    if profile == "copy-back":
+        return {"vo": "gpu", "hwdec": "auto-copy"}
     if profile == "software":
         return {"vo": "gpu", "hwdec": "no"}
     return {}
@@ -1789,6 +1791,93 @@ class MpvWidget(QWidget):
             return
         clamped = max(50, min(int(value), 200))
         self._set_player_property("secondary-sub-scale", clamped / 100)
+
+    # ── 字幕/音频延迟与画面调节(纯时间/像素属性,与字幕槽无关,可独立调节)──
+
+    def subtitle_delay(self) -> float:
+        if not self._on_widget_thread():
+            return float(self._run_on_widget_thread(self.subtitle_delay) or 0.0)
+        value = self._player_property("sub-delay", 0.0)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_subtitle_delay(self, seconds: float) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_subtitle_delay(seconds))
+            return
+        self._set_player_property("sub-delay", max(-10.0, min(float(seconds), 10.0)))
+
+    def audio_delay(self) -> float:
+        if not self._on_widget_thread():
+            return float(self._run_on_widget_thread(self.audio_delay) or 0.0)
+        value = self._player_property("audio-delay", 0.0)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_audio_delay(self, seconds: float) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_audio_delay(seconds))
+            return
+        self._set_player_property("audio-delay", max(-10.0, min(float(seconds), 10.0)))
+
+    def brightness(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.brightness) or 0)
+        return self._int_property_value(self._player_property("brightness", 0), 0)
+
+    def set_brightness(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_brightness(value))
+            return
+        self._set_player_property("brightness", max(-100, min(int(value), 100)))
+
+    def contrast(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.contrast) or 0)
+        return self._int_property_value(self._player_property("contrast", 0), 0)
+
+    def set_contrast(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_contrast(value))
+            return
+        self._set_player_property("contrast", max(-100, min(int(value), 100)))
+
+    def saturation(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.saturation) or 0)
+        return self._int_property_value(self._player_property("saturation", 0), 0)
+
+    def set_saturation(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_saturation(value))
+            return
+        self._set_player_property("saturation", max(-100, min(int(value), 100)))
+
+    def hue(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.hue) or 0)
+        return self._int_property_value(self._player_property("hue", 0), 0)
+
+    def set_hue(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_hue(value))
+            return
+        self._set_player_property("hue", max(-100, min(int(value), 100)))
+
+    def gamma(self) -> int:
+        if not self._on_widget_thread():
+            return int(self._run_on_widget_thread(self.gamma) or 0)
+        return self._int_property_value(self._player_property("gamma", 0), 0)
+
+    def set_gamma(self, value: int) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self.set_gamma(value))
+            return
+        self._set_player_property("gamma", max(-100, min(int(value), 100)))
 
     def subtitle_ass_override(self) -> str:
         if not self._on_widget_thread():

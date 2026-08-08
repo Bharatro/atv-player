@@ -292,6 +292,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_hwdec_mode_combo.addItem("Vulkan 模式", "vulkan")
         self.mpv_hwdec_mode_combo.addItem("高画质模式", "quality")
         self.mpv_hwdec_mode_combo.addItem("极限性能模式", "performance")
+        self.mpv_hwdec_mode_combo.addItem("硬件解码（copy-back）", "copy-back")
         self.mpv_hwdec_mode_combo.addItem("软解", "software")
         self.mpv_network_timeout_edit = QLineEdit()
         self.mpv_network_timeout_edit.setPlaceholderText("1 - 300")
