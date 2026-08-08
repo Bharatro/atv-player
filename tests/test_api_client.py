@@ -191,6 +191,8 @@ def test_api_client_maps_history_record() -> None:
                 "ending": 0,
                 "speed": 1.25,
                 "createTime": 123456,
+                "sourceSubgroupIndex": 2,
+                "driveDirId": "season-3",
             },
         )
 
@@ -205,6 +207,8 @@ def test_api_client_maps_history_record() -> None:
     assert isinstance(history, HistoryRecord)
     assert history.key == "movie-1"
     assert history.speed == 1.25
+    assert history.source_subgroup_index == 2
+    assert history.drive_dir_id == "season-3"
 
 
 def test_api_client_maps_history_record_when_optional_fields_are_missing() -> None:

@@ -75,6 +75,9 @@ class PlayerSession:
     # New per-directory drive API state for lazy directory loading.
     drive_resource_id: str = ""
     drive_files_loader: Callable[..., list[PlayItem]] | None = None
+    # Retained until a lazily resolved drive directory can match its saved media URL.
+    # Nested drive directories do not have their own source indexes in history.
+    resume_history: HistoryRecord | None = None
 
 
 class PlayerController:
@@ -489,6 +492,7 @@ class PlayerController:
             is_placeholder=is_placeholder,
             drive_resource_id=drive_resource_id,
             drive_files_loader=drive_files_loader,
+            resume_history=history,
         )
         session.playback_loader = self._bind_playback_loader(playback_loader, session)
         session.playback_history_saver = playback_history_saver
@@ -560,6 +564,8 @@ class PlayerController:
             "playlistIndex": session.playlist_index,
             "sourceGroupIndex": session.source_group_index,
             "sourceIndex": session.source_index,
+            "sourceSubgroupIndex": self._history_source_subgroup_index(session),
+            "driveDirId": self._history_drive_dir_id(session),
             "createTime": int(time() * 1000),
         }
         if session.playback_history_saver is not None:
@@ -573,6 +579,29 @@ class PlayerController:
         if not session.use_local_history:
             return
         self._api_client.save_history(payload)
+
+    @staticmethod
+    def _history_drive_subgroup(session: PlayerSession) -> PlaybackSourceGroup | None:
+        if not (0 <= session.source_group_index < len(session.source_groups)):
+            return None
+        group = session.source_groups[session.source_group_index]
+        if not (0 <= session.source_index < len(group.sources)):
+            return None
+        source = group.sources[session.source_index]
+        if not source.subgroups or not (0 <= source.subgroup_index < len(source.subgroups)):
+            return None
+        return source.subgroups[source.subgroup_index]
+
+    def _history_source_subgroup_index(self, session: PlayerSession) -> int:
+        subgroup = self._history_drive_subgroup(session)
+        if subgroup is None:
+            return 0
+        group = session.source_groups[session.source_group_index]
+        return group.sources[session.source_index].subgroup_index
+
+    def _history_drive_dir_id(self, session: PlayerSession) -> str:
+        subgroup = self._history_drive_subgroup(session)
+        return subgroup.drive_dir_id if subgroup is not None else ""
 
     def stop_playback(self, session: PlayerSession, current_index: int) -> None:
         self._invalidate_pending_next_episode_danmaku_prefetch(session)

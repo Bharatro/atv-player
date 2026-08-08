@@ -426,6 +426,8 @@ class ApiClient:
             playlist_index=int(data.get("playlistIndex", 0)),
             source_group_index=int(data.get("sourceGroupIndex", 0)),
             source_index=int(data.get("sourceIndex", 0)),
+            source_subgroup_index=int(data.get("sourceSubgroupIndex", 0)),
+            drive_dir_id=str(data.get("driveDirId") or ""),
         )
 
     def list_history(self, page: int, size: int) -> dict[str, Any]:

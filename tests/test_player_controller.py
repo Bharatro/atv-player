@@ -1084,6 +1084,49 @@ def test_player_controller_reports_grouped_source_indexes_to_history_saver() -> 
     assert saved_payloads[0]["sourceIndex"] == 1
 
 
+def test_player_controller_reports_nested_drive_directory_history_identity() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    first = [PlayItem(title="01.mp4", url="https://drive/season-1/01.mp4")]
+    second = [PlayItem(title="02.mp4", url="https://drive/season-2/02.mp4")]
+    source = PlaybackSource(
+        label="百度资源",
+        playlist=first,
+        subgroups=[
+            PlaybackSourceGroup(label="第一季", sources=[PlaybackSource(label="第一季", playlist=first)]),
+            PlaybackSourceGroup(
+                label="第二季",
+                sources=[PlaybackSource(label="第二季", playlist=second)],
+                drive_dir_id="season-2",
+            ),
+        ],
+        subgroup_index=1,
+    )
+    saved_payloads: list[dict[str, object]] = []
+    session = controller.create_session(
+        VodItem(vod_id="plugin-vod-1", vod_name="网盘合集"),
+        playlist=first,
+        clicked_index=0,
+        source_groups=[PlaybackSourceGroup(label="百度", sources=[source])],
+        use_local_history=False,
+        playback_history_saver=saved_payloads.append,
+    )
+    session.playlist = second
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=30,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    assert saved_payloads[0]["sourceSubgroupIndex"] == 1
+    assert saved_payloads[0]["driveDirId"] == "season-2"
+
+
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)

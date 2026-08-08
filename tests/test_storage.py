@@ -293,6 +293,8 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
             "playlistIndex": 3,
             "sourceGroupIndex": 1,
             "sourceIndex": 1,
+            "sourceSubgroupIndex": 2,
+            "driveDirId": "season-3",
             "createTime": 42,
         },
         source_key="7",
@@ -305,6 +307,8 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
     assert history.playlist_index == 3
     assert history.source_group_index == 1
     assert history.source_index == 1
+    assert history.source_subgroup_index == 2
+    assert history.drive_dir_id == "season-3"
 
 
 def test_local_playback_history_repository_migrates_spider_plugin_legacy_rows(tmp_path: Path) -> None:

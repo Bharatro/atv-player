@@ -24,6 +24,8 @@ class HistoryController:
                 ending=item.get("ending", 0),
                 speed=item.get("speed", 1.0),
                 create_time=item.get("createTime", 0),
+                source_subgroup_index=item.get("sourceSubgroupIndex", 0),
+                drive_dir_id=item.get("driveDirId", ""),
                 source_kind="remote",
             )
             for item in payload.get("content", [])

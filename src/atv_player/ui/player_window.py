@@ -3720,6 +3720,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         parent_groups = self._session_source_groups()
         parent_group_index = max(0, min(session.source_group_index, len(parent_groups) - 1)) if parent_groups else 0
         parent_source_index = 0
+        parent_source: PlaybackSource | None = None
         if parent_groups and parent_groups[parent_group_index].sources:
             parent_source_index = max(0, min(session.source_index, len(parent_groups[parent_group_index].sources) - 1))
             parent_source = parent_groups[parent_group_index].sources[parent_source_index]
@@ -3745,7 +3746,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session.playlist = playlist
         if 0 <= session.playlist_index < len(session.playlists):
             session.playlists[session.playlist_index] = playlist
-        if playlist:
+        if self._restore_nested_drive_history(parent_source):
+            playlist = session.playlist
+        elif playlist:
             self.current_index = max(0, min(load_result.replacement_start_index, len(playlist) - 1))
         else:
             self.current_index = 0
@@ -3762,6 +3765,104 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_detail_actions()
         session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
+
+    def _restore_nested_drive_history(self, parent_source: PlaybackSource | None) -> bool:
+        """Select the nested drive directory containing the saved history URL.
+
+        A grouped drive resource retains the plugin/source indexes of its parent, so
+        those indexes alone cannot identify a child directory.  Resolve each lazy
+        directory once during initial restore and use the saved media URL as its
+        stable identity.
+        """
+        session = self.session
+        if session is None or parent_source is None:
+            return False
+        history = session.resume_history
+        session.resume_history = None
+        if history is None or not parent_source.subgroups:
+            return False
+        target_url = history.episode_url.strip()
+        target_name = urlparse(target_url).path.rsplit("/", 1)[-1]
+
+        def restore_subgroup(subgroup_index: int) -> bool:
+            if not 0 <= subgroup_index < len(parent_source.subgroups):
+                return False
+            subgroup = parent_source.subgroups[subgroup_index]
+            self._ensure_drive_subgroup_loaded(subgroup)
+            if not subgroup.sources:
+                return False
+            playlist = subgroup.sources[0].playlist
+            for index, item in enumerate(playlist):
+                if item.url.strip() == target_url:
+                    return self._select_nested_drive_history_item(
+                        parent_source, subgroup_index, playlist, index
+                    )
+            if 0 <= history.episode < len(playlist):
+                return self._select_nested_drive_history_item(
+                    parent_source, subgroup_index, playlist, history.episode
+                )
+            return False
+
+        if history.drive_dir_id:
+            for subgroup_index, subgroup in enumerate(parent_source.subgroups):
+                if subgroup.drive_dir_id == history.drive_dir_id:
+                    return restore_subgroup(subgroup_index)
+            # Directory IDs can disappear when a share is regenerated.  New records
+            # also keep the selected index as a best-effort fallback.
+            if restore_subgroup(history.source_subgroup_index):
+                return True
+
+        # Records created before directory IDs were persisted fall back to URL
+        # matching, which also preserves compatibility with existing histories.
+        if not target_name:
+            return False
+        basename_matches: list[tuple[int, list[PlayItem], int]] = []
+        for subgroup_index, subgroup in enumerate(parent_source.subgroups):
+            self._ensure_drive_subgroup_loaded(subgroup)
+            if not subgroup.sources:
+                continue
+            playlist = subgroup.sources[0].playlist
+            for index, item in enumerate(playlist):
+                item_url = item.url.strip()
+                if item_url == target_url:
+                    return self._select_nested_drive_history_item(
+                        parent_source,
+                        subgroup_index,
+                        playlist,
+                        index,
+                    )
+                if urlparse(item_url).path.rsplit("/", 1)[-1] == target_name:
+                    basename_matches.append((subgroup_index, playlist, index))
+        if len(basename_matches) == 1:
+            subgroup_index, playlist, matched_index = basename_matches[0]
+            return self._select_nested_drive_history_item(
+                parent_source,
+                subgroup_index,
+                playlist,
+                matched_index,
+            )
+        return False
+
+    def _select_nested_drive_history_item(
+        self,
+        parent_source: PlaybackSource,
+        subgroup_index: int,
+        playlist: list[PlayItem],
+        episode_index: int,
+    ) -> bool:
+        if self.session is None:
+            return False
+        parent_source.subgroup_index = subgroup_index
+        self.session.playlist = playlist
+        self.session.start_index = episode_index
+        self.current_index = episode_index
+        logger.info(
+            "Restored nested drive directory vod_id=%s subgroup_index=%s episode_index=%s",
+            self.session.vod.vod_id,
+            subgroup_index,
+            episode_index,
+        )
+        return True
 
     def _start_playback_loader(
         self,

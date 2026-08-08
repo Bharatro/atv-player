@@ -404,6 +404,8 @@ class HistoryRecord:
     playlist_index: int = 0
     source_group_index: int = 0
     source_index: int = 0
+    source_subgroup_index: int = 0
+    drive_dir_id: str = ""
     source_kind: str = "remote"
     source_plugin_id: int = 0
     source_plugin_name: str = ""
