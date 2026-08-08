@@ -970,6 +970,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.playlist_group_combo.setHidden(True)
         self.playlist_source_combo = FlatComboBox()
         self.playlist_source_combo.setHidden(True)
+        self.playlist_subgroup_combo = FlatComboBox()
+        self.playlist_subgroup_combo.setHidden(True)
         self.playlist_sort_combo = FlatComboBox()
         self.playlist_sort_combo.setHidden(True)
         self._playlist_sort_state = PlaylistSortState()
@@ -1064,6 +1066,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ]
         self._configure_control_combo(self.playlist_group_combo, minimum_contents_length=10)
         self._configure_control_combo(self.playlist_source_combo, minimum_contents_length=12)
+        self._configure_control_combo(self.playlist_subgroup_combo, minimum_contents_length=12)
         self._configure_control_combo(self.playlist_sort_combo, minimum_contents_length=10)
         self._configure_control_combo(self.speed_combo, minimum_contents_length=3, maximum_width=72, fixed_height=28)
         self._configure_control_combo(self.subtitle_combo, minimum_contents_length=2, maximum_width=74, fixed_height=28)
@@ -1313,6 +1316,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.playlist_source_combo)
+        sidebar_layout.addWidget(self.playlist_subgroup_combo)
         sidebar_layout.addWidget(self.playlist_sort_combo)
         sidebar_layout.addWidget(self.playlist_title_tabs)
         sidebar_layout.addWidget(self.sidebar_splitter)
@@ -1364,6 +1368,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist_source_combo.currentIndexChanged.connect(self._change_playlist_source)
+        self.playlist_subgroup_combo.currentIndexChanged.connect(self._change_playlist_subgroup)
         self.playlist_sort_combo.currentIndexChanged.connect(self._change_playlist_sort)
         self.playlist_title_tabs.currentChanged.connect(self._change_playlist_title_mode)
         self._metadata_original_toggle.toggled.connect(self._toggle_original_metadata_view)
@@ -1607,6 +1612,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return [
             self.playlist_group_combo,
             self.playlist_source_combo,
+            self.playlist_subgroup_combo,
         ]
 
     def _player_control_comboboxes(self) -> list[QComboBox]:
@@ -2002,7 +2008,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             vod_title = str(self.session.vod.vod_name or "").strip()
             groups = self._session_source_groups()
             gi = self.session.source_group_index
-            dir_title = clean_drive_directory_title(groups[gi].label) if 0 <= gi < len(groups) else ""
+            dir_title = ""
+            if 0 <= gi < len(groups) and groups[gi].sources:
+                source = groups[gi].sources[self.session.source_index]
+                if source.subgroups and 0 <= source.subgroup_index < len(source.subgroups):
+                    dir_title = clean_drive_directory_title(source.subgroups[source.subgroup_index].label)
+                else:
+                    dir_title = clean_drive_directory_title(groups[gi].label)
             # Only use the three-part form when the directory differs from the collection title
             # (i.e. a real multi-folder share); otherwise it's a single resource — no repeat.
             if dir_title and dir_title != vod_title:
@@ -2073,8 +2085,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         source_groups = self._session_source_groups()
         self.playlist_group_combo.blockSignals(True)
         self.playlist_source_combo.blockSignals(True)
+        self.playlist_subgroup_combo.blockSignals(True)
         self.playlist_group_combo.clear()
         self.playlist_source_combo.clear()
+        self.playlist_subgroup_combo.clear()
         for group in source_groups:
             self.playlist_group_combo.addItem(group.label)
         active_group: PlaybackSourceGroup | None = None
@@ -2086,10 +2100,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 self.playlist_source_combo.addItem(source.label)
             self.playlist_group_combo.setCurrentIndex(self.session.source_group_index)
             self.playlist_source_combo.setCurrentIndex(self.session.source_index)
+            active_source = active_group.sources[self.session.source_index]
+            subgroups = active_source.subgroups
+            active_source.subgroup_index = max(0, min(active_source.subgroup_index, len(subgroups) - 1)) if subgroups else 0
+            for subgroup in subgroups:
+                self.playlist_subgroup_combo.addItem(subgroup.label)
+            if subgroups:
+                self.playlist_subgroup_combo.setCurrentIndex(active_source.subgroup_index)
         self.playlist_group_combo.setHidden(len(source_groups) <= 1)
         self.playlist_source_combo.setHidden(active_group is None or len(active_group.sources) <= 1)
+        active_source = active_group.sources[self.session.source_index] if active_group is not None and active_group.sources else None
+        self.playlist_subgroup_combo.setHidden(active_source is None or len(active_source.subgroups) <= 1)
         self.playlist_group_combo.blockSignals(False)
         self.playlist_source_combo.blockSignals(False)
+        self.playlist_subgroup_combo.blockSignals(False)
 
     def _change_playlist_title_mode(self, index: int) -> None:
         self.playlist_title_mode = "original" if index == 1 else "episode"
@@ -3567,9 +3591,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._start_episode_title_enhancement()
 
     def _apply_drive_grouped_loader_result(self, load_result: PlaybackLoadResult) -> None:
-        # A spider-plugin drive item resolved into a per-directory grouped tree: swap the
-        # session to grouped mode (group 0 is populated) so the dropdown shows directories
-        # and the rest load lazily via _change_playlist_group.
+        # A drive item may already live under plugin groups (for example 百度/夸克).
+        # Keep those parent levels and attach the resolved directories below the selected
+        # resource instead of replacing session.source_groups with the directory list.
         session = self.session
         if session is None:
             return
@@ -3580,10 +3604,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(session)
-        session.source_groups = source_groups
-        session.playlists = playlists
-        session.source_group_index = 0
-        session.source_index = 0
+        parent_groups = self._session_source_groups()
+        parent_group_index = max(0, min(session.source_group_index, len(parent_groups) - 1)) if parent_groups else 0
+        parent_source_index = 0
+        if parent_groups and parent_groups[parent_group_index].sources:
+            parent_source_index = max(0, min(session.source_index, len(parent_groups[parent_group_index].sources) - 1))
+            parent_source = parent_groups[parent_group_index].sources[parent_source_index]
+            parent_source.subgroups = source_groups
+            parent_source.subgroup_index = 0
+            parent_source.playlist = playlists[0]
+            parent_source.drive_resource_id = load_result.drive_resource_id
+            parent_source.drive_files_loader = load_result.drive_files_loader
+            session.source_group_index = parent_group_index
+            session.source_index = parent_source_index
+        else:
+            session.source_groups = source_groups
+            session.playlists = playlists
+            session.source_group_index = 0
+            session.source_index = 0
         session.playlist_index = 0
         session.drive_resource_id = load_result.drive_resource_id
         session.drive_files_loader = load_result.drive_files_loader
@@ -3592,6 +3630,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session.detail_resolver = None
         playlist = playlists[0]
         session.playlist = playlist
+        if 0 <= session.playlist_index < len(session.playlists):
+            session.playlists[session.playlist_index] = playlist
         if playlist:
             self.current_index = max(0, min(load_result.replacement_start_index, len(playlist) - 1))
         else:
@@ -5614,6 +5654,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         ):
             return
         target_playlist = active_group.sources[source_index].playlist
+        active_source = active_group.sources[source_index]
+        if active_source.subgroups:
+            active_source.subgroup_index = max(0, min(active_source.subgroup_index, len(active_source.subgroups) - 1))
+            self._ensure_drive_subgroup_loaded(active_source.subgroups[active_source.subgroup_index])
+            if active_source.subgroups[active_source.subgroup_index].sources:
+                target_playlist = active_source.subgroups[active_source.subgroup_index].sources[0].playlist
         if not target_playlist:
             self.session.source_group_index = source_group_index
             self.session.source_index = source_index
@@ -5701,6 +5747,92 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None:
             return
         self._switch_active_source(self.session.source_group_index, source_index)
+
+    def _change_playlist_subgroup(self, subgroup_index: int) -> None:
+        if self.session is None:
+            return
+        groups = self._session_source_groups()
+        if not (0 <= self.session.source_group_index < len(groups)):
+            return
+        group = groups[self.session.source_group_index]
+        if not (0 <= self.session.source_index < len(group.sources)):
+            return
+        source = group.sources[self.session.source_index]
+        if not (0 <= subgroup_index < len(source.subgroups)):
+            return
+        source.subgroup_index = subgroup_index
+        subgroup = source.subgroups[subgroup_index]
+        self._ensure_drive_subgroup_loaded(subgroup)
+        if subgroup.sources:
+            # Subgroups are represented as a single leaf source; reuse the existing
+            # switching path while retaining the parent group/source indexes.
+            target = subgroup.sources[0].playlist
+            if target:
+                self._switch_active_playlist(target, subgroup.label)
+        self._render_playlist_source_combos()
+
+    def _ensure_drive_subgroup_loaded(self, subgroup: PlaybackSourceGroup) -> None:
+        session = self.session
+        if session is None:
+            return
+        groups = self._session_source_groups()
+        active_source = None
+        if 0 <= session.source_group_index < len(groups):
+            group = groups[session.source_group_index]
+            if 0 <= session.source_index < len(group.sources):
+                active_source = group.sources[session.source_index]
+        files_loader = active_source.drive_files_loader if active_source is not None else None
+        resource_id = active_source.drive_resource_id if active_source is not None else ""
+        files_loader = files_loader or session.drive_files_loader
+        resource_id = resource_id or session.drive_resource_id
+        if (
+            files_loader is None
+            or not resource_id
+            or not subgroup.drive_dir_id
+            or (subgroup.sources and subgroup.sources[0].playlist)
+        ):
+            return
+        try:
+            videos = files_loader(resource_id, subgroup.drive_dir_id) or []
+        except Exception as exc:
+            logger.warning("drive directory load failed dir=%s", subgroup.drive_dir_id, exc_info=exc)
+            self._append_log(f"加载目录失败: {exc}")
+            return
+        playlist = [
+            map_drive_video_to_play_item(
+                video,
+                index=index,
+                media_title=clean_drive_directory_title(subgroup.label),
+                play_source=subgroup.label,
+            )
+            for index, video in enumerate(videos)
+            if video.get("url")
+        ]
+        if subgroup.sources:
+            subgroup.sources[0].playlist[:] = playlist
+        else:
+            subgroup.sources = [PlaybackSource(label=subgroup.label, playlist=playlist)]
+
+    def _switch_active_playlist(self, target_playlist: list[PlayItem], label: str = "") -> None:
+        if self.session is None or not target_playlist:
+            return
+        previous_index = self.current_index
+        self.report_progress(force_remote_report=True)
+        self._stop_current_playback()
+        self.session.playlist = target_playlist
+        self.current_index = min(previous_index, len(target_playlist) - 1)
+        self.session.start_index = self.current_index
+        self._playlist_sort_state.apply(target_playlist)
+        self._render_playlist_source_combos()
+        self._render_playlist_sort_combo()
+        self._render_playlist_title_tabs()
+        self._render_playlist_items()
+        self._sync_playlist_panel_mode()
+        try:
+            self._load_current_item(previous_index=previous_index)
+            self._refresh_window_title()
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def _toggle_wide_mode(self) -> None:
         is_wide_mode = self.wide_button.isChecked()
@@ -9964,9 +10096,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             active_group = source_groups[self.session.source_group_index] if 0 <= self.session.source_group_index < len(source_groups) else None
             self.playlist_group_combo.setHidden(len(source_groups) <= 1)
             self.playlist_source_combo.setHidden(active_group is None or len(active_group.sources) <= 1)
+            active_source = active_group.sources[self.session.source_index] if active_group is not None and active_group.sources else None
+            self.playlist_subgroup_combo.setHidden(active_source is None or len(active_source.subgroups) <= 1)
         else:
             self.playlist_group_combo.setHidden(True)
             self.playlist_source_combo.setHidden(True)
+            self.playlist_subgroup_combo.setHidden(True)
         self._render_playlist_sort_combo()
         self._render_playlist_title_tabs()
         self.details.setHidden(is_fullscreen or not metadata_visible)

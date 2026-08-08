@@ -346,6 +346,12 @@ class VodItem:
 class PlaybackSource:
     label: str
     playlist: list[PlayItem] = field(default_factory=list)
+    # Optional third-level groups (for example a drive resource's subdirectories).
+    # The parent source remains selectable while the leaf group is selected below it.
+    subgroups: list["PlaybackSourceGroup"] = field(default_factory=list)
+    subgroup_index: int = 0
+    drive_resource_id: str = ""
+    drive_files_loader: Callable[..., list] | None = None
 
 
 @dataclass(slots=True)

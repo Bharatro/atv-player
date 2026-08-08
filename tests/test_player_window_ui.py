@@ -6555,6 +6555,61 @@ def test_player_window_renders_two_level_source_selectors_and_switches_group(qtb
     assert window.video.load_calls[-1][0] == "http://parse/1.m3u8"
 
 
+def test_player_window_preserves_plugin_groups_when_drive_resource_adds_subdirectories(qtbot) -> None:
+    baidu = [PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/demo", play_source="百度")]
+    quark = [PlayItem(title="夸克", url="", vod_id="https://pan.quark.cn/s/demo", play_source="夸克")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘合集"),
+        playlist=baidu,
+        playlists=[baidu, quark],
+        source_groups=[
+            PlaybackSourceGroup(label="百度", sources=[PlaybackSource(label="百度资源", playlist=baidu)]),
+            PlaybackSourceGroup(label="夸克", sources=[PlaybackSource(label="夸克资源", playlist=quark)]),
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    first_dir = [PlayItem(title="01.mp4", url="http://baidu/1.mp4", play_source="第一季")]
+    second_dir: list[PlayItem] = []
+    load_result = PlaybackLoadResult(
+        replacement_playlist=first_dir,
+        source_groups=[
+            PlaybackSourceGroup(label="第一季", sources=[PlaybackSource(label="第一季", playlist=first_dir)]),
+            PlaybackSourceGroup(
+                label="第二季",
+                sources=[PlaybackSource(label="第二季", playlist=second_dir)],
+                drive_dir_id="dir-2",
+            ),
+        ],
+        playlists=[first_dir, second_dir],
+        drive_resource_id="resource-1",
+        drive_files_loader=lambda resource_id, dir_id: [
+            {"name": "02.mp4", "url": "http://baidu/2.mp4", "path": "/第二季/02.mp4"}
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._apply_playback_loader_result(load_result)
+
+    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["百度", "夸克"]
+    assert [window.playlist_source_combo.itemText(i) for i in range(window.playlist_source_combo.count())] == ["百度资源"]
+    assert [window.playlist_subgroup_combo.itemText(i) for i in range(window.playlist_subgroup_combo.count())] == ["第一季", "第二季"]
+    assert [item.title for item in window.session.playlist] == ["01.mp4"]
+
+    window.playlist_subgroup_combo.setCurrentIndex(1)
+
+    assert window.session.source_group_index == 0
+    assert window.session.source_index == 0
+    assert [item.title for item in window.session.playlist] == ["02.mp4"]
+    assert window.video.load_calls[-1][0] == "http://baidu/2.mp4"
+
+
 def test_player_window_switches_leaf_source_and_keeps_episode_index_when_possible(qtbot) -> None:
     first = [
         PlayItem(title="第1集", url="http://q1/1.m3u8", play_source="夸克1"),
