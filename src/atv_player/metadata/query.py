@@ -30,6 +30,28 @@ _TITLE_CATEGORY_HINTS = {
 }
 
 
+def is_short_drama_collection(*values: object) -> bool:
+    """Return whether the supplied media labels identify a short-drama collection.
+
+    Short-drama update directories are not useful metadata/danmaku lookup targets:
+    their titles usually describe a daily catalogue rather than a real programme.
+    Keep the title-only check conservative so a normal drama whose name happens to
+    contain ``短剧`` is not silently excluded unless it is explicitly categorised as
+    short drama or clearly names a catalogue/collection.
+    """
+    texts = [str(value or "").strip() for value in values if str(value or "").strip()]
+    if not texts:
+        return False
+    explicit_labels = texts[1:]
+    if any("短剧" in text or "短片" in text for text in explicit_labels):
+        return True
+    collection_markers = ("目录", "合集", "更新")
+    return any(
+        "短剧" in text and any(marker in text for marker in collection_markers)
+        for text in texts
+    )
+
+
 def infer_metadata_category_name_from_title(value: object) -> str:
     text = str(value or "").strip()
     if not text:

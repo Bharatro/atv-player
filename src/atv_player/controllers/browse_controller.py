@@ -85,6 +85,7 @@ def _map_vod_item(payload: dict) -> VodItem:
         vod_play_from=str(payload.get("vod_play_from") or ""),
         vod_play_url=str(payload.get("vod_play_url") or ""),
         type_name=str(payload.get("type_name") or ""),
+        category_name=str(payload.get("category_name") or ""),
         vod_content=str(payload.get("vod_content") or ""),
         vod_year=str(payload.get("vod_year") or ""),
         vod_area=str(payload.get("vod_area") or ""),

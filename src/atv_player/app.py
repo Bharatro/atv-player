@@ -96,7 +96,7 @@ from atv_player.metadata.providers.tencent import TencentMetadataProvider
 from atv_player.metadata.providers.tmdb import TMDBProvider, infer_tmdb_media_type
 from atv_player.metadata.providers.tmdb_client import TMDBClient
 from atv_player.metadata.providers.youku import YoukuMetadataProvider
-from atv_player.metadata.query import infer_metadata_category_name_from_title
+from atv_player.metadata.query import infer_metadata_category_name_from_title, is_short_drama_collection
 from atv_player.models import AppConfig, LiveEpgConfig, PlayItem, VodItem
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, build_httpx_kwargs_for_url
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -831,6 +831,8 @@ class AppCoordinator(QObject):
             del request
             if vod is None or source_kind not in supported_sources:
                 return None
+            if is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
+                return None
             if source_kind == "bilibili" and not _supports_bilibili_metadata_enhancement(vod):
                 return None
             config = self.repo.load_config()
@@ -874,6 +876,8 @@ class AppCoordinator(QObject):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key
             if source_kind not in supported_sources:
+                return None
+            if vod is not None and is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
                 return None
             if source_kind == "bilibili" and not _supports_bilibili_metadata_enhancement(vod):
                 return None
@@ -941,8 +945,10 @@ class AppCoordinator(QObject):
 
     def _build_danmaku_controller_factory(self):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
-            del request, source_key, vod, raw_detail
+            del request, source_key, raw_detail
             if source_kind not in {"telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}:
+                return None
+            if vod is not None and is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
                 return None
             if self._danmaku_service is None:
                 return None
@@ -1432,6 +1438,8 @@ class AppCoordinator(QObject):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
             if source_kind not in {"plugin", "browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"} or vod is None:
+                return None
+            if is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
                 return None
             config = self.repo.load_config()
             if not config.metadata_enhancement_enabled:

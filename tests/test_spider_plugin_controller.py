@@ -7035,6 +7035,23 @@ def test_spider_plugin_request_disables_metadata_hydrator_when_plugin_danmaku_is
     assert request.metadata_hydrator is None
 
 
+def test_spider_plugin_short_drama_collection_disables_metadata_and_danmaku() -> None:
+    hydrator = object()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="短剧合集",
+        search_enabled=True,
+        danmaku_service=object(),
+        metadata_hydrator_factory=lambda **_: hydrator,
+    )
+    request = controller.build_request("/detail/1")
+
+    assert request.metadata_hydrator is None
+    assert request.metadata_scrape_service is None
+    assert request.episode_title_enhancer is None
+    assert request.danmaku_controller is None
+
+
 def test_spider_plugin_request_seeds_original_titles_for_playlist_items() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 

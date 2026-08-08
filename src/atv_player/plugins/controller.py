@@ -45,6 +45,7 @@ from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.episode_titles import seed_original_titles
 from atv_player.episode_titles import extract_season_number
+from atv_player.metadata.query import is_short_drama_collection
 from atv_player.models import (
     CategoryFilter,
     CategoryFilterOption,
@@ -325,13 +326,33 @@ def _danmaku_cache_query_names(
 
 
 def _should_prefetch_danmaku(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+    if _is_short_drama_item(item):
+        return False
     return bool(_extract_episode_label(item, playlist))
 
 
 def _should_auto_resolve_danmaku(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+    if _is_short_drama_item(item):
+        return False
     if _should_prefetch_danmaku(item, playlist):
         return True
     return _looks_like_movie_category(item) or _looks_like_movie_title(item)
+
+
+def _is_short_drama_item(item: PlayItem) -> bool:
+    return is_short_drama_collection(
+        item.media_title or item.title,
+        item.category_name,
+        item.type_name,
+    )
+
+
+def _is_short_drama_vod(vod: VodItem) -> bool:
+    return is_short_drama_collection(
+        vod.vod_name,
+        vod.category_name,
+        vod.type_name,
+    )
 
 
 def _count_danmaku_entries(xml_text: str) -> int:
@@ -837,6 +858,12 @@ class SpiderPluginController:
                 self._spider_initializer()
             self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
             self._spider_initialized = True
+
+    def _is_short_drama_item(self, item: PlayItem) -> bool:
+        if _is_short_drama_item(item):
+            return True
+        plugin_name = str(self._plugin_name or "").strip()
+        return "短剧" in plugin_name and any(marker in plugin_name for marker in ("目录", "合集", "更新"))
 
     def _log_spider_method_call(self, method_name: str, **params: object) -> None:
         message = _format_spider_method_call_message(self._plugin_name, method_name, **params)
@@ -1378,7 +1405,7 @@ class SpiderPluginController:
         is_prefetch: bool = False,
         prefetch_still_valid: Callable[[], bool] | None = None,
     ) -> None:
-        if not self._danmaku_enabled or self._danmaku_service is None:
+        if not self._danmaku_enabled or self._danmaku_service is None or self._is_short_drama_item(item):
             return
         is_prefetch_valid = prefetch_still_valid or (lambda: True)
         lookup = self._prepare_danmaku_lookup(item, url, playlist)
@@ -2210,6 +2237,8 @@ class SpiderPluginController:
         playlist: list[PlayItem],
     ) -> None:
         self._ensure_spider_initialized()
+        if self._is_short_drama_item(item):
+            return
         if not _should_prefetch_danmaku(item, playlist):
             return
         url = (item.url or item.vod_id or "").strip()
@@ -2253,7 +2282,7 @@ class SpiderPluginController:
             logger.exception("Danmaku log handler failed event=%s", event)
 
     def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None, *, is_prefetch: bool = False) -> None:
-        if not self._danmaku_enabled or self._danmaku_service is None:
+        if not self._danmaku_enabled or self._danmaku_service is None or self._is_short_drama_item(item):
             return
         if item.danmaku_xml or item.danmaku_pending:
             return
@@ -2695,7 +2724,11 @@ class SpiderPluginController:
             return self._run_detail_action(detail, playlists, playlist_index, item, action_id)
 
         metadata_hydrator = None
-        if self._metadata_hydrator_factory is not None and self._danmaku_enabled:
+        is_short_drama = _is_short_drama_vod(detail) or (
+            "短剧" in self._plugin_name
+            and any(marker in self._plugin_name for marker in ("目录", "合集", "更新"))
+        )
+        if self._metadata_hydrator_factory is not None and self._danmaku_enabled and not is_short_drama:
             metadata_hydrator = self._metadata_hydrator_factory(
                 source_kind="plugin",
                 source_key=self._plugin_name,
@@ -2703,7 +2736,7 @@ class SpiderPluginController:
                 raw_detail=raw_detail,
             )
         metadata_scrape_service = None
-        if self._metadata_scrape_service_factory is not None and self._danmaku_enabled:
+        if self._metadata_scrape_service_factory is not None and self._danmaku_enabled and not is_short_drama:
             metadata_scrape_service = self._metadata_scrape_service_factory(
                 source_kind="plugin",
                 source_key=self._plugin_name,
@@ -2711,7 +2744,7 @@ class SpiderPluginController:
                 raw_detail=raw_detail,
             )
         episode_title_enhancer = None
-        if self._episode_title_enhancer_factory is not None and self._danmaku_enabled:
+        if self._episode_title_enhancer_factory is not None and self._danmaku_enabled and not is_short_drama:
             episode_title_enhancer = self._episode_title_enhancer_factory(
                 source_kind="plugin",
                 source_key=self._plugin_name,
@@ -2738,7 +2771,11 @@ class SpiderPluginController:
             metadata_hydrator=metadata_hydrator,
             metadata_scrape_service=metadata_scrape_service,
             episode_title_enhancer=episode_title_enhancer,
-            danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
+            danmaku_controller=(
+                self
+                if self._danmaku_enabled and self._danmaku_service is not None and not is_short_drama
+                else None
+            ),
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )
