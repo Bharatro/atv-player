@@ -7140,6 +7140,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception as exc:
             self._append_log(f"弹幕样式设置失败: {exc}")
 
+    def _apply_secondary_subtitle_ass_override_for_danmaku(self) -> None:
+        if (
+            not hasattr(self.video, "set_secondary_subtitle_ass_override")
+            or not getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
+        ):
+            return
+        if (
+            self._danmaku_restore_secondary_ass_override is None
+            and hasattr(self.video, "secondary_subtitle_ass_override")
+        ):
+            try:
+                self._danmaku_restore_secondary_ass_override = self.video.secondary_subtitle_ass_override()
+            except Exception as exc:
+                self._append_log(f"次字幕样式读取失败: {exc}")
+                self._danmaku_restore_secondary_ass_override = "scale"
+        try:
+            self.video.set_secondary_subtitle_ass_override("no")
+        except Exception as exc:
+            self._append_log(f"弹幕样式设置失败: {exc}")
+
     def _restore_secondary_subtitle_ass_override_after_danmaku(self) -> None:
         if self._danmaku_restore_secondary_ass_override is None:
             return
@@ -7308,12 +7328,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._apply_danmaku_secondary_scale()
 
-    def _attach_danmaku_subtitle_file(self, subtitle_path: Path, line_count: int) -> None:
+    def _attach_danmaku_subtitle_file(self, subtitle_path: Path, line_count: int, *, use_secondary: bool) -> None:
         self._clear_active_danmaku(restore_position=False)
         load_path = self._prepare_danmaku_subtitle_load_path(subtitle_path)
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
-        track_id = self._load_primary_danmaku_subtitle(load_path)
+        track_id = self._load_danmaku_subtitle(load_path, use_secondary=use_secondary)
         if track_id is None:
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id
@@ -7379,10 +7399,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
             ):
                 self.video.set_subtitle_ass_force_margins("yes")
-            self._apply_main_subtitle_ass_override_for_danmaku()
+            use_secondary = self._danmaku_should_use_secondary_slot()
+            if use_secondary:
+                self._apply_secondary_subtitle_ass_override_for_danmaku()
+            else:
+                self._apply_main_subtitle_ass_override_for_danmaku()
             if not subtitle_path_text:
                 raise ValueError("弹幕为空")
-            self._attach_danmaku_subtitle_file(Path(subtitle_path_text), line_count)
+            self._attach_danmaku_subtitle_file(Path(subtitle_path_text), line_count, use_secondary=use_secondary)
         except Exception as exc:
             if self._should_retry_danmaku_load(exc):
                 self._schedule_danmaku_retry()
@@ -7419,21 +7443,42 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
         ):
             self.video.set_subtitle_ass_force_margins("yes")
-        self._apply_main_subtitle_ass_override_for_danmaku()
+        use_secondary = self._danmaku_should_use_secondary_slot()
+        if use_secondary:
+            self._apply_secondary_subtitle_ass_override_for_danmaku()
+        else:
+            self._apply_main_subtitle_ass_override_for_danmaku()
         subtitle_path = self._write_danmaku_subtitle_file(xml_text, line_count)
         if subtitle_path is None:
             raise ValueError("弹幕为空")
-        self._attach_danmaku_subtitle_file(subtitle_path, line_count)
+        self._attach_danmaku_subtitle_file(subtitle_path, line_count, use_secondary=use_secondary)
 
-    def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
-        self._danmaku_loading_slot = "primary"
+    def _danmaku_should_use_secondary_slot(self) -> bool:
+        # 弹幕与内嵌字幕同时存在时，弹幕让出主字幕轨、改用次字幕轨，
+        # 这样主字幕轨可自动选中（简体）中文字幕；没有内嵌字幕时仍占用主字幕轨。
         try:
-            track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=False)
-            if track_id is not None and hasattr(self.video, "apply_subtitle_mode"):
+            tracks = self.video.subtitle_tracks()
+        except Exception:
+            return False
+        return bool(tracks)
+
+    def _load_danmaku_subtitle(self, subtitle_path: Path, *, use_secondary: bool) -> int | None:
+        self._danmaku_loading_slot = "secondary" if use_secondary else "primary"
+        try:
+            track_id = self.video.load_external_subtitle(
+                str(subtitle_path), select_for_secondary=use_secondary
+            )
+            # select_for_secondary=True 时 load_external_subtitle 已自行设为次字幕轨，
+            # 仅主字幕轨需要显式 apply。
+            if (
+                track_id is not None
+                and not use_secondary
+                and hasattr(self.video, "apply_subtitle_mode")
+            ):
                 self.video.apply_subtitle_mode("track", track_id=track_id)
         finally:
             self._danmaku_loading_slot = None
-        self._danmaku_uses_secondary_slot = False
+        self._danmaku_uses_secondary_slot = use_secondary
         return track_id
 
     def _install_danmaku_log_handler(self, session) -> None:

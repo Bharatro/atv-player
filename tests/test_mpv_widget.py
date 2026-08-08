@@ -2033,6 +2033,118 @@ def test_mpv_widget_lists_embedded_subtitle_tracks_with_readable_labels(qtbot) -
     ]
 
 
+def test_mpv_widget_translates_common_subtitle_titles_to_chinese(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "sub", "lang": "", "title": "Simplified", "default": False, "forced": False, "external": False},
+            {"id": 2, "type": "sub", "lang": "", "title": "Traditional Chinese", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "", "title": "cht", "default": True, "forced": False, "external": False},
+            {"id": 4, "type": "sub", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+            {"id": 5, "type": "sub", "lang": "eng", "title": "Director Commentary", "default": False, "forced": False, "external": False},
+        ]
+    )
+
+    assert [track.label for track in widget.subtitle_tracks()] == [
+        "简体中文",
+        "繁体中文",
+        "繁体中文 (默认)",
+        "English",
+        "Director Commentary",
+    ]
+
+
+def test_mpv_widget_translates_bilingual_subtitle_titles(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "sub", "lang": "chi", "title": "chs&eng", "default": False, "forced": False, "external": False},
+            {"id": 2, "type": "sub", "lang": "chi", "title": "cht&eng", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "", "title": "中英", "default": False, "forced": False, "external": False},
+        ]
+    )
+
+    assert [track.label for track in widget.subtitle_tracks()] == ["简英双语", "繁英双语", "中英双语"]
+
+
+def test_mpv_widget_auto_mode_prefers_bilingual_subtitle_even_over_default_simplified(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 2, "type": "sub", "lang": "chi", "title": "Simplified", "default": True, "forced": False, "external": False},
+            {"id": 6, "type": "sub", "lang": "chi", "title": "chs&eng", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 6
+    assert player.sid == 6
+
+
+def test_mpv_widget_disambiguates_subtitle_tracks_with_identical_labels(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "sub", "lang": "zh-hans", "title": "", "codec": "ass", "default": False, "forced": False, "external": False},
+            {"id": 2, "type": "sub", "lang": "zh-hans", "title": "", "codec": "subrip", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "zh-hans", "title": "", "codec": "hdmv_pgs_subtitle", "default": True, "forced": False, "external": False},
+        ]
+    )
+
+    assert [track.label for track in widget.subtitle_tracks()] == [
+        "简体中文 [ASS]",
+        "简体中文 [SRT]",
+        "简体中文 (默认)",
+    ]
+
+
+def test_mpv_widget_auto_mode_selects_simplified_for_chi_titled_subrip_tracks(qtbot) -> None:
+    # Reproduces a real MKV whose only subtitle metadata is lang=chi + a
+    # "Simplified"/"Traditional" title (subrip). Auto mode must pick Simplified.
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 2, "type": "sub", "lang": "chi", "title": "Simplified", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "chi", "title": "Traditional", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 2
+    assert player.sid == 2
+
+
+def test_mpv_widget_auto_mode_selects_simplified_when_lang_is_missing(qtbot) -> None:
+    # mpv sometimes exposes subrip tracks with only a title and no lang; the
+    # title tokens alone must still drive Simplified selection.
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 2, "type": "sub", "lang": "", "title": "Traditional", "default": True, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "", "title": "Simplified", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 3
+    assert player.sid == 3
+
+
 def test_mpv_widget_auto_mode_prefers_chinese_embedded_subtitles(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -2077,6 +2189,24 @@ def test_mpv_widget_auto_mode_recognizes_simplified_and_traditional_english_titl
         track_list=[
             {"id": 5, "type": "sub", "lang": "", "title": "Traditional Chinese", "default": True, "forced": False, "external": False},
             {"id": 6, "type": "sub", "lang": "", "title": "Simplified Chinese", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 6
+    assert player.sid == 6
+
+
+def test_mpv_widget_auto_mode_recognizes_bare_simplified_and_traditional_titles(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 5, "type": "sub", "lang": "", "title": "Traditional", "default": True, "forced": False, "external": False},
+            {"id": 6, "type": "sub", "lang": "", "title": "Simplified", "default": False, "forced": False, "external": False},
         ],
     )
     widget._player = player

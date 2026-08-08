@@ -1375,6 +1375,65 @@ class MpvWidget(QWidget):
             for index, (start_seconds, title) in enumerate(entries)
         ]
 
+    # Maps common raw subtitle track titles (language identifiers such as
+    # "Simplified", "chs", "GB", "Big5") to a readable Chinese display name.
+    # Titles that are not pure language identifiers (e.g. "Signs", "Director
+    # Commentary") are intentionally left untouched.
+    _SUBTITLE_TITLE_DISPLAY: dict[str, str] = {
+        "simplified": "简体中文",
+        "simplified chinese": "简体中文",
+        "simplified-chinese": "简体中文",
+        "简体": "简体中文",
+        "简中": "简体中文",
+        "简体中文": "简体中文",
+        "chs": "简体中文",
+        "gb": "简体中文",
+        "sc": "简体中文",
+        "traditional": "繁体中文",
+        "traditional chinese": "繁体中文",
+        "traditional-chinese": "繁体中文",
+        "transitional": "繁体中文",
+        "tranditional": "繁体中文",
+        "繁体": "繁体中文",
+        "繁體": "繁体中文",
+        "繁中": "繁体中文",
+        "繁体中文": "繁体中文",
+        "cht": "繁体中文",
+        "big5": "繁体中文",
+        "tc": "繁体中文",
+        "chinese": "中文",
+        "中文": "中文",
+        "中文字幕": "中文",
+        "english": "English",
+        "eng": "English",
+        "japanese": "日本語",
+        "jpn": "日本語",
+        "日语": "日本語",
+    }
+
+    @staticmethod
+    def _normalize_subtitle_title_key(title: str) -> str:
+        return " ".join(title.split()).casefold().strip("()[]（）【】{}<>-_=+/\\|.,;: ")
+
+    def _translate_subtitle_title(self, title: str) -> str:
+        if not title:
+            return ""
+        return self._SUBTITLE_TITLE_DISPLAY.get(self._normalize_subtitle_title_key(title), "")
+
+    def _subtitle_bilingual_label(self, title: str) -> str:
+        # 识别"中英双语"类标题（如 chs&eng / cht&eng / 中英 / 简英），返回中文展示名。
+        lowered = title.casefold()
+        english_tokens = ("english", "eng", "英文", "英语", "英")
+        if not any(token in lowered for token in english_tokens):
+            return ""
+        if any(token in lowered for token in ("chs", "简", "simplified", "hans", "gb", "sc")):
+            return "简英双语"
+        if any(token in lowered for token in ("cht", "繁", "traditional", "tranditional", "hant", "big5", "tc")):
+            return "繁英双语"
+        if any(token in lowered for token in ("中", "chi", "zh", "chinese")):
+            return "中英双语"
+        return ""
+
     def _subtitle_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
         return {
@@ -1396,7 +1455,14 @@ class MpvWidget(QWidget):
         }.get(normalized, normalized or "")
 
     def _subtitle_track_label(self, title: str, lang: str, is_default: bool, is_forced: bool, index: int) -> str:
-        base = title.strip() or self._subtitle_language_label(lang) or f"字幕 {index}"
+        raw_title = title.strip()
+        base = (
+            self._translate_subtitle_title(raw_title)
+            or self._subtitle_bilingual_label(raw_title)
+            or raw_title
+            or self._subtitle_language_label(lang)
+            or f"字幕 {index}"
+        )
         suffixes = []
         if is_default:
             suffixes.append("默认")
@@ -1406,11 +1472,39 @@ class MpvWidget(QWidget):
             return base
         return f"{base} ({'/'.join(suffixes)})"
 
+    _SUBTITLE_CODEC_LABELS: dict[str, str] = {
+        "ass": "ASS",
+        "ssa": "SSA",
+        "subrip": "SRT",
+        "srt": "SRT",
+        "webvtt": "WebVTT",
+        "mov_text": "MP4",
+        "hdmv_pgs_subtitle": "PGS",
+        "dvd_subtitle": "VOBSUB",
+        "dvb_subtitle": "DVB",
+        "arib_caption": "ARIB",
+    }
+
+    def _subtitle_track_detail_parts(self, raw_track: object) -> list[str]:
+        if not isinstance(raw_track, dict):
+            return []
+        codec = str(raw_track.get("codec") or "").strip().lower()
+        if not codec:
+            return []
+        return [self._SUBTITLE_CODEC_LABELS.get(codec, codec.upper())]
+
     def _is_chinese_subtitle_track(self, track: SubtitleTrack) -> bool:
         if track.lang in {"zh", "chi", "zho", "chs", "zh-cn", "zh-hans", "zh-tw", "cht", "zh-hant"}:
             return True
         lowered_title = track.title.casefold()
-        return any(token in lowered_title for token in ("中文", "简中", "繁中", "中字", "chinese"))
+        return any(
+            token in lowered_title
+            for token in (
+                "中文", "简中", "繁中", "中字", "简体", "繁体", "繁體", "中英", "双语",
+                "chinese", "simplified", "traditional", "transitional", "tranditional",
+                "chs", "cht", "big5",
+            )
+        )
 
     def _chinese_subtitle_preference(self, track: SubtitleTrack) -> int:
         normalized_lang = track.lang.casefold()
@@ -1419,9 +1513,19 @@ class MpvWidget(QWidget):
         traditional_langs = {"zh-tw", "cht", "zh-hant"}
         simplified_tokens = ("简中", "简体", "chs", "sc", "gb", "hans", "simplified")
         traditional_tokens = ("繁中", "繁體", "繁体", "cht", "tc", "big5", "hant", "traditional", "tranditional")
-        if any(token in lowered_title for token in simplified_tokens):
+        english_tokens = ("english", "eng", "英文", "英语", "英")
+        has_english = any(token in lowered_title for token in english_tokens)
+        has_simplified = any(token in lowered_title for token in simplified_tokens)
+        has_traditional = any(token in lowered_title for token in traditional_tokens)
+        # 中英双语字幕优先级最高（简英 > 繁英/中英 > 简体 > 通用中文 > 繁体）
+        if has_english:
+            if has_simplified:
+                return 4
+            if has_traditional or any(token in lowered_title for token in ("中", "chi", "zh", "chinese")):
+                return 3
+        if has_simplified:
             return 2
-        if any(token in lowered_title for token in traditional_tokens):
+        if has_traditional:
             return 0
         if normalized_lang in simplified_langs:
             return 2
@@ -1452,7 +1556,7 @@ class MpvWidget(QWidget):
         except Exception:
             return []
 
-        tracks: list[SubtitleTrack] = []
+        track_entries: list[tuple[int, str, str, bool, bool, object]] = []
         for raw_track in raw_tracks:
             if raw_track.get("type") != "sub" or raw_track.get("external"):
                 continue
@@ -1460,14 +1564,29 @@ class MpvWidget(QWidget):
             lang = str(raw_track.get("lang") or "").strip().lower()
             is_default = bool(raw_track.get("default"))
             is_forced = bool(raw_track.get("forced"))
+            track_entries.append((int(raw_track["id"]), title, lang, is_default, is_forced, raw_track))
+
+        base_labels = [
+            self._subtitle_track_label(title, lang, is_default, is_forced, index + 1)
+            for index, (_, title, lang, is_default, is_forced, _) in enumerate(track_entries)
+        ]
+        duplicate_labels = {label for label in base_labels if base_labels.count(label) > 1}
+
+        tracks: list[SubtitleTrack] = []
+        for index, (track_id, title, lang, is_default, is_forced, raw_track) in enumerate(track_entries):
+            label = base_labels[index]
+            if label in duplicate_labels:
+                detail_parts = self._subtitle_track_detail_parts(raw_track)
+                if detail_parts:
+                    label = f"{label} [{ ' / '.join(detail_parts) }]"
             tracks.append(
                 SubtitleTrack(
-                    id=int(raw_track["id"]),
+                    id=track_id,
                     title=title,
                     lang=lang,
                     is_default=is_default,
                     is_forced=is_forced,
-                    label=self._subtitle_track_label(title, lang, is_default, is_forced, len(tracks) + 1),
+                    label=label,
                 )
             )
         return tracks
