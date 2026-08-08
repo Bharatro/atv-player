@@ -234,6 +234,7 @@ def test_mpv_widget_passes_auto_copy_hwdec_on_linux(qtbot, monkeypatch) -> None:
                 "interpolation": "no",
             },
         ),
+        ("copy-back", {"vo": "gpu", "hwdec": "auto-copy"}),
         ("software", {"vo": "gpu", "hwdec": "no"}),
     ],
 )
@@ -343,7 +344,7 @@ def test_mpv_widget_fallback_reraises_original_creation_failure(qtbot, monkeypat
     assert attempts[2]["vo"] == "gpu"
 
 
-def test_mpv_widget_refreshes_runtime_hwdec_setting_on_existing_player(qtbot, monkeypatch) -> None:
+def test_mpv_widget_refreshes_runtime_render_profile_on_existing_player(qtbot, monkeypatch) -> None:
     class FakeMPV:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
@@ -352,7 +353,7 @@ def test_mpv_widget_refreshes_runtime_hwdec_setting_on_existing_player(qtbot, mo
         def __setitem__(self, key: str, value: object) -> None:
             self.options[key] = value
 
-    widget = MpvWidget(config=AppConfig(mpv_hwdec_mode="auto-copy"))
+    widget = MpvWidget(config=AppConfig(mpv_render_profile="copy-back"))
     qtbot.addWidget(widget)
     fake_player = FakeMPV()
     widget._player = fake_player
@@ -362,6 +363,25 @@ def test_mpv_widget_refreshes_runtime_hwdec_setting_on_existing_player(qtbot, mo
 
     assert fake_player.options["hwdec"] == "auto-copy"
     assert fake_player.options["deinterlace"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("hwdec", "expected"),
+    [("auto-copy", True), ("auto-safe", False), ("no", False)],
+)
+def test_mpv_widget_reports_picture_adjustment_support_from_effective_hwdec(
+    qtbot, hwdec, expected
+) -> None:
+    class FakeMPV:
+        def __getitem__(self, key: str) -> object:
+            assert key == "hwdec"
+            return hwdec
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = FakeMPV()
+
+    assert widget.supports_picture_adjustments() is expected
 
 
 def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -> None:

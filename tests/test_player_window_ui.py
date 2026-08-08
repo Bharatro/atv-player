@@ -12698,25 +12698,25 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "重置",
     ]
     assert [action.text() for action in _submenu_actions(menu, "画面调节")] == [
-        "需软解或 copy-back 硬解模式",
+        "需启用 hwdec=auto-copy",
     ]
 
 
-def test_player_window_picture_adjustment_gated_by_render_profile(qtbot) -> None:
-    class ProfileConfig:
-        def __init__(self, profile: str) -> None:
-            self.mpv_render_profile = profile
+def test_player_window_picture_adjustment_gated_by_effective_hwdec(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self, supports_picture_adjustments: bool) -> None:
+            self._supports_picture_adjustments = supports_picture_adjustments
+
+        def supports_picture_adjustments(self) -> bool:
+            return self._supports_picture_adjustments
 
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    window.config = ProfileConfig("auto")
+    window.video = FakeVideo(False)
     assert window._picture_adjustment_supported() is False
 
-    window.config = ProfileConfig("copy-back")
-    assert window._picture_adjustment_supported() is True
-
-    window.config = ProfileConfig("software")
+    window.video = FakeVideo(True)
     assert window._picture_adjustment_supported() is True
 
 
@@ -12732,6 +12732,9 @@ def test_player_window_delay_and_picture_menu_handlers_drive_video(qtbot) -> Non
 
         def set_audio_delay(self, seconds: float) -> None:
             self.audio_delay_calls.append(seconds)
+
+        def supports_picture_adjustments(self) -> bool:
+            return True
 
         def set_brightness(self, value: int) -> None:
             self.picture_calls.append(("brightness", value))

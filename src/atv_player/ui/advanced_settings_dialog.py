@@ -1220,7 +1220,16 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             normalized_lines.append(f"{key}={value}")
 
         render_profile = str(self.mpv_hwdec_mode_combo.currentData() or "auto")
-        if render_profile not in {"auto", "compat", "balanced", "vulkan", "quality", "performance", "software"}:
+        if render_profile not in {
+            "auto",
+            "compat",
+            "balanced",
+            "vulkan",
+            "quality",
+            "performance",
+            "copy-back",
+            "software",
+        }:
             QMessageBox.warning(self, "渲染模式无效", "渲染模式选项无效")
             return None
 

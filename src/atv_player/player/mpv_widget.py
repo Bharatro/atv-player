@@ -83,7 +83,16 @@ _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
 _WINDOWS_MPV_DLL_NAMES = ("libmpv-2.dll", "mpv-2.dll", "mpv.dll")
-_VALID_RENDER_PROFILES = {"auto", "compat", "balanced", "vulkan", "quality", "performance", "copy-back", "software"}
+_VALID_RENDER_PROFILES = {
+    "auto",
+    "compat",
+    "balanced",
+    "vulkan",
+    "quality",
+    "performance",
+    "copy-back",
+    "software",
+}
 
 
 def _version_sort_key(value: str) -> tuple[int, ...]:
@@ -890,7 +899,10 @@ class MpvWidget(QWidget):
             return
         if self._player is None:
             return
-        hwdec = str(getattr(self._config, "mpv_hwdec_mode", "auto-safe") or "auto-safe")
+        render_profile = _normalize_render_profile(
+            getattr(self._config, "mpv_render_profile", "auto")
+        )
+        hwdec = str(_render_profile_options(render_profile).get("hwdec", "auto-safe"))
         if sys.platform.startswith("win") and hwdec == "auto-copy":
             hwdec = "auto-safe"
         self._set_player_property("hwdec", hwdec)
@@ -1823,6 +1835,12 @@ class MpvWidget(QWidget):
             self._post_to_widget_thread(lambda: self.set_audio_delay(seconds))
             return
         self._set_player_property("audio-delay", max(-10.0, min(float(seconds), 10.0)))
+
+    def supports_picture_adjustments(self) -> bool:
+        """Return whether mpv is currently using copy-back hardware decoding."""
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.supports_picture_adjustments))
+        return str(self._player_property("hwdec", "") or "").strip().lower() == "auto-copy"
 
     def brightness(self) -> int:
         if not self._on_widget_thread():

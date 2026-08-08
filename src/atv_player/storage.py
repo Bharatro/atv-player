@@ -30,6 +30,7 @@ _VALID_MPV_RENDER_PROFILES = {
     "vulkan",
     "quality",
     "performance",
+    "copy-back",
     "software",
 }
 _VALID_MPV_HWDEC_MODES = {"auto-safe", "auto-copy", "no"}

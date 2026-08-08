@@ -634,6 +634,13 @@ def test_settings_repository_normalizes_invalid_mpv_render_profile(tmp_path: Pat
     assert repo.load_config().mpv_render_profile == "auto"
 
 
+def test_settings_repository_persists_copy_back_render_profile(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(mpv_render_profile="copy-back"))
+
+    assert repo.load_config().mpv_render_profile == "copy-back"
+
+
 def test_settings_repository_maps_legacy_software_hwdec_to_render_profile(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

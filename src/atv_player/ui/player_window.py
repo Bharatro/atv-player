@@ -9998,7 +9998,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _build_picture_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("画面调节", parent)
         if not self._picture_adjustment_supported():
-            notice = menu.addAction("需软解或 copy-back 硬解模式")
+            notice = menu.addAction("需启用 hwdec=auto-copy")
             notice.setEnabled(False)
             return menu
         for prop, label in self._PICTURE_ADJUSTMENT_PROPS:
@@ -10021,8 +10021,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return menu
 
     def _picture_adjustment_supported(self) -> bool:
-        profile = str(getattr(self.config, "mpv_render_profile", "auto") or "auto")
-        return profile in ("software", "copy-back")
+        supports = getattr(self.video, "supports_picture_adjustments", None)
+        return bool(supports()) if callable(supports) else False
 
     def _set_subtitle_delay_from_menu(self, seconds: float) -> None:
         clamped = max(-10.0, min(float(seconds), 10.0))
@@ -10047,6 +10047,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._set_audio_delay_from_menu(self._audio_delay + delta)
 
     def _set_picture_from_menu(self, prop: str, value: int) -> None:
+        if not self._picture_adjustment_supported():
+            return
         clamped = max(-100, min(int(value), 100))
         try:
             self.controls.set_picture(prop, clamped)

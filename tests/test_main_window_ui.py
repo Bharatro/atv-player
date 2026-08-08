@@ -8122,6 +8122,19 @@ def test_advanced_settings_dialog_saves_vulkan_render_profile(qtbot) -> None:
     assert config.mpv_render_profile == "vulkan"
 
 
+def test_advanced_settings_dialog_saves_copy_back_render_profile(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    dialog.mpv_hwdec_mode_combo.setCurrentIndex(dialog.mpv_hwdec_mode_combo.findData("copy-back"))
+    dialog._save()
+
+    assert config.mpv_render_profile == "copy-back"
+
+
 def test_advanced_settings_dialog_loads_m3u_proxy_segment_prefetch_size(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
