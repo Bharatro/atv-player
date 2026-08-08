@@ -6610,6 +6610,92 @@ def test_player_window_preserves_plugin_groups_when_drive_resource_adds_subdirec
     assert window.video.load_calls[-1][0] == "http://baidu/2.mp4"
 
 
+def test_player_window_auto_advance_loads_next_drive_subdirectory(qtbot) -> None:
+    first_dir = [PlayItem(title="01.mp4", url="http://baidu/1.mp4", play_source="第一季")]
+    second_dir: list[PlayItem] = []
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘合集"),
+        playlist=first_dir,
+        playlists=[first_dir, second_dir],
+        source_groups=[
+            PlaybackSourceGroup(label="第一季", sources=[PlaybackSource(label="第一季", playlist=first_dir)]),
+            PlaybackSourceGroup(
+                label="第二季",
+                sources=[PlaybackSource(label="第二季", playlist=second_dir)],
+                drive_dir_id="dir-2",
+            ),
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        drive_resource_id="resource-1",
+        drive_files_loader=lambda resource_id, dir_id: [
+            {"name": "02.mp4", "url": "http://baidu/2.mp4", "path": "/第二季/02.mp4"}
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._handle_playback_finished()
+
+    assert window.session is not None
+    assert window.session.source_group_index == 1
+    assert window.current_index == 0
+    assert [item.title for item in window.session.playlist] == ["02.mp4"]
+    assert window.video.load_calls[-1][0] == "http://baidu/2.mp4"
+
+
+def test_player_window_auto_advance_loads_next_nested_drive_subdirectory(qtbot) -> None:
+    drive_entry = [PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/demo", play_source="百度")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘合集"),
+        playlist=drive_entry,
+        playlists=[drive_entry],
+        source_groups=[
+            PlaybackSourceGroup(label="百度", sources=[PlaybackSource(label="百度资源", playlist=drive_entry)])
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    first_dir = [PlayItem(title="01.mp4", url="http://baidu/1.mp4", play_source="第一季")]
+    second_dir: list[PlayItem] = []
+    load_result = PlaybackLoadResult(
+        replacement_playlist=first_dir,
+        source_groups=[
+            PlaybackSourceGroup(label="第一季", sources=[PlaybackSource(label="第一季", playlist=first_dir)]),
+            PlaybackSourceGroup(
+                label="第二季",
+                sources=[PlaybackSource(label="第二季", playlist=second_dir)],
+                drive_dir_id="dir-2",
+            ),
+        ],
+        playlists=[first_dir, second_dir],
+        drive_resource_id="resource-1",
+        drive_files_loader=lambda resource_id, dir_id: [
+            {"name": "02.mp4", "url": "http://baidu/2.mp4", "path": "/第二季/02.mp4"}
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+    window._apply_playback_loader_result(load_result)
+
+    window._handle_playback_finished()
+
+    assert window.session is not None
+    source = window.session.source_groups[0].sources[0]
+    assert source.subgroup_index == 1
+    assert window.current_index == 0
+    assert [item.title for item in window.session.playlist] == ["02.mp4"]
+    assert window.video.load_calls[-1][0] == "http://baidu/2.mp4"
+
+
 def test_player_window_switches_leaf_source_and_keeps_episode_index_when_possible(qtbot) -> None:
     first = [
         PlayItem(title="第1集", url="http://q1/1.m3u8", play_source="夸克1"),

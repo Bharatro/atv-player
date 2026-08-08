@@ -5653,6 +5653,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         source_index: int,
         *,
         reset_auto_switch_state: bool = True,
+        target_index: int | None = None,
     ) -> None:
         if self.session is None:
             return
@@ -5683,7 +5684,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._sync_playlist_panel_mode()
             return
         previous_index = self.current_index
-        target_index = min(previous_index, len(target_playlist) - 1)
+        if target_index is None:
+            target_index = min(previous_index, len(target_playlist) - 1)
+        else:
+            target_index = max(0, min(target_index, len(target_playlist) - 1))
         _, mapping = self._flatten_source_groups(source_groups)
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
@@ -5827,14 +5831,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         else:
             subgroup.sources = [PlaybackSource(label=subgroup.label, playlist=playlist)]
 
-    def _switch_active_playlist(self, target_playlist: list[PlayItem], label: str = "") -> None:
+    def _switch_active_playlist(
+        self,
+        target_playlist: list[PlayItem],
+        label: str = "",
+        *,
+        target_index: int | None = None,
+    ) -> None:
         if self.session is None or not target_playlist:
             return
         previous_index = self.current_index
         self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self.session.playlist = target_playlist
-        self.current_index = min(previous_index, len(target_playlist) - 1)
+        if target_index is None:
+            target_index = min(previous_index, len(target_playlist) - 1)
+        self.current_index = max(0, min(target_index, len(target_playlist) - 1))
         self.session.start_index = self.current_index
         self._playlist_sort_state.apply(target_playlist)
         self._render_playlist_source_combos()
@@ -10503,10 +10515,48 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._observed_media_duration_seconds,
         )
         if self.current_index + 1 >= len(self.session.playlist):
+            if self._play_next_drive_directory():
+                return
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             return
         self.play_next()
+
+    def _play_next_drive_directory(self) -> bool:
+        """Continue autoplay with the first file in the next drive directory."""
+        session = self.session
+        if session is None or not getattr(session, "drive_resource_id", ""):
+            return False
+        source_groups = self._session_source_groups()
+        # Resolved drive resources nested under an existing plugin source use the
+        # subgroup selector (for example 百度/夸克 -> 第一季/第二季).
+        if 0 <= session.source_group_index < len(source_groups):
+            parent_group = source_groups[session.source_group_index]
+            if 0 <= session.source_index < len(parent_group.sources):
+                source = parent_group.sources[session.source_index]
+                for subgroup_index in range(source.subgroup_index + 1, len(source.subgroups)):
+                    subgroup = source.subgroups[subgroup_index]
+                    self._ensure_drive_subgroup_loaded(subgroup)
+                    if not subgroup.sources or not subgroup.sources[0].playlist:
+                        continue
+                    source.subgroup_index = subgroup_index
+                    self._switch_active_playlist(
+                        subgroup.sources[0].playlist,
+                        subgroup.label,
+                        target_index=0,
+                    )
+                    self._render_playlist_source_combos()
+                    return True
+
+        # Also support drive resources represented directly as top-level groups.
+        for group_index in range(session.source_group_index + 1, len(source_groups)):
+            self._ensure_drive_group_loaded(group_index)
+            group = source_groups[group_index]
+            for source_index, source in enumerate(group.sources):
+                if source.playlist:
+                    self._switch_active_source(group_index, source_index, target_index=0)
+                    return True
+        return False
 
     def _recent_seek_playback_finished_action(self) -> str:
         if time.monotonic() >= self._ignore_playback_finished_until:
