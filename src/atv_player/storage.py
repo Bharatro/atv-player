@@ -465,6 +465,7 @@ class SettingsRepository:
                     danmaku_duplicate_window_minutes INTEGER NOT NULL DEFAULT 0,
                     danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0,
                     dandan_base_url TEXT NOT NULL DEFAULT '',
+                    bangumi_data_danmaku_enabled INTEGER NOT NULL DEFAULT 0,
                     disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
@@ -586,6 +587,10 @@ class SettingsRepository:
             if "dandan_base_url" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN dandan_base_url TEXT NOT NULL DEFAULT ''"
+                )
+            if "bangumi_data_danmaku_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN bangumi_data_danmaku_enabled INTEGER NOT NULL DEFAULT 0"
                 )
             if "disabled_metadata_provider_ids" not in columns:
                 conn.execute(
@@ -1139,7 +1144,8 @@ class SettingsRepository:
                     following_episode_display_mode,
                     following_episode_grid_columns,
                     home_mode,
-                    dandan_base_url
+                    dandan_base_url,
+                    bangumi_data_danmaku_enabled
                 FROM app_config
                 WHERE id = 1
                 """
@@ -1235,6 +1241,7 @@ class SettingsRepository:
             following_episode_grid_columns,
             home_mode,
             dandan_base_url,
+            bangumi_data_danmaku_enabled,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -1357,6 +1364,7 @@ class SettingsRepository:
             ),
             home_mode=_normalize_home_mode(home_mode),
             dandan_base_url=str(dandan_base_url or "").strip(),
+            bangumi_data_danmaku_enabled=bool(bangumi_data_danmaku_enabled),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1453,7 +1461,8 @@ class SettingsRepository:
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?,
                     home_mode = ?,
-                    dandan_base_url = ?
+                    dandan_base_url = ?,
+                    bangumi_data_danmaku_enabled = ?
                 WHERE id = 1
                 """,
                 (
@@ -1570,6 +1579,7 @@ class SettingsRepository:
                     ),
                     _normalize_home_mode(config.home_mode),
                     str(config.dandan_base_url or "").strip(),
+                    int(config.bangumi_data_danmaku_enabled),
                 ),
             )
 

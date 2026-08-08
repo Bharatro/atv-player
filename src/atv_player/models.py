@@ -64,6 +64,7 @@ class AppConfig:
     danmaku_duplicate_window_minutes: int = 0
     danmaku_convert_top_bottom_to_scroll: bool = False
     dandan_base_url: str = ""
+    bangumi_data_danmaku_enabled: bool = False
     disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"
@@ -260,6 +261,13 @@ class YtdlpAudioTrackOption:
 class PlaybackLoadResult:
     replacement_playlist: list[PlayItem] = field(default_factory=list)
     replacement_start_index: int = 0
+    # Per-directory drive result (mutually exclusive with a flat replacement_playlist):
+    # when source_groups is set, the loader produced a grouped, lazily-loadable directory
+    # tree (replacement_playlist holds the first group's populated playlist).
+    source_groups: list[PlaybackSourceGroup] | None = None
+    playlists: list[list[PlayItem]] | None = None
+    drive_resource_id: str = ""
+    drive_files_loader: Callable[..., list[PlayItem]] | None = None
 
 
 @dataclass(slots=True)
@@ -344,6 +352,9 @@ class PlaybackSource:
 class PlaybackSourceGroup:
     label: str
     sources: list[PlaybackSource] = field(default_factory=list)
+    # When non-empty, this group is a drive directory whose files are fetched lazily
+    # (via PlayerSession.drive_files_loader) on first selection.
+    drive_dir_id: str = ""
 
 
 @dataclass(slots=True)
@@ -518,6 +529,7 @@ class OpenPlayerRequest:
     source_index: int = 0
     source_kind: str = "browse"
     source_key: str = ""
+    source_display_name: str = ""
     source_mode: str = ""
     source_path: str = ""
     source_vod_id: str = ""
@@ -541,3 +553,6 @@ class OpenPlayerRequest:
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
     initial_log_message: str = ""
     is_placeholder: bool = False
+    # New per-directory drive API: opaque resource handle + lazy directory-file loader.
+    drive_resource_id: str = ""
+    drive_files_loader: Callable[..., list[PlayItem]] | None = None

@@ -104,6 +104,25 @@ def test_fetch_vendors_parses_platform_media_ids_from_detail() -> None:
     ]
 
 
+def test_fetch_vendors_decodes_migu_content_id() -> None:
+    # migu vendor uri is URL-encoded JSON; contentID must be decoded then regexed.
+    encoded = "migu%3A%2F%2F%7B%22contentID%22%3A%226000000%22%7D"
+
+    def fake_get(url: str, **kwargs):
+        return JsonResponse({"vendors": [{"id": "miguvideo", "uri": encoded}]})
+
+    discovery = DoubanDiscovery(get=fake_get, post=lambda *a, **k: None)
+
+    vendors = discovery.fetch_vendors("35876897")
+
+    assert vendors == [
+        DoubanVendor(
+            provider="migu",
+            media_id="https://v3-sc.miguvideo.com/program/v4/cont/content-info/6000000/1",
+        )
+    ]
+
+
 def test_fetch_vendors_skips_unknown_vendor_and_missing_id() -> None:
     def fake_get(url: str, **kwargs):
         return JsonResponse(
@@ -120,6 +139,34 @@ def test_fetch_vendors_skips_unknown_vendor_and_missing_id() -> None:
     assert discovery.fetch_vendors("35876897") == []
 
 
+def test_fetch_vendors_decodes_migu_content_id_and_skips_unknown() -> None:
+    # migu 的 uri 是 URL-encoded 的 JSON 片段，需 decode 后正则取 contentID；
+    # 未知 vendor（如 pptv）应被跳过而不报错。
+    def fake_get(url: str, **kwargs):
+        return JsonResponse(
+            {
+                "vendors": [
+                    {
+                        "id": "miguvideo",
+                        "uri": "migu://x?data=%7B%22contentID%22%3A%226000000%22%7D",
+                    },
+                    {"id": "pptv", "uri": "https://v.pptv.com/x.html"},
+                ]
+            }
+        )
+
+    discovery = DoubanDiscovery(get=fake_get, post=lambda *a, **k: None)
+
+    vendors = discovery.fetch_vendors("35876897")
+
+    assert vendors == [
+        DoubanVendor(
+            provider="migu",
+            media_id="https://v3-sc.miguvideo.com/program/v4/cont/content-info/6000000/1",
+        ),
+    ]
+
+
 def test_vendor_to_page_url_builds_tencent_cover_url_with_trailing_slash() -> None:
     # tencent 展开只需 cover_id，但 _extract_cover_id 的正则要求 cover id 后带斜杠，
     # 所以必须构造成 /x/cover/{cid}/ 形式，否则展开拿不到 cover_id。
@@ -130,7 +177,7 @@ def test_vendor_to_page_url_builds_tencent_cover_url_with_trailing_slash() -> No
     assert url == "https://v.qq.com/x/cover/mzc00200nfe7al6/"
 
 
-def test_vendor_to_page_url_builds_iqiyi_youku_bilibili_urls() -> None:
+def test_vendor_to_page_url_builds_iqiyi_youku_bilibili_migu_urls() -> None:
     from atv_player.danmaku.discovery.douban import vendor_to_page_url
 
     assert (
@@ -144,6 +191,16 @@ def test_vendor_to_page_url_builds_iqiyi_youku_bilibili_urls() -> None:
     assert (
         vendor_to_page_url(DoubanVendor(provider="bilibili", media_id="ss28229233"))
         == "https://www.bilibili.com/bangumi/play/ss28229233"
+    )
+    # migu media_id is already a full content-info URL; pass through unchanged.
+    assert (
+        vendor_to_page_url(
+            DoubanVendor(
+                provider="migu",
+                media_id="https://v3-sc.miguvideo.com/program/v4/cont/content-info/6000000/1",
+            )
+        )
+        == "https://v3-sc.miguvideo.com/program/v4/cont/content-info/6000000/1"
     )
 
 

@@ -16,6 +16,7 @@ DANMAKU_SOURCE_PREFERENCES = (
     SourcePreference("iqiyi", "爱奇艺"),
     SourcePreference("mgtv", "芒果"),
     SourcePreference("sohu", "搜狐"),
+    SourcePreference("migu", "咪咕"),
     SourcePreference("renren", "人人"),
     SourcePreference("dandan", "弹弹Play"),
     SourcePreference("bahamut", "巴哈姆特"),

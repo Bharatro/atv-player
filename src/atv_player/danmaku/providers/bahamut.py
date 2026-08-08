@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from opencc import OpenCC
@@ -76,6 +76,24 @@ class BahamutDanmakuProvider:
                     items.extend(settled.value)
         return self._prefer_requested_episode(items, requested_episode)
 
+    def expand_page_url(
+        self,
+        page_url: str,
+        query_name: str,
+    ) -> list[DanmakuSearchItem]:
+        # Bangumi-data discovery resolves a 巴哈 series by its gamer video_sn;
+        # expand it into per-episode candidates via the detail API.
+        video_sn = self._series_sn_from_url(page_url)
+        if not video_sn:
+            return []
+        return self._expand_series(query_name, video_sn)
+
+    def _series_sn_from_url(self, page_url: str) -> str:
+        parsed = urlparse(page_url)
+        if parsed.scheme == self.key and parsed.netloc == "series":
+            return parsed.path.strip("/")
+        return (parse_qs(parsed.query).get("videoSn") or [""])[0].strip()
+
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         video_sn = self._episode_id(page_url)
         try:
@@ -135,13 +153,25 @@ class BahamutDanmakuProvider:
             or should_filter_name(traditional_name, source_title)
         ):
             return []
-        detail_payload = self._get_json(
-            _DETAIL_URL,
-            params={"videoSn": video_sn},
-        )
+        return self._expand_series(query_name, video_sn, source_title)
+
+    def _expand_series(
+        self,
+        query_name: str,
+        video_sn: str,
+        source_title: str = "",
+    ) -> list[DanmakuSearchItem]:
+        try:
+            detail_payload = self._get_json(
+                _DETAIL_URL,
+                params={"videoSn": video_sn},
+            )
+        except (httpx.HTTPError, TypeError, ValueError):
+            return []
         data = detail_payload.get("data") if isinstance(detail_payload, dict) else None
         series = data.get("anime") if isinstance(data, dict) else None
         items: list[DanmakuSearchItem] = []
+        title = source_title or query_name
         for episode in self._episodes(series):
             episode_no = str(episode.get("episode") or "").strip()
             episode_video_sn = str(episode.get("videoSn") or "").strip()
@@ -154,7 +184,7 @@ class BahamutDanmakuProvider:
                     url=f"bahamut://episode/{episode_video_sn}",
                     resolve_context={
                         "series_video_sn": video_sn,
-                        "source_title": source_title,
+                        "source_title": title,
                     },
                 )
             )

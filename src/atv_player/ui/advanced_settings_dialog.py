@@ -166,6 +166,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.danmaku_duplicate_window_spinbox.setRange(0, 60)
         self.danmaku_duplicate_window_spinbox.setSuffix(" 分钟")
         self.danmaku_convert_top_bottom_checkbox = QCheckBox("顶部/底部弹幕转为滚动弹幕")
+        self.bangumi_data_danmaku_checkbox = QCheckBox(
+            "Bangumi-data 动漫季号消歧（实验，首次启用需下载几 MB 数据集）"
+        )
         self.douban_cookie_edit = QPlainTextEdit()
         self.douban_cookie_edit.setPlaceholderText("填写豆瓣 Cookie；留空时跳过豆瓣官方抓取")
         self.tmdb_api_key_edit = QLineEdit()
@@ -367,6 +370,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.danmaku_blocked_words_edit.setPlainText("\n".join(config.danmaku_blocked_words))
         self.danmaku_duplicate_window_spinbox.setValue(config.danmaku_duplicate_window_minutes)
         self.danmaku_convert_top_bottom_checkbox.setChecked(config.danmaku_convert_top_bottom_to_scroll)
+        self.bangumi_data_danmaku_checkbox.setChecked(config.bangumi_data_danmaku_enabled)
         self.dandan_base_url_edit.setText(config.dandan_base_url)
         self.theme_mode_combo.setCurrentIndex(max(0, self.theme_mode_combo.findData(config.theme_mode)))
         self.home_mode_combo.setCurrentIndex(max(0, self.home_mode_combo.findData(config.home_mode)))
@@ -478,6 +482,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         danmaku_cleaning_layout.addRow("屏蔽词（每行一个）", self.danmaku_blocked_words_edit)
         danmaku_cleaning_layout.addRow("重复内容窗口", self.danmaku_duplicate_window_spinbox)
         danmaku_cleaning_layout.addRow(self.danmaku_convert_top_bottom_checkbox)
+        danmaku_cleaning_layout.addRow(self.bangumi_data_danmaku_checkbox)
         self.danmaku_cleaning_group.setLayout(danmaku_cleaning_layout)
         metadata_tab_layout = QVBoxLayout(self.metadata_tab)
         metadata_tab_layout.addWidget(self.metadata_group)
@@ -1357,6 +1362,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             if not checkbox.isChecked()
         ]
         self._config.dandan_base_url = self.dandan_base_url_edit.text().strip()
+        self._config.bangumi_data_danmaku_enabled = self.bangumi_data_danmaku_checkbox.isChecked()
         self._config.disabled_metadata_provider_ids = [
             provider_id
             for provider_id, checkbox in self.metadata_source_checkboxes.items()

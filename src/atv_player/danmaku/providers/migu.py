@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+import base64
+import json
+import re
+from collections.abc import Callable
+
+import httpx
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+
+from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
+from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.providers._concurrency import iter_bounded_settled
+
+# migu encrypts every segment with AES-ECB using a "gateway key" that is itself
+# derived by permuting each byte's nibbles before use. Ported from danmu_api
+# utils/migu-util.js (DEFAULT_GATEWAY_KEY + KEY_NIBBLE_SUBSTITUTION). Verified
+# against live segments 2026-08-06 (the raw key / no-nibble variants all fail).
+_GATEWAY_KEY_B64 = "vwwLu7e6ug4HAQMAug8CsA8HD7oHDwuxAg4HAQG6DLA="
+_GATEWAY_KEY_NIBBLE = (3, 5, 7, 0, 15, 10, 13, 1, 11, 14, 4, 6, 9, 12, 8, 2)
+
+
+def _derive_gateway_key(encoded_key: str) -> bytes:
+    source = base64.b64decode(encoded_key)
+    if len(source) != 32:
+        raise ValueError("invalid gateway key length")
+    table = _GATEWAY_KEY_NIBBLE
+    key = bytearray(len(source))
+    for index, value in enumerate(source):
+        key[index] = (table[value >> 4] << 4) | table[value & 0x0F]
+    return bytes(key)
+
+
+def _time_to_seconds(value: object) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    if text.isdigit():
+        return int(text)
+    parts = text.split(":")
+    try:
+        numbers = [int(float(part)) for part in parts]
+    except ValueError:
+        return 0
+    if len(numbers) == 3:
+        return numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    if len(numbers) == 2:
+        return numbers[0] * 60 + numbers[1]
+    return numbers[0] if len(numbers) == 1 else 0
+
+
+def _response_payload(response: httpx.Response) -> dict:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        try:
+            payload = json.loads(response.text)
+        except ValueError:
+            raise DanmakuSearchError("咪咕响应解析失败") from exc
+    if not isinstance(payload, dict):
+        raise DanmakuSearchError("咪咕响应解析失败")
+    return payload
+
+
+def migu_decrypt(encrypted_data: str) -> str:
+    text = str(encrypted_data or "").strip()
+    if not text:
+        return ""
+    if text.startswith("{"):
+        return text
+
+    try:
+        raw = base64.b64decode(text)
+        cipher = AES.new(_derive_gateway_key(_GATEWAY_KEY_B64), AES.MODE_ECB)
+        decrypted = unpad(cipher.decrypt(raw), AES.block_size).decode("utf-8")
+    except Exception as exc:  # noqa: BLE001 - any failure means the gateway cipher rotated
+        raise DanmakuResolveError("咪咕弹幕响应解密失败") from exc
+    if not decrypted.strip().startswith("{"):
+        raise DanmakuResolveError("咪咕弹幕响应解密失败")
+    return decrypted
+
+
+class MiguDanmakuProvider:
+    key = "migu"
+    _SEARCH_URL = "https://jadeite.migu.cn/search/v3/open-search"
+    _DETAIL_URL = "https://v3-sc.miguvideo.com/program/v4/cont/content-info/{id}/1"
+    _BARRAGE_URL = (
+        "https://webapi.miguvideo.com/gateway/live_barrage/videox/barrage/v2/"
+        "list/{album_id}/{episode_id}"
+    )
+    _SEGMENT_SECONDS = 30
+
+    def __init__(
+        self,
+        get: Callable[..., httpx.Response] = httpx.get,
+        post: Callable[..., httpx.Response] = httpx.post,
+    ) -> None:
+        self._get = get
+        self._post = post
+        self._resolve_context_by_url: dict[str, dict[str, str | int | None]] = {}
+
+    def supports(self, page_url: str) -> bool:
+        return "miguvideo.com" in page_url or "migu.cn" in page_url
+
+    def prime_resolve_context(
+        self,
+        page_url: str,
+        resolve_context: dict[str, str | int | None],
+    ) -> None:
+        self._resolve_context_by_url[page_url] = dict(resolve_context)
+
+    def search(
+        self,
+        name: str,
+        original_name: str | None = None,
+    ) -> list[DanmakuSearchItem]:
+        response = self._post(
+            self._SEARCH_URL,
+            json={
+                "appVersion": "6.1.1.00",
+                "ct": 101,
+                "isCorrectWord": 1,
+                "k": name,
+                "mediaSource": 9000000,
+                "pageIdx": 1,
+                "pageSize": 20,
+                "copyrightTerminal": 3,
+                "searchScene": 2,
+                "uiVersion": "A3.26.0",
+            },
+            headers=self._json_headers(),
+            timeout=10.0,
+            follow_redirects=True,
+        )
+        payload = _response_payload(response)
+        content_infos = (payload.get("body") or {}).get("contentInfoList") or []
+        if not isinstance(content_infos, list):
+            raise DanmakuSearchError("咪咕搜索结果解析失败")
+
+        results: list[DanmakuSearchItem] = []
+        for content_info in content_infos:
+            if not isinstance(content_info, dict):
+                continue
+            asset = content_info.get("shortMediaAsset")
+            if not isinstance(asset, dict) or not asset.get("isLong"):
+                continue
+            album_id = self._album_id(asset)
+            title = str(asset.get("name") or "").strip()
+            if not album_id or not title:
+                continue
+            for episode in self._episodes(album_id):
+                episode_id = str(episode.get("pID") or "").strip()
+                if not episode_id:
+                    continue
+                episode_name = str(episode.get("name") or "").strip()
+                duration = _time_to_seconds(episode.get("duration"))
+                url = self._barrage_url(album_id, episode_id)
+                results.append(
+                    DanmakuSearchItem(
+                        provider=self.key,
+                        name=f"{title} {episode_name}".strip(),
+                        url=url,
+                        duration_seconds=duration,
+                        resolve_context={
+                            "album_id": album_id,
+                            "episode_id": episode_id,
+                            "duration_seconds": duration,
+                        },
+                    )
+                )
+        return results
+
+    def expand_page_url(
+        self, page_url: str, query_name: str
+    ) -> list[DanmakuSearchItem]:
+        # Douban gives a content-info URL; expand into per-episode barrage candidates.
+        match = re.search(r"/content-info/([^/?#]+)/1", page_url)
+        if match is None:
+            return []
+        item_id = match.group(1)
+        detail = self._detail(item_id)
+        if not detail:
+            return []
+        album_id = str(detail.get("epsID") or item_id).strip()
+        title = str(detail.get("name") or query_name or "").strip()
+        episodes = detail.get("datas")
+        if not isinstance(episodes, list) or not episodes:
+            playing = detail.get("playing")
+            if isinstance(playing, dict) and str(playing.get("pID") or "").strip():
+                episodes = [
+                    {
+                        "name": title,
+                        "pID": playing.get("pID"),
+                        "duration": playing.get("duration"),
+                    }
+                ]
+            else:
+                return []
+        results: list[DanmakuSearchItem] = []
+        seen: set[str] = set()
+        for episode in episodes:
+            if not isinstance(episode, dict):
+                continue
+            episode_id = str(episode.get("pID") or "").strip()
+            if not episode_id or episode_id in seen:
+                continue
+            seen.add(episode_id)
+            episode_name = str(episode.get("name") or "").strip()
+            duration = _time_to_seconds(episode.get("duration"))
+            url = self._barrage_url(album_id, episode_id)
+            results.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=(episode_name or f"{title}").strip(),
+                    url=url,
+                    duration_seconds=duration,
+                    resolve_context={
+                        "album_id": album_id,
+                        "episode_id": episode_id,
+                        "duration_seconds": duration,
+                    },
+                )
+            )
+        return results
+
+    def resolve(self, page_url: str) -> list[DanmakuRecord]:
+        album_id, episode_id = self._parse_barrage_url(page_url)
+        context = dict(self._resolve_context_by_url.get(page_url) or {})
+        album_id = str(context.get("album_id") or album_id).strip()
+        episode_id = str(context.get("episode_id") or episode_id).strip()
+        duration_seconds = int(context.get("duration_seconds") or 0)
+        if duration_seconds <= 0:
+            detail = self._detail(episode_id)
+            album_id = str(detail.get("epsID") or album_id).strip()
+            duration_seconds = _time_to_seconds(
+                (detail.get("playing") or {}).get("duration")
+            )
+        if not album_id or not episode_id:
+            raise DanmakuResolveError("咪咕弹幕地址缺少视频 ID")
+        if duration_seconds <= 0:
+            raise DanmakuResolveError("咪咕弹幕缺少视频时长")
+
+        segment_urls = [
+            self._segment_url(
+                album_id,
+                episode_id,
+                start,
+                min(start + self._SEGMENT_SECONDS, duration_seconds),
+            )
+            for start in range(0, duration_seconds, self._SEGMENT_SECONDS)
+        ]
+        records: list[DanmakuRecord] = []
+        failures = 0
+        if segment_urls:
+            # Probe the first segment before fetching the rest. Migu encrypts
+            # every segment with the same gateway cipher, so if the first one
+            # cannot be decrypted (the cipher was rotated) every segment fails
+            # identically — fail fast with a clear reason instead of fetching
+            # all of them just to discard the results.
+            try:
+                records.extend(self._fetch_segment_records(segment_urls[0]))
+            except DanmakuResolveError as exc:
+                raise DanmakuResolveError(
+                    "咪咕弹幕暂不可用：加密接口已变更，暂无法解密"
+                ) from exc
+            except Exception:
+                failures += 1
+            remaining_segment_urls = segment_urls[1:]
+        else:
+            remaining_segment_urls = []
+        for batch in iter_bounded_settled(
+            remaining_segment_urls,
+            self._fetch_segment_records,
+            max_workers=8,
+        ):
+            for settled in batch:
+                if settled.error is not None:
+                    failures += 1
+                    continue
+                records.extend(settled.value or [])
+        if not records and failures:
+            raise DanmakuResolveError("咪咕弹幕分段解析失败")
+        return sorted(records, key=lambda record: (record.time_offset, record.content))
+
+    def _album_id(self, asset: dict) -> str:
+        extra_data = asset.get("extraData")
+        if isinstance(extra_data, dict):
+            episodes = extra_data.get("episodes")
+            if isinstance(episodes, list) and episodes:
+                return str(episodes[0] or "").strip()
+        return str(asset.get("pID") or "").strip()
+
+    def _episodes(self, album_id: str) -> list[dict]:
+        payload = self._detail(album_id)
+        data = (payload.get("body") or {}).get("data") if "body" in payload else payload
+        if not isinstance(data, dict):
+            return []
+        episodes = data.get("datas")
+        if isinstance(episodes, list) and episodes:
+            return [episode for episode in episodes if isinstance(episode, dict)]
+        playing = data.get("playing")
+        if isinstance(playing, dict):
+            p_id = str(playing.get("pID") or "").strip()
+            if p_id:
+                return [
+                    {
+                        "name": str(data.get("name") or "").strip(),
+                        "pID": p_id,
+                        "duration": playing.get("duration"),
+                    }
+                ]
+        return []
+
+    def _detail(self, item_id: str) -> dict:
+        response = self._get(
+            self._DETAIL_URL.format(id=item_id),
+            headers={"User-Agent": self._user_agent()},
+            timeout=10.0,
+            follow_redirects=True,
+        )
+        payload = _response_payload(response)
+        data = (payload.get("body") or {}).get("data") or {}
+        return data if isinstance(data, dict) else {}
+
+    def _fetch_segment_records(self, segment_url: str) -> list[DanmakuRecord]:
+        response = self._get(
+            segment_url,
+            headers={
+                "User-Agent": self._user_agent(),
+                "appCode": "miguvideo_default_h5",
+            },
+            timeout=10.0,
+            follow_redirects=True,
+        )
+        text = response.text
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = json.loads(migu_decrypt(text))
+        if isinstance(payload, str):
+            payload = json.loads(migu_decrypt(payload))
+        comments = (payload.get("body") or {}).get("result") or []
+        if not isinstance(comments, list):
+            return []
+        return [
+            record
+            for record in (self._comment_record(comment) for comment in comments)
+            if record is not None
+        ]
+
+    def _comment_record(self, comment: object) -> DanmakuRecord | None:
+        if not isinstance(comment, dict):
+            return None
+        content = str(comment.get("msg") or "").strip()
+        if not content:
+            return None
+        return DanmakuRecord(
+            time_offset=float(comment.get("playtime") or 0),
+            pos=1,
+            color=str(self._color_to_int(comment.get("textcolor"))),
+            content=content,
+        )
+
+    def _parse_barrage_url(self, page_url: str) -> tuple[str, str]:
+        match = re.search(r"/barrage/v2/list/([^/?#]+)/([^/?#]+)", page_url)
+        if match is not None:
+            return match.group(1), match.group(2)
+        match = re.search(r"/content-info/([^/?#]+)/1", page_url)
+        if match is not None:
+            item_id = match.group(1)
+            return item_id, item_id
+        raise DanmakuResolveError("咪咕弹幕地址格式不正确")
+
+    def _barrage_url(self, album_id: str, episode_id: str) -> str:
+        return self._BARRAGE_URL.format(album_id=album_id, episode_id=episode_id)
+
+    def _segment_url(
+        self,
+        album_id: str,
+        episode_id: str,
+        start: int,
+        end: int,
+    ) -> str:
+        return f"{self._barrage_url(album_id, episode_id)}/{start}/{end}/020"
+
+    def _json_headers(self) -> dict[str, str]:
+        return {
+            "User-Agent": self._user_agent(),
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://www.miguvideo.com",
+            "Referer": "https://www.miguvideo.com/",
+            "appId": "miguvideo",
+            "terminalId": "www",
+        }
+
+    def _user_agent(self) -> str:
+        return (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+        )
+
+    def _color_to_int(self, value: object) -> int:
+        text = str(value or "").strip().lstrip("#")
+        if not text:
+            return 16777215
+        try:
+            return int(text, 16)
+        except ValueError:
+            return 16777215

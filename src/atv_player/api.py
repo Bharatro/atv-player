@@ -187,6 +187,17 @@ class ApiClient:
     def get_drive_share_detail(self, link: str) -> dict[str, Any]:
         return self._request("GET", f"/tg-search/{self._vod_token}", params={"id": link, "ac": "gui"})
 
+    def resolve_drive(self, source: str, title: str = "") -> dict[str, Any]:
+        # New per-directory drive API (Authorization header, no vod-token path). Returns media
+        # info + top-level directories (+ root files); sub-directory files are loaded lazily.
+        return self._request("POST", "/api/drive/resolve", json={"source": source, "title": title})
+
+    def list_drive_files(self, resource_id: str, dir_id: str) -> list[dict[str, Any]]:
+        payload = self._request("GET", f"/api/drive/{resource_id}/files", params={"dir": dir_id})
+        if isinstance(payload, dict):
+            return list(payload.get("files") or [])
+        return []
+
     def search_telegram_items(self, keyword: str, page: int) -> dict[str, Any]:
         params: dict[str, Any] = {"web": True, "wd": keyword}
         if page > 1:

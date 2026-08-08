@@ -1959,6 +1959,8 @@ class AppCoordinator(QObject):
         following_ai_enrichment_service = self._build_ai_enrichment_service(config, workflow="following")
         capabilities = self._load_capabilities(self._api_client)
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
+        drive_resolver = getattr(self._api_client, "resolve_drive", None)
+        drive_files_loader = getattr(self._api_client, "list_drive_files", None)
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
         prioritized_plugin_ids = self._startup_prioritized_plugin_ids(config)
         def plugin_loader_task():
@@ -2023,6 +2025,8 @@ class AppCoordinator(QObject):
                 payload,
                 source_name="电报影视",
             ),
+            drive_resolver=drive_resolver,
+            drive_files_loader=drive_files_loader,
         )
         telegram_channel_controller = TelegramChannelController(
             self._api_client,
@@ -2037,6 +2041,8 @@ class AppCoordinator(QObject):
                 payload,
                 source_name="电报频道",
             ),
+            drive_resolver=drive_resolver,
+            drive_files_loader=drive_files_loader,
         )
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
         bilibili_controller = BilibiliController(
@@ -2208,6 +2214,8 @@ class AppCoordinator(QObject):
             plugin_loader_task=plugin_loader_task,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
+            drive_resolver=drive_resolver,
+            drive_files_loader=drive_files_loader,
             offline_download_detail_loader=offline_download_detail_loader,
             direct_parse_detail_loader=load_direct_parse_detail,
             direct_parse_danmaku_loader=lambda url: load_direct_parse_danmaku(

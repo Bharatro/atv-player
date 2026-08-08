@@ -108,6 +108,7 @@ def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: P
     config.disabled_danmaku_provider_ids = [
         "youku",
         "mgtv",
+        "migu",
         "dandan",
         "bahamut",
         "animeko",
@@ -120,6 +121,7 @@ def test_settings_repository_round_trips_disabled_source_preferences(tmp_path: P
     assert loaded.disabled_danmaku_provider_ids == [
         "youku",
         "mgtv",
+        "migu",
         "dandan",
         "bahamut",
         "animeko",

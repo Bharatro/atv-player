@@ -68,9 +68,13 @@ class PlayerSession:
     is_placeholder: bool = False
     source_kind: str = ""
     source_key: str = ""
+    source_display_name: str = ""
     video_cover_override: str = ""
     prefetched_next_danmaku_indices: set[int] = field(default_factory=set)
     pending_next_danmaku_prefetch_token: int = 0
+    # New per-directory drive API state for lazy directory loading.
+    drive_resource_id: str = ""
+    drive_files_loader: Callable[..., list[PlayItem]] | None = None
 
 
 class PlayerController:
@@ -377,6 +381,7 @@ class PlayerController:
         source_index: int = 0,
         source_kind: str = "",
         source_key: str = "",
+        source_display_name: str = "",
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
@@ -396,6 +401,8 @@ class PlayerController:
         playback_history_saver: Callable[[dict[str, object]], None] | None = None,
         initial_log_message: str = "",
         is_placeholder: bool = False,
+        drive_resource_id: str = "",
+        drive_files_loader: Callable[..., list[PlayItem]] | None = None,
     ) -> PlayerSession:
         normalized_source_groups, normalized_playlists, playlist_index, source_group_index, source_index, active_playlist = self._normalize_source_groups(
             playlist,
@@ -455,6 +462,7 @@ class PlayerController:
             speed=speed,
             source_kind=source_kind,
             source_key=source_key,
+            source_display_name=source_display_name,
             playlists=normalized_playlists,
             playlist_index=playlist_index,
             source_groups=normalized_source_groups,
@@ -479,6 +487,8 @@ class PlayerController:
             initial_log_message=initial_log_message,
             initial_vod_name=str(vod.vod_name or ""),
             is_placeholder=is_placeholder,
+            drive_resource_id=drive_resource_id,
+            drive_files_loader=drive_files_loader,
         )
         session.playback_loader = self._bind_playback_loader(playback_loader, session)
         session.playback_history_saver = playback_history_saver

@@ -84,6 +84,7 @@ from atv_player.metadata.models import MetadataContext, MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
+from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
 from atv_player.models import (
     ExternalSubtitleOption,
     ExternalSubtitleSelection,
@@ -152,6 +153,7 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
     ("iqiyi", "爱奇艺"),
     ("mgtv", "芒果"),
     ("sohu", "搜狐"),
+    ("migu", "咪咕"),
     ("renren", "人人"),
 ]
 
@@ -1948,6 +1950,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _default_window_title(self) -> str:
         return "alist-tvbox 播放器"
 
+    def _source_label(self) -> str:
+        # Resolved by MainWindow._prepare_request_for_open (honors tab/plugin renames).
+        return str(getattr(self.session, "source_display_name", "") or "").strip()
+
     def _detail_field_value(self, fields: list[PlaybackDetailField], label: str) -> str:
         for field in fields:
             if str(field.label or "").strip() == label:
@@ -1988,8 +1994,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session is None or not self.session.playlist:
             return self._default_window_title()
         current_item = self.session.playlist[self.current_index]
-        parts = [self._active_media_title(current_item), playlist_item_display_title(current_item, "episode").strip()]
-        parts = [part for part in parts if part]
+        episode_title = playlist_item_display_title(current_item, "episode").strip()
+        if getattr(self.session, "drive_resource_id", ""):
+            # Drive share collection: 合集标题 - 子目录(剧名) - 文件名
+            # Use the group label (directory name) directly — current_item.media_title gets
+            # overwritten back to vod_name by metadata hydration sync.
+            vod_title = str(self.session.vod.vod_name or "").strip()
+            groups = self._session_source_groups()
+            gi = self.session.source_group_index
+            dir_title = clean_drive_directory_title(groups[gi].label) if 0 <= gi < len(groups) else ""
+            # Only use the three-part form when the directory differs from the collection title
+            # (i.e. a real multi-folder share); otherwise it's a single resource — no repeat.
+            if dir_title and dir_title != vod_title:
+                parts = [p for p in [vod_title, dir_title, episode_title] if p]
+            else:
+                parts = [p for p in [vod_title, episode_title] if p]
+        else:
+            parts = [p for p in [self._active_media_title(current_item), episode_title] if p]
+        source_label = self._source_label()
+        if source_label:
+            parts.append(source_label)
         if not parts:
             return self._default_window_title()
         return " - ".join(parts)
@@ -3312,7 +3336,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self.playlist_title_mode = "episode"
         self._install_danmaku_log_handler(session)
-        self._maybe_restore_cached_danmaku_for_current_item()
         self._render_poster()
         self._render_metadata()
         self._render_detail_fields()
@@ -3489,6 +3512,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not isinstance(load_result, PlaybackLoadResult) or not load_result.replacement_playlist:
             self._render_detail_actions()
             return
+        if load_result.source_groups:
+            self._apply_drive_grouped_loader_result(load_result)
+            return
         replacement = list(load_result.replacement_playlist)
         logger.info(
             "Apply playback loader replacement old_index=%s replacement_size=%s replacement_start_index=%s",
@@ -3538,6 +3564,50 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._sync_playlist_panel_mode()
         self._render_detail_actions()
         self.session.episode_titles_hydrated = False
+        self._start_episode_title_enhancement()
+
+    def _apply_drive_grouped_loader_result(self, load_result: PlaybackLoadResult) -> None:
+        # A spider-plugin drive item resolved into a per-directory grouped tree: swap the
+        # session to grouped mode (group 0 is populated) so the dropdown shows directories
+        # and the rest load lazily via _change_playlist_group.
+        session = self.session
+        if session is None:
+            return
+        source_groups = load_result.source_groups or []
+        playlists = load_result.playlists or []
+        if not source_groups or not playlists:
+            return
+        reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
+        if callable(reset_prefetch):
+            reset_prefetch(session)
+        session.source_groups = source_groups
+        session.playlists = playlists
+        session.source_group_index = 0
+        session.source_index = 0
+        session.playlist_index = 0
+        session.drive_resource_id = load_result.drive_resource_id
+        session.drive_files_loader = load_result.drive_files_loader
+        # Drive items already carry a playable proxy URL; clear any detail_resolver whose
+        # get_detail(item.vod_id) would receive a raw path (not a playurl id) and 500.
+        session.detail_resolver = None
+        playlist = playlists[0]
+        session.playlist = playlist
+        if playlist:
+            self.current_index = max(0, min(load_result.replacement_start_index, len(playlist) - 1))
+        else:
+            self.current_index = 0
+        self._playlist_sort_state.remember(playlist)
+        self._playlist_sort_state.apply(playlist)
+        session.start_index = self.current_index
+        self.playlist_title_mode = "episode"
+        self._render_playlist_source_combos()
+        self._render_playlist_sort_combo()
+        self._render_playlist_title_tabs()
+        self._render_playlist_items()
+        self._render_bilibili_playlist_tree()
+        self._sync_playlist_panel_mode()
+        self._render_detail_actions()
+        session.episode_titles_hydrated = False
         self._start_episode_title_enhancement()
 
     def _start_playback_loader(
@@ -3899,6 +3969,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        self._ensure_drive_group_loaded(self.session.source_group_index)
+        if not self.session.playlist:
+            self._append_log("加载目录失败，请在目录下拉框中选择其他目录")
+            return
+        if self.current_index >= len(self.session.playlist):
+            self.current_index = max(0, len(self.session.playlist) - 1)
         self._reset_playback_observation()
         self._ignore_playback_finished_until = 0.0
         self._recent_user_seek_target_seconds = None
@@ -3928,9 +4004,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
-        self._maybe_restore_cached_danmaku_for_current_item()
         self._refresh_parse_combo_enabled_state()
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
+        # Danmaku lookup can take tens of seconds (external providers, no match for short
+        # dramas), and it shares the serial controller-task queue — so kick it off only
+        # after playback has started, never before.
+        self._maybe_restore_cached_danmaku_for_current_item()
 
     def _format_metadata_text(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "youtube":
@@ -4070,6 +4149,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> None:
         if self.session is None:
             return
+        # Lazy-load the active drive directory before touching the playlist (covers the case
+        # where the build-time eager load failed, e.g. a transient backend/driver error).
+        self._ensure_drive_group_loaded(self.session.source_group_index)
+        playlist = self.session.playlist
+        if not playlist:
+            self._append_log("加载目录失败，请在目录下拉框中选择其他目录")
+            return
+        if index >= len(playlist):
+            index = max(0, len(playlist) - 1)
         previous_index = self.current_index
         previous_detail_poster_source = self._preferred_detail_poster_source()
         previous_video_poster_source = self._preferred_video_poster_source()
@@ -5568,7 +5656,46 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log(f"播放失败: {exc}")
 
     def _change_playlist_group(self, group_index: int) -> None:
+        self._ensure_drive_group_loaded(group_index)
         self._switch_active_source(group_index, 0)
+
+    def _ensure_drive_group_loaded(self, group_index: int) -> None:
+        # Lazily fetch a drive directory's files the first time it is selected. Runs on the UI
+        # thread (local backend, one directory is small); failures degrade to an empty list.
+        session = self.session
+        if session is None or session.drive_files_loader is None or not session.drive_resource_id:
+            return
+        groups = self._session_source_groups()
+        if not (0 <= group_index < len(groups)):
+            return
+        group = groups[group_index]
+        if not group.drive_dir_id or (group.sources and group.sources[0].playlist):
+            return
+        # Each directory in a share collection is its own drama, so derive the media title
+        # from the directory name (not the collection's vod_name) — matching the eager-load
+        # path in build_drive_grouped_sources.
+        media_title = clean_drive_directory_title(group.label)
+        try:
+            videos = session.drive_files_loader(session.drive_resource_id, group.drive_dir_id) or []
+        except Exception as exc:
+            logger.warning("drive directory load failed dir=%s", group.drive_dir_id, exc_info=exc)
+            self._append_log(f"加载目录失败: {exc}")
+            return
+        new_items = [
+            map_drive_video_to_play_item(video, index=i, media_title=media_title, play_source=group.label)
+            for i, video in enumerate(videos)
+            if video.get("url")
+        ]
+        # Mutate the existing playlist in place so session.playlist / session.playlists
+        # (which reference the same list object) stay in sync without a re-switch.
+        if group.sources and group.sources[0].playlist is not None:
+            target = group.sources[0].playlist
+            target.clear()
+            target.extend(new_items)
+        elif group.sources:
+            group.sources[0].playlist = list(new_items)
+        else:
+            group.sources = [PlaybackSource(label=group.label, playlist=list(new_items))]
 
     def _change_playlist_source(self, source_index: int) -> None:
         if self.session is None:

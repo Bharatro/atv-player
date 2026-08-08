@@ -54,7 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.builtin_tab_overrides import dumps_builtin_tab_overrides_json, parse_builtin_tab_overrides_json
-from atv_player.controllers.browse_controller import _map_vod_item
+from atv_player.controllers.browse_controller import (
+    _map_vod_item,
+    build_drive_grouped_sources,
+)
 from atv_player.controllers.media_detail_controller import MediaDetailIdentity, MediaDetailLookup
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.danmaku.direct_parse import DirectParseDanmakuController
@@ -1458,6 +1461,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             plugin_loader_task=None,
             plugin_manager=None,
             drive_detail_loader=None,
+            drive_resolver=None,
+            drive_files_loader=None,
             offline_download_detail_loader=None,
             direct_parse_detail_loader=None,
             direct_parse_danmaku_loader=None,
@@ -1509,6 +1514,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._plugin_loader_task = plugin_loader_task
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
+        self._drive_resolver = drive_resolver
+        self._drive_files_loader = drive_files_loader
         self._offline_download_detail_loader = offline_download_detail_loader
         self._direct_parse_detail_loader = direct_parse_detail_loader
         self._direct_parse_danmaku_loader = direct_parse_danmaku_loader
@@ -4362,8 +4369,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
         self._skip_next_telegram_open_request_vod_id = str(vod_id or "")
+        title = str(getattr(item, "vod_name", "") or "")
+        # Drive resolve can take seconds (temp-share mount + listing), so show the player
+        # window immediately and fill in the playlist when the request resolves.
+        self._open_player_immediately(
+            self._build_placeholder_player_request(item, source_kind="telegram")
+        )
+
         def build_request() -> OpenPlayerRequest:
-            request = self.telegram_controller.build_request(vod_id)
+            request = self.telegram_controller.build_request(vod_id, title)
             return self._apply_request_fallback_metadata(request, item, prefer_fallback_media_title=True)
 
         self._start_open_request(build_request)
@@ -4377,7 +4391,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
 
     def _handle_telegram_channel_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
-        self._start_open_request(lambda: self.telegram_channel_controller.build_request(vod_id))
+        title = str(getattr(item, "vod_name", "") or "")
+        # Drive resolve can take seconds, so show the player window immediately.
+        self._open_player_immediately(
+            self._build_placeholder_player_request(item, source_kind="telegram_channel")
+        )
+        self._start_open_request(lambda: self.telegram_channel_controller.build_request(vod_id, title))
 
     def _handle_bilibili_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -4475,6 +4494,42 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         ]
 
     def _build_drive_detail_request(self, link: str) -> OpenPlayerRequest:
+        # Try the new per-directory resolve; on any failure or empty result (including an
+        # older backend without /api/drive) fall back to the legacy flattened loader.
+        if self._drive_resolver is not None:
+            try:
+                result = self._drive_resolver(link) or {}
+                resource_id = str(result.get("resourceId") or "")
+                vod_name = str(result.get("vodName") or link)
+                detail = VodItem(vod_id=link, vod_name=vod_name)
+                source_groups, playlists = build_drive_grouped_sources(
+                    detail,
+                    resource_id,
+                    result.get("directories") or [],
+                    result.get("files") or [],
+                    self._drive_files_loader,
+                )
+                if source_groups and any(playlists):
+                    return OpenPlayerRequest(
+                        vod=detail,
+                        playlist=playlists[0],
+                        clicked_index=0,
+                        playlists=playlists,
+                        source_groups=source_groups,
+                        source_group_index=0,
+                        source_index=0,
+                        source_kind="telegram",
+                        source_mode="detail",
+                        source_vod_id=link,
+                        detail_resolver=None,
+                        drive_resource_id=resource_id,
+                        drive_files_loader=self._drive_files_loader,
+                    )
+            except Exception:
+                pass
+        return self._build_drive_detail_request_legacy(link)
+
+    def _build_drive_detail_request_legacy(self, link: str) -> OpenPlayerRequest:
         if self._drive_detail_loader is None:
             raise ValueError("当前未配置网盘解析")
         try:
@@ -5512,6 +5567,32 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 return _plugin_value(definition, "controller")
         return None
 
+    def _source_display_name(self, source_kind: str, source_key: str = "") -> str:
+        """Resolve the user-visible source label, honoring tab/plugin renames."""
+        if source_kind in {"plugin", "spider_plugin"} and source_key:
+            title = next(
+                (
+                    definition.title
+                    for definition in self._plugin_tab_definitions
+                    if definition.key == f"plugin:{source_key}"
+                ),
+                "",
+            )
+            if title:
+                return title
+        else:
+            title = next(
+                (
+                    definition.title
+                    for definition in self._builtin_tab_definitions
+                    if definition.key == source_kind
+                ),
+                "",
+            )
+            if title:
+                return title
+        return self._favorite_source_name(source_kind, source_key)
+
     def _favorite_source_name(self, source_kind: str, source_key: str = "") -> str:
         if source_kind in {"plugin", "spider_plugin"} and source_key:
             title = next(
@@ -6526,6 +6607,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             source_index=request.source_index,
             source_kind=request.source_kind,
             source_key=request.source_key,
+            source_display_name=request.source_display_name,
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
             use_local_history=request.use_local_history,
@@ -6545,6 +6627,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             playback_history_saver=request.playback_history_saver,
             initial_log_message=request.initial_log_message,
             is_placeholder=request.is_placeholder,
+            drive_resource_id=request.drive_resource_id,
+            drive_files_loader=request.drive_files_loader,
         )
 
     def _append_player_status_log(self, message: str) -> None:
@@ -6563,6 +6647,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         return None
 
     def _prepare_request_for_open(self, request: OpenPlayerRequest) -> OpenPlayerRequest:
+        # Resolve the user-visible source label (honors tab/plugin renames) for the player
+        # window title. Done before the placeholder short-circuit so placeholders show it too.
+        if not request.source_display_name and request.source_kind:
+            request.source_display_name = self._source_display_name(request.source_kind, request.source_key)
         if request.is_placeholder:
             return request
         if (

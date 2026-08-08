@@ -38,7 +38,7 @@ from atv_player.danmaku.utils import (
     normalize_name,
     strip_episode_suffix,
 )
-from atv_player.controllers.browse_controller import _map_vod_item
+from atv_player.controllers.browse_controller import _map_vod_item, build_drive_grouped_sources
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.douban_controller import _coerce_category_id
 from atv_player.controllers.pagination import page_count_from_payload
@@ -1190,6 +1190,59 @@ class SpiderPluginController:
             )
         return source_groups
 
+    def _resolve_drive_grouped(
+        self,
+        session: PlayerSession,
+        item: PlayItem,
+        url: str,
+    ) -> PlaybackLoadResult | None:
+        # New per-directory resolve for spider-plugin drive items. Returns a grouped,
+        # lazily-loadable result; returns None to fall back to the legacy flattened loader.
+        # resolve_drive/list_drive_files are derived from the bound drive_detail_loader
+        # (its __self__ is the ApiClient) to avoid threading new deps through the plugin chain.
+        client = getattr(self._drive_detail_loader, "__self__", None)
+        resolver = getattr(client, "resolve_drive", None) if client is not None else None
+        if resolver is None:
+            return None
+        files_loader = getattr(client, "list_drive_files", None)
+        media_title = item.media_title or item.title or url
+        try:
+            result = resolver(url, media_title) or {}
+        except Exception as exc:
+            logger.warning(
+                "Spider plugin drive resolve failed plugin=%s source=%s",
+                self._plugin_name,
+                url,
+                exc_info=exc,
+            )
+            return None
+        resource_id = str(result.get("resourceId") or "")
+        detail = VodItem(vod_id=url, vod_name=str(result.get("vodName") or media_title))
+        source_groups, playlists = build_drive_grouped_sources(
+            detail,
+            resource_id,
+            result.get("directories") or [],
+            result.get("files") or [],
+            files_loader,
+        )
+        if not source_groups or not any(playlists):
+            return None
+        start_index = self._resolve_replacement_start_index(item.path or url, playlists[0])
+        logger.info(
+            "Spider plugin resolved drive (grouped) plugin=%s source=%s groups=%s",
+            self._plugin_name,
+            url,
+            len(source_groups),
+        )
+        return PlaybackLoadResult(
+            replacement_playlist=playlists[0],
+            replacement_start_index=start_index,
+            source_groups=source_groups,
+            playlists=playlists,
+            drive_resource_id=resource_id,
+            drive_files_loader=files_loader,
+        )
+
     def _build_drive_replacement_playlist(
         self,
         detail: VodItem,
@@ -2334,6 +2387,9 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         if _looks_like_drive_share_link(item.vod_id):
+            grouped = self._resolve_drive_grouped(session, item, item.vod_id)
+            if grouped is not None:
+                return grouped
             if self._drive_detail_loader is None:
                 raise ValueError("当前插件未配置网盘解析")
             try:
@@ -2434,6 +2490,9 @@ class SpiderPluginController:
                 replacement_start_index=replacement_start_index,
             )
         if _looks_like_drive_share_link(url):
+            grouped = self._resolve_drive_grouped(session, item, url)
+            if grouped is not None:
+                return grouped
             if self._drive_detail_loader is None:
                 raise ValueError("当前插件未配置网盘解析")
             try:

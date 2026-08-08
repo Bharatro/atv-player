@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
+import re
 
-from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
 from atv_player.playlist_sorting import parse_size_bytes
 from atv_player.share_types import get_share_type_name
 from atv_player.time_utils import format_local_datetime
@@ -44,6 +45,30 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
     )
 
 
+def map_drive_video_to_play_item(
+    payload: dict,
+    *,
+    index: int = 0,
+    media_title: str = "",
+    play_source: str = "",
+) -> PlayItem:
+    """Map a Video entry from the new /api/drive resolve|files API to a PlayItem.
+    The backend returns a ready-to-play proxy URL, so no per-item resolution is needed."""
+    title = str(payload.get("title") or payload.get("name") or "").strip()
+    return PlayItem(
+        title=title or "未命名",
+        original_title=str(payload.get("name") or title or ""),
+        url=str(payload.get("url") or ""),
+        path=str(payload.get("path") or ""),
+        index=index,
+        size=parse_size_bytes(payload.get("size")),
+        time=str(payload.get("time") or ""),
+        media_title=media_title,
+        play_source=play_source,
+        vod_id=str(payload.get("path") or payload.get("url") or ""),
+    )
+
+
 def _map_vod_item(payload: dict) -> VodItem:
     items = [
         _map_play_item(item, index)
@@ -70,6 +95,86 @@ def _map_vod_item(payload: dict) -> VodItem:
         type=int(payload.get("type") or 0),
         items=items,
     )
+
+_DRIVE_DIR_EPISODE_COUNT_RE = re.compile(r"[（(]\s*(?:全)?\s*\d+\s*[集話话期](?:全)?\s*[）)]")
+
+
+def clean_drive_directory_title(name: str) -> str:
+    """Turn a drive directory name into a searchable media title.
+
+    Share collections name each directory after the drama plus an episode count and
+    (often) the cast, e.g. ``等不到说我爱你（82集）崔秀子＆蒋文琦``. Metadata and danmaku
+    lookups only match on the drama name, so cut at the episode-count marker.
+    """
+    value = str(name or "").strip()
+    if not value:
+        return ""
+    match = _DRIVE_DIR_EPISODE_COUNT_RE.search(value)
+    if match is not None:
+        value = value[: match.start()]
+    return value.strip(" .-_·—、，,／/｜|") or str(name or "").strip()
+
+
+def build_drive_grouped_sources(
+    detail: VodItem,
+    resource_id: str,
+    directories: list,
+    root_files: list,
+    files_loader,
+) -> tuple[list[PlaybackSourceGroup], list[list[PlayItem]]]:
+    # Root files (already resolved) become the default, immediately-playable group.
+    # Each top-level directory becomes a lazily-loaded group (fetched on first selection).
+    # When there are no root files, the first directory is eagerly loaded so the player
+    # always opens with a playable playlist.
+    source_groups: list[PlaybackSourceGroup] = []
+    playlists: list[list[PlayItem]] = []
+    share_title = detail.vod_name or ""
+
+    def add_populated_group(label: str, items: list, media_title: str) -> None:
+        playlist = [
+            map_drive_video_to_play_item(item, index=i, media_title=media_title, play_source=label)
+            for i, item in enumerate(items)
+            if item.get("url")
+        ]
+        source_groups.append(
+            PlaybackSourceGroup(
+                label=label,
+                sources=[PlaybackSource(label=label, playlist=playlist)],
+            )
+        )
+        playlists.append(playlist)
+
+    if root_files:
+        add_populated_group(share_title or "根目录", root_files, share_title)
+
+    # eager_done = a populated default group already exists (root files); otherwise the first
+    # directory is eagerly loaded so the player always opens with something playable.
+    eager_done = bool(root_files)
+    for index, directory in enumerate(directories or []):
+        dir_id = str(directory.get("id") or "")
+        name = str(directory.get("name") or "").strip() or f"目录 {index + 1}"
+        if not eager_done and dir_id and files_loader is not None:
+            try:
+                items = files_loader(resource_id, dir_id) or []
+            except Exception:
+                items = []
+            if items:
+                add_populated_group(name, items, clean_drive_directory_title(name))
+                eager_done = True
+                continue
+        # Lazy placeholder; populated by PlayerWindow on first selection.
+        playlist: list[PlayItem] = []
+        source_groups.append(
+            PlaybackSourceGroup(
+                label=name,
+                sources=[PlaybackSource(label=name, playlist=playlist)],
+                drive_dir_id=dir_id,
+            )
+        )
+        playlists.append(playlist)
+
+    return source_groups, playlists
+
 
 def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodItem]:
     if not drive_type:

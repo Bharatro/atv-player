@@ -94,6 +94,17 @@ class DoubanDiscovery:
             season_id = urlparse(uri).path.rstrip("/").split("/")[-1]
             season_id = re.sub(r"^md", "", season_id)
             return DoubanVendor(provider="bilibili", media_id=f"ss{season_id}") if season_id else None
+        if vendor_id == "miguvideo":
+            from urllib.parse import unquote
+
+            match = re.search(r'"contentID":"([^"]+)"', unquote(uri))
+            if match:
+                ep_id = match.group(1)
+                return DoubanVendor(
+                    provider="migu",
+                    media_id=f"https://v3-sc.miguvideo.com/program/v4/cont/content-info/{ep_id}/1",
+                )
+            return None
         return None
 
     def _query_param(self, uri: str, key: str) -> str:
@@ -190,6 +201,7 @@ def vendor_to_page_url(vendor: DoubanVendor) -> str:
 
     Tencent only needs the cover id, but TencentDanmakuProvider._extract_cover_id
     requires a trailing slash after the cover id, so we build /x/cover/{cid}/.
+    Migu's media_id is already a full content-info URL and is passed through.
     """
     provider = vendor.provider
     media_id = vendor.media_id
@@ -203,4 +215,6 @@ def vendor_to_page_url(vendor: DoubanVendor) -> str:
         return f"https://v.youku.com/v_show/id_{media_id}.html"
     if provider == "bilibili":
         return f"https://www.bilibili.com/bangumi/play/{media_id}"
+    if provider == "migu":
+        return media_id
     return ""

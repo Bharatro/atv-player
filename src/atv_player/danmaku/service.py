@@ -16,6 +16,7 @@ from atv_player.danmaku.providers import (
     DandanDanmakuProvider,
     IqiyiDanmakuProvider,
     MgtvDanmakuProvider,
+    MiguDanmakuProvider,
     RenrenDanmakuProvider,
     SohuDanmakuProvider,
     TencentDanmakuProvider,
@@ -41,6 +42,7 @@ from atv_player.danmaku.utils import (
     strip_variety_issue_suffix,
 )
 
+from atv_player.danmaku.discovery.bangumi_data import BangumiDataDiscovery
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
 from atv_player.danmaku.processing import clean_records
 from atv_player.danmaku.providers.other import OtherDanmakuProvider
@@ -98,6 +100,7 @@ _PROVIDER_LABELS = {
     "iqiyi": "爱奇艺",
     "mgtv": "芒果",
     "sohu": "搜狐",
+    "migu": "咪咕",
     "renren": "人人",
     "dandan": "弹弹Play",
     "bahamut": "巴哈姆特",
@@ -329,6 +332,7 @@ class DanmakuService:
         ai_enrichment_service=None,
         douban_discovery=None,
         other_provider=None,
+        bangumi_data_discovery=None,
     ) -> None:
         self._providers = dict(providers)
         self._provider_order = list(provider_order)
@@ -337,6 +341,7 @@ class DanmakuService:
         self._config_loader = config_loader or AppConfig
         self._ai_enrichment_service = ai_enrichment_service
         self._douban_discovery = douban_discovery
+        self._bangumi_data_discovery = bangumi_data_discovery
         if other_provider is not None:
             self._providers['other'] = other_provider
 
@@ -627,6 +632,11 @@ class DanmakuService:
                 self._provider_rank.get(item.provider, len(self._provider_order)),
             )
 
+        if self._bangumi_data_discovery is not None and self._bangumi_data_enabled():
+            results.extend(
+                self._discover_via_bangumi_data(match_query, normalized, provider_filter)
+            )
+
         if not results:
             discovered = self._discover_via_douban(match_query, normalized, provider_filter)
             if discovered:
@@ -722,6 +732,52 @@ class DanmakuService:
                     discovered.append(item)
             if discovered:
                 break
+        return discovered
+
+    def _bangumi_data_enabled(self) -> bool:
+        try:
+            return bool(self._config_loader().bangumi_data_danmaku_enabled)
+        except Exception:
+            return False
+
+    def _discover_via_bangumi_data(
+        self,
+        match_query: str,
+        normalized: str,
+        provider_filter: str,
+    ) -> list[DanmakuSearchItem]:
+        if self._bangumi_data_discovery is None or not self._bangumi_data_enabled():
+            return []
+        try:
+            hits = self._bangumi_data_discovery.search(match_query)
+        except Exception:
+            logger.exception("Bangumi-data discovery failed keyword=%s", match_query)
+            return []
+        discovered: list[DanmakuSearchItem] = []
+        seen_urls: set[str] = set()
+        for hit in hits:
+            if provider_filter and hit.provider != provider_filter:
+                continue
+            provider = self._providers.get(hit.provider)
+            if provider is None or not self._provider_enabled(hit.provider):
+                continue
+            expand = getattr(provider, 'expand_page_url', None)
+            if not callable(expand):
+                continue
+            try:
+                items = expand(hit.page_url, normalized or match_query)
+            except Exception:
+                logger.exception(
+                    "Bangumi-data expand failed provider=%s url=%s",
+                    hit.provider,
+                    hit.page_url,
+                )
+                continue
+            for item in items or []:
+                if item.url in seen_urls:
+                    continue
+                seen_urls.add(item.url)
+                discovered.append(item)
         return discovered
 
     def _danmaku_source_option_sort_key(
@@ -943,6 +999,7 @@ def create_default_danmaku_service(
         "iqiyi": IqiyiDanmakuProvider(get=get),
         "mgtv": MgtvDanmakuProvider(get=get),
         "sohu": SohuDanmakuProvider(get=get),
+        "migu": MiguDanmakuProvider(get=get, post=post),
         "renren": RenrenDanmakuProvider(get=get),
         "dandan": DandanDanmakuProvider(get=get, base_url_loader=dandan_base_url_loader),
         "bahamut": BahamutDanmakuProvider(get=get),
@@ -955,6 +1012,7 @@ def create_default_danmaku_service(
         "iqiyi",
         "mgtv",
         "sohu",
+        "migu",
         "renren",
         "dandan",
         "bahamut",
@@ -968,6 +1026,7 @@ def create_default_danmaku_service(
     if disabled_provider_ids_loader is None and disabled:
         disabled_provider_ids_loader = lambda: list(disabled)
     douban_discovery = DoubanDiscovery(get=get, post=post)
+    bangumi_data_discovery = BangumiDataDiscovery(get=get)
     other_provider = OtherDanmakuProvider(get=get, server="https://dmku.hls.one/")
     return DanmakuService(
         providers,
@@ -977,4 +1036,5 @@ def create_default_danmaku_service(
         ai_enrichment_service=ai_enrichment_service,
         douban_discovery=douban_discovery,
         other_provider=other_provider,
+        bangumi_data_discovery=bangumi_data_discovery,
     )
