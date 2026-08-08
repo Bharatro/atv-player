@@ -32,7 +32,7 @@ from atv_player.models import (
     YtdlpAudioTrackOption,
 )
 from atv_player.plugins.controller import SpiderPluginController
-from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, Chapter, SubtitleTrack
 
 import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.metadata.dialog_cache as metadata_dialog_cache_module
@@ -25226,6 +25226,173 @@ def test_sync_progress_slider_clamps_buffer_to_duration(qtbot) -> None:
     window._sync_progress_slider()
 
     assert window.progress._buffer_value == 120
+
+
+def test_clickable_slider_chapter_positions_are_sorted_and_deduped(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(100)
+
+    slider.set_chapter_positions([70.0, 30.0, 30.0, 10.5])
+
+    assert slider._chapter_positions == [10.5, 30.0, 70.0]
+
+
+def test_clickable_slider_chapter_positions_ignore_unusable_values(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(100)
+
+    slider.set_chapter_positions([30.0, "abc", None, float("nan"), float("inf")])
+
+    assert slider._chapter_positions == [30.0]
+
+
+def test_clickable_slider_keeps_chapter_positions_outside_current_range(qtbot) -> None:
+    """Chapters can arrive before the duration is observed, so keep them for later."""
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(0)
+    slider.resize(200, 24)
+
+    slider.set_chapter_positions([30.0, 60.0])
+
+    assert slider._chapter_positions == [30.0, 60.0]
+    assert slider._chapter_segments(12, 188) == []
+
+    slider.setMaximum(120)
+
+    assert len(slider._chapter_segments(12, 188)) == 3
+
+
+def test_clickable_slider_without_chapters_has_no_segments(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(120)
+    slider.resize(200, 24)
+
+    assert slider._chapter_segments(12, 188) == []
+
+
+def test_clickable_slider_chapter_segments_span_full_width_with_gaps(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(120)
+    slider.resize(200, 24)
+    slider.set_chapter_positions([60.0])
+
+    segments = slider._chapter_segments(12, 188)
+
+    assert len(segments) == 2
+    first_start, first_width = segments[0]
+    last_start, last_width = segments[-1]
+    assert first_start == 0.0
+    # Last segment reaches the right edge; earlier ones are trimmed by the gap.
+    assert last_start + last_width == float(slider.width())
+    assert first_start + first_width < last_start
+
+
+def test_clickable_slider_merges_chapter_boundaries_that_are_too_close(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(1200)
+    slider.resize(200, 24)
+    # 1200s over 188px => ~6.4s per pixel, so these land within the 4px merge window.
+    slider.set_chapter_positions([600.0, 601.0, 602.0])
+
+    assert len(slider._chapter_segments(12, 188)) == 2
+
+
+def test_clickable_slider_paints_without_error_with_chapters(qtbot) -> None:
+    slider = ClickableSlider(Qt.Orientation.Horizontal)
+    qtbot.addWidget(slider)
+    slider.setMinimum(0)
+    slider.setMaximum(120)
+    slider.setValue(45)
+    slider.set_buffer_value(90)
+    slider.set_chapter_positions([30.0, 60.0, 90.0])
+    slider.resize(200, 24)
+
+    pixmap = slider.grab()
+
+    assert not pixmap.isNull()
+
+
+def test_player_window_refreshes_chapter_markers_from_video(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    chapters = [
+        Chapter(index=0, title="", start_seconds=0.0, label="章节 1"),
+        Chapter(index=1, title="正片", start_seconds=92.0, label="正片"),
+    ]
+    window.video = type("Video", (), {"chapters": lambda _self: chapters})()
+
+    window._refresh_chapter_markers()
+
+    assert window._current_chapters == chapters
+    assert window.progress._chapter_positions == [0.0, 92.0]
+
+    window._clear_chapter_markers()
+
+    assert window._current_chapters == []
+    assert window.progress._chapter_positions == []
+
+
+def test_player_window_chapter_refresh_tolerates_video_without_chapters(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window.progress.set_chapter_positions([30.0])
+
+    window.video = type("Video", (), {})()
+    window._refresh_chapter_markers()
+
+    assert window._current_chapters == []
+    assert window.progress._chapter_positions == []
+
+    def _raise(_self):
+        raise RuntimeError("mpv property unavailable")
+
+    window.video = type("Video", (), {"chapters": _raise})()
+    window._refresh_chapter_markers()
+
+    assert window._current_chapters == []
+
+
+def test_player_window_progress_tooltip_includes_chapter_label(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    assert window._format_progress_tooltip(95) == "01:35"
+
+    window._current_chapters = [
+        Chapter(index=0, title="片头", start_seconds=0.0, label="片头"),
+        Chapter(index=1, title="正片", start_seconds=92.0, label="正片"),
+    ]
+
+    assert window._format_progress_tooltip(10) == "00:10 · 片头"
+    assert window._format_progress_tooltip(95) == "01:35 · 正片"
+    assert window._format_progress_tooltip(92) == "01:32 · 正片"
+
+
+def test_player_window_progress_tooltip_without_leading_chapter(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window._current_chapters = [
+        Chapter(index=0, title="正片", start_seconds=92.0, label="正片"),
+    ]
+
+    assert window._format_progress_tooltip(10) == "00:10"
+    assert window._format_progress_tooltip(200) == "03:20 · 正片"
 
 
 def test_sync_progress_slider_handles_missing_cache_method(qtbot) -> None:

@@ -7,7 +7,7 @@ import pytest
 
 from atv_player.player import mpv_widget as mpv_widget_module
 from atv_player.models import AppConfig
-from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack
 
 
 class FakeDeadPlayer:
@@ -417,6 +417,9 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
                 return
             if name == "video-out-params":
                 self._video_out_observer = handler
+                return
+            if name == "chapter-list":
+                self._chapter_list_observer = handler
                 return
             assert name == "eof-reached"
             self._eof_reached_observer = handler
@@ -1467,6 +1470,9 @@ def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) 
             if name == "video-out-params":
                 self._video_out_observer = handler
                 return
+            if name == "chapter-list":
+                self._chapter_list_observer = handler
+                return
             assert name == "eof-reached"
             self._eof_reached_observer = handler
 
@@ -1810,7 +1816,12 @@ def test_mpv_widget_registers_property_observers_on_windows(qtbot, monkeypatch) 
 
     assert callable(player._end_file_callback)
     assert callable(player._file_loaded_callback)
-    assert player.observed_properties == ["track-list", "video-out-params", "eof-reached"]
+    assert player.observed_properties == [
+        "track-list",
+        "chapter-list",
+        "video-out-params",
+        "eof-reached",
+    ]
 
 
 def test_mpv_widget_routes_windows_property_sets_to_gui_thread(qtbot, monkeypatch) -> None:
@@ -1978,6 +1989,9 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
                 return
             if name == "video-out-params":
                 self._video_out_observer = handler
+                return
+            if name == "chapter-list":
+                self._chapter_list_observer = handler
                 return
             assert name == "eof-reached"
             self._eof_reached_observer = handler
@@ -2584,6 +2598,9 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             if name == "video-out-params":
                 self._video_out_observer = handler
                 return
+            if name == "chapter-list":
+                self._chapter_list_observer = handler
+                return
             assert name == "eof-reached"
             self._eof_reached_observer = handler
 
@@ -2744,3 +2761,87 @@ def test_mpv_widget_demuxer_cache_duration_returns_zero_without_player(qtbot) ->
     widget._player = None
 
     assert widget.demuxer_cache_duration_seconds() == 0
+
+
+def test_mpv_widget_lists_chapters_sorted_with_readable_labels(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        chapter_list=[
+            {"title": "片尾", "time": 1380.5},
+            {"title": "", "time": 0.0},
+            {"title": "正片", "time": 92.0},
+        ]
+    )
+
+    assert widget.chapters() == [
+        Chapter(index=0, title="", start_seconds=0.0, label="章节 1"),
+        Chapter(index=1, title="正片", start_seconds=92.0, label="正片"),
+        Chapter(index=2, title="片尾", start_seconds=1380.5, label="片尾"),
+    ]
+
+
+def test_mpv_widget_chapters_skips_entries_with_unusable_time(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        chapter_list=[
+            {"title": "A", "time": 0.0},
+            {"title": "缺失时间"},
+            {"title": "非数字", "time": "abc"},
+            {"title": "布尔", "time": True},
+            {"title": "无穷", "time": float("inf")},
+            {"title": "非字典"},
+            "not-a-dict",
+            {"title": "B", "time": 30.0},
+        ]
+    )
+
+    assert [chapter.label for chapter in widget.chapters()] == ["A", "B"]
+
+
+def test_mpv_widget_chapters_returns_empty_without_player_or_property(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    widget._player = None
+    assert widget.chapters() == []
+
+    widget._player = types.SimpleNamespace()
+    assert widget.chapters() == []
+
+    widget._player = types.SimpleNamespace(chapter_list=None)
+    assert widget.chapters() == []
+
+
+def test_mpv_widget_emits_chapters_changed_on_chapter_list_observation(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self._chapter_list_observer = None
+
+        def event_callback(self, *_names):
+            def decorator(func):
+                return func
+
+            return decorator
+
+        def observe_property(self, name: str, handler) -> None:
+            if name == "chapter-list":
+                self._chapter_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    changes = {"count": 0}
+    widget.chapters_changed.connect(lambda: changes.__setitem__("count", changes["count"] + 1))
+
+    widget.load("http://m/1.mkv")
+    assert player._chapter_list_observer is not None
+    player._chapter_list_observer("chapter-list", [{"title": "正片", "time": 92.0}])
+
+    assert changes["count"] == 1

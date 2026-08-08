@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +35,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPixmap,
     QShortcut,
     QWindow,
@@ -104,7 +105,7 @@ from atv_player.episode_titles import normalize_episode_title_text, playlist_has
 from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
-from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
+from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
 from atv_player.playlist_sorting import (
@@ -285,10 +286,13 @@ class ClickableSlider(QSlider):
 
     clicked_value = Signal(int)
 
+    _CHAPTER_GAP_PX = 2.0
+
     def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
         super().__init__(orientation, parent)
         self._hover_tooltip_formatter: Callable[[int], str] | None = None
         self._buffer_value: int = 0
+        self._chapter_positions: list[float] = []
 
     def paintEvent(self, event) -> None:
         if self.orientation() != Qt.Orientation.Horizontal:
@@ -309,6 +313,20 @@ class ClickableSlider(QSlider):
         painter.fillRect(self.rect(), QColor(tokens.player_overlay_bg))
         painter.setPen(Qt.PenStyle.NoPen)
 
+        segments = self._chapter_segments(handle_diameter, available_width)
+        if segments:
+            clip_path = QPainterPath()
+            for segment_start, segment_width in segments:
+                clip_path.addRoundedRect(
+                    segment_start,
+                    track_top,
+                    segment_width,
+                    track_height,
+                    track_height / 2,
+                    track_height / 2,
+                )
+            painter.setClipPath(clip_path)
+
         track_color = tokens.player_button_border if self.isEnabled() else tokens.border_subtle
         painter.setBrush(QColor(track_color))
         painter.drawRoundedRect(0, track_top, self.width(), track_height, track_height / 2, track_height / 2)
@@ -322,6 +340,9 @@ class ClickableSlider(QSlider):
         if self.isEnabled() and handle_center_x > handle_diameter / 2:
             painter.setBrush(QColor(tokens.accent))
             painter.drawRoundedRect(0, track_top, handle_center_x, track_height, track_height / 2, track_height / 2)
+
+        if segments:
+            painter.setClipping(False)
 
         handle_color = tokens.player_text_on_dark
         if not self.isEnabled():
@@ -376,6 +397,62 @@ class ClickableSlider(QSlider):
     def set_hover_tooltip_formatter(self, formatter: Callable[[int], str] | None) -> None:
         self._hover_tooltip_formatter = formatter
         self.setMouseTracking(formatter is not None)
+
+    def set_chapter_positions(self, positions: Iterable[float]) -> None:
+        """Set chapter start offsets (in slider value units) used to segment the groove.
+
+        Positions are kept unfiltered because the slider range is only known once the
+        media duration has been observed; out-of-range values are dropped at paint time.
+        """
+        normalized: list[float] = []
+        for raw_position in positions:
+            try:
+                position = float(raw_position)
+            except (TypeError, ValueError):
+                continue
+            if position != position or position in (float("inf"), float("-inf")):
+                continue
+            normalized.append(position)
+        normalized = sorted(set(normalized))
+        if normalized == self._chapter_positions:
+            return
+        self._chapter_positions = normalized
+        self.update()
+
+    def _chapter_segments(
+        self,
+        handle_diameter: int,
+        available_width: int,
+    ) -> list[tuple[float, float]]:
+        """Return (start_x, width) for each chapter segment, or [] when not segmented."""
+        if not self._chapter_positions:
+            return []
+        minimum = self.minimum()
+        maximum = self.maximum()
+        if maximum <= minimum:
+            return []
+        value_range = max(1, maximum - minimum)
+        boundaries: list[float] = []
+        for position in self._chapter_positions:
+            if position <= minimum or position >= maximum:
+                continue
+            offset = (position - minimum) / value_range * available_width
+            boundary_x = handle_diameter / 2 + offset
+            if boundaries and boundary_x - boundaries[-1] < self._CHAPTER_GAP_PX * 2:
+                continue
+            boundaries.append(boundary_x)
+        if not boundaries:
+            return []
+
+        segments: list[tuple[float, float]] = []
+        edges = [0.0, *boundaries, float(self.width())]
+        for index, (start_x, end_x) in enumerate(zip(edges, edges[1:], strict=False)):
+            is_last = index == len(edges) - 2
+            segment_width = end_x - start_x - (0.0 if is_last else self._CHAPTER_GAP_PX)
+            if segment_width <= 0:
+                continue
+            segments.append((start_x, segment_width))
+        return segments if len(segments) > 1 else []
 
     def _pixel_pos_to_value(self, pos: int) -> int:
         groove_rect = self.rect()
@@ -830,6 +907,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._video_picture_state = "idle"
         self._auto_advance_locked = False
         self._observed_media_duration_seconds = 0
+        self._current_chapters: list[Chapter] = []
         self._last_playback_position_seconds = 0
         self._premature_finish_recovery_attempts = 0
         self._ignore_playback_finished_until = 0.0
@@ -1083,7 +1161,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.duration_label = QLabel("00:00")
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
-        self.progress.set_hover_tooltip_formatter(self._format_time)
+        self.progress.set_hover_tooltip_formatter(self._format_progress_tooltip)
         self.progress.setFixedHeight(24)
         self.progress.setCursor(Qt.CursorShape.PointingHandCursor)
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
@@ -1390,6 +1468,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
         self.video_widget.audio_tracks_changed.connect(self._refresh_audio_state)
+        self.video_widget.chapters_changed.connect(self._refresh_chapter_markers)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.progress.clicked_value.connect(self._seek_to_position)
@@ -3407,6 +3486,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
         self.progress.set_buffer_value(0)
+        self._clear_chapter_markers()
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
         self._reset_audio_combo()
@@ -3956,6 +4036,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.video_widget.apply_runtime_video_output_settings()
 
     def _handle_video_file_loaded(self) -> None:
+        self._refresh_chapter_markers()
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
         pending_danmaku_item = self._pending_file_loaded_danmaku_item
         self._pending_file_loaded_danmaku_item = None
@@ -9383,6 +9464,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _reset_playback_observation(self) -> None:
         self._observed_media_duration_seconds = 0
+        self._clear_chapter_markers()
         self._last_playback_position_seconds = 0
         self._premature_finish_recovery_attempts = 0
 
@@ -10183,6 +10265,38 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if hours:
             return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
         return f"{minutes:02d}:{remaining_seconds:02d}"
+
+    def _format_progress_tooltip(self, seconds: int) -> str:
+        text = self._format_time(seconds)
+        chapter = self._chapter_at(seconds)
+        if chapter is None:
+            return text
+        return f"{text} · {chapter.label}"
+
+    def _chapter_at(self, seconds: int) -> Chapter | None:
+        matched: Chapter | None = None
+        for chapter in self._current_chapters:
+            if chapter.start_seconds > seconds:
+                break
+            matched = chapter
+        return matched
+
+    def _clear_chapter_markers(self) -> None:
+        self._current_chapters = []
+        self.progress.set_chapter_positions([])
+
+    def _refresh_chapter_markers(self) -> None:
+        if not hasattr(self.video, "chapters"):
+            self._clear_chapter_markers()
+            return
+        try:
+            chapters = list(self.video.chapters() or [])
+        except Exception:
+            chapters = []
+        self._current_chapters = chapters
+        self.progress.set_chapter_positions(
+            chapter.start_seconds for chapter in chapters
+        )
 
     def _restore_main_splitter_state(self) -> None:
         if self.config is None or not self.config.player_main_splitter_state:

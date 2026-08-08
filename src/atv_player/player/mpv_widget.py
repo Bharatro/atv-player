@@ -4,6 +4,7 @@ import ctypes
 import ctypes.util
 import glob
 import logging
+import math
 import os
 import platform
 import re
@@ -294,6 +295,14 @@ class AudioTrack:
     label: str
 
 
+@dataclass(frozen=True, slots=True)
+class Chapter:
+    index: int
+    title: str
+    start_seconds: float
+    label: str
+
+
 class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
@@ -302,6 +311,7 @@ class MpvWidget(QWidget):
     video_picture_state_changed = Signal(str)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
+    chapters_changed = Signal()
     context_menu_requested = Signal()
     context_menu_dismiss_requested = Signal()
     _gui_call_requested = Signal(object)
@@ -684,6 +694,12 @@ class MpvWidget(QWidget):
 
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
+
+        def handle_chapter_list(_property_name, _chapters) -> None:
+            self.chapters_changed.emit()
+
+        observe_property("chapter-list", handle_chapter_list)
+        self._chapter_list_handler = handle_chapter_list
 
         def handle_video_out_params(_property_name, params) -> None:
             if params:
@@ -1320,6 +1336,44 @@ class MpvWidget(QWidget):
         if self._player is None:
             return 0
         return self._seconds_property_value(self._player_property("demuxer-cache-duration", None))
+
+    def _chapter_label(self, title: str, index: int) -> str:
+        return title.strip() or f"章节 {index}"
+
+    def chapters(self) -> list[Chapter]:
+        if not self._on_widget_thread():
+            return list(self._run_on_widget_thread(self.chapters) or [])
+        if self._player is None:
+            return []
+        raw_chapters = self._player_property("chapter-list", None) or []
+        if not isinstance(raw_chapters, (list, tuple)):
+            return []
+
+        entries: list[tuple[float, str]] = []
+        for raw_chapter in raw_chapters:
+            if not isinstance(raw_chapter, dict):
+                continue
+            raw_time = raw_chapter.get("time")
+            if isinstance(raw_time, bool) or raw_time is None:
+                continue
+            try:
+                start_seconds = float(raw_time)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(start_seconds):
+                continue
+            entries.append((max(0.0, start_seconds), str(raw_chapter.get("title") or "")))
+
+        entries.sort(key=lambda entry: entry[0])
+        return [
+            Chapter(
+                index=index,
+                title=title.strip(),
+                start_seconds=start_seconds,
+                label=self._chapter_label(title, index + 1),
+            )
+            for index, (start_seconds, title) in enumerate(entries)
+        ]
 
     def _subtitle_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
