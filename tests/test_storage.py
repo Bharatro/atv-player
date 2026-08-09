@@ -428,6 +428,49 @@ def test_local_playback_history_repository_reads_legacy_spider_plugin_rows_witho
     assert history.episode == 1
 
 
+def test_local_playback_sync_state_survives_repository_restart(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    db_path = tmp_path / "app.db"
+    identity = ("emby", "server", "movie-1")
+    repo = LocalPlaybackHistoryRepository(db_path)
+    repo.set_sync_cursor("account-a", 42)
+    repo.replace_sync_snapshot("account-a", {identity: 100})
+
+    reloaded = LocalPlaybackHistoryRepository(db_path)
+
+    assert reloaded.get_sync_cursor("account-a") == 42
+    assert reloaded.load_sync_snapshot("account-a") == {identity: 100}
+    assert reloaded.get_sync_cursor("account-b") == 0
+    assert reloaded.load_sync_snapshot("account-b") == {}
+
+
+def test_local_playback_scope_delete_preserves_newer_rows(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    for vod_id, updated_at in (("old", 100), ("new", 300)):
+        repo.save_history(
+            "emby",
+            vod_id,
+            {"vodName": vod_id, "createTime": updated_at},
+            source_key="server",
+        )
+    repo.save_history(
+        "jellyfin",
+        "other",
+        {"vodName": "other", "createTime": 100},
+        source_key="server",
+    )
+
+    removed = repo.delete_site_history("emby", "server", 200)
+
+    assert removed == [("emby", "server", "old")]
+    assert repo.get_history("emby", "old", "server") is None
+    assert repo.get_history("emby", "new", "server") is not None
+    assert repo.get_history("jellyfin", "other", "server") is not None
+
+
 def test_settings_repository_round_trip(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

@@ -1,0 +1,388 @@
+from __future__ import annotations
+
+import threading
+
+from atv_player.models import HistoryRecord
+from atv_player.playback_sync_service import PlaybackHistorySyncService
+
+
+def _record(
+    *,
+    key: str,
+    source_key: str = "",
+    source_kind: str = "emby",
+    source_name: str = "",
+    updated_at: int,
+) -> HistoryRecord:
+    return HistoryRecord(
+        id=0,
+        key=key,
+        vod_name=key,
+        vod_pic="",
+        vod_remarks="",
+        episode=1,
+        episode_url="url",
+        position=100,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=updated_at,
+        source_kind=source_kind,
+        source_key=source_key,
+        source_name=source_name,
+    )
+
+
+class FakeRepository:
+    def __init__(self, records: list[HistoryRecord]) -> None:
+        self.records = {
+            (record.source_kind, record.source_key, record.key): record
+            for record in records
+        }
+        self.deleted: list[tuple[str, str, str]] = []
+        self.saved: list[tuple[str, str, str]] = []
+        self.cursor = 0
+        self.snapshots: dict[str, dict[tuple[str, str, str], int]] = {}
+
+    def list_histories(self) -> list[HistoryRecord]:
+        return list(self.records.values())
+
+    def get_history(self, source_kind: str, vod_id: str, source_key: str = ""):
+        return self.records.get((source_kind, source_key, vod_id))
+
+    def save_history(
+        self,
+        source_kind: str,
+        vod_id: str,
+        payload: dict,
+        *,
+        source_key: str = "",
+        source_name: str = "",
+    ) -> None:
+        del source_name
+        self.saved.append((source_kind, source_key, vod_id))
+
+    def delete_history(
+        self, source_kind: str, vod_id: str, source_key: str = ""
+    ) -> None:
+        self.deleted.append((source_kind, source_key, vod_id))
+        self.records.pop((source_kind, source_key, vod_id), None)
+
+    def delete_site_history(
+        self, source_kind: str, source_key: str, deleted_at: int
+    ) -> list[tuple[str, str, str]]:
+        removed = [
+            identity
+            for identity, record in self.records.items()
+            if identity[:2] == (source_kind, source_key)
+            and (deleted_at <= 0 or record.create_time <= deleted_at)
+        ]
+        for identity in removed:
+            self.records.pop(identity)
+            self.deleted.append(identity)
+        return removed
+
+    def delete_all_histories(self, deleted_at: int) -> list[tuple[str, str, str]]:
+        removed = [
+            identity
+            for identity, record in self.records.items()
+            if deleted_at <= 0 or record.create_time <= deleted_at
+        ]
+        for identity in removed:
+            self.records.pop(identity)
+            self.deleted.append(identity)
+        return removed
+
+    def get_sync_cursor(self, namespace: str) -> int:
+        del namespace
+        return self.cursor
+
+    def set_sync_cursor(self, namespace: str, cursor: int) -> None:
+        del namespace
+        self.cursor = cursor
+
+    def load_sync_snapshot(self, namespace: str) -> dict[tuple[str, str, str], int]:
+        return dict(self.snapshots.get(namespace, {}))
+
+    def replace_sync_snapshot(
+        self, namespace: str, versions: dict[tuple[str, str, str], int]
+    ) -> None:
+        self.snapshots[namespace] = dict(versions)
+
+    def set_sync_snapshot_version(
+        self,
+        namespace: str,
+        identity: tuple[str, str, str],
+        updated_at: int,
+    ) -> None:
+        self.snapshots.setdefault(namespace, {})[identity] = updated_at
+
+    def remove_sync_snapshot(
+        self, namespace: str, identity: tuple[str, str, str]
+    ) -> None:
+        self.snapshots.setdefault(namespace, {}).pop(identity, None)
+
+
+class FakeApi:
+    def __init__(self, page: dict | None = None) -> None:
+        self.page = page or {}
+        self.pushed: list[list[dict]] = []
+        self.playback_sync_identity = "test-user"
+
+    def push_playback_events(self, records: list[dict]) -> None:
+        self.pushed.append(records)
+
+    def pull_playback_records(self, since: int) -> dict:
+        del since
+        return self.page
+
+
+def test_push_versions_are_tracked_per_record() -> None:
+    first = _record(key="first", updated_at=100)
+    second = _record(key="second", updated_at=10)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([first, second]))
+
+    service._pushed_versions[("emby", "", "first")] = 200
+    service._push()
+
+    pushed_ids = [[payload["vodId"] for payload in batch] for batch in api.pushed]
+    assert pushed_ids == [["second"]]
+
+
+def test_pull_applies_tombstones_before_advancing_cursor() -> None:
+    repository = FakeRepository(
+        [_record(key="removed", source_key="server", updated_at=10)]
+    )
+    api = FakeApi(
+        {
+            "deleted": [
+                {"sourceKind": "emby", "sourceKey": "server", "vodId": "removed"}
+            ],
+            "items": [],
+            "nextSince": 42,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.deleted == [("emby", "server", "removed")]
+    assert service._pull_cursor == 42
+
+
+def test_stale_tombstone_keeps_newer_local_history() -> None:
+    repository = FakeRepository(
+        [_record(key="keep", source_key="server", updated_at=200)]
+    )
+    api = FakeApi(
+        {
+            "deleted": [
+                {
+                    "sourceKind": "emby",
+                    "sourceKey": "server",
+                    "vodId": "keep",
+                    "deletedAt": 100,
+                }
+            ],
+            "nextSince": 42,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.get_history("emby", "keep", "server") is not None
+    assert repository.deleted == []
+
+
+def test_scope_tombstones_delete_only_not_newer_rows() -> None:
+    old = _record(key="old", source_key="server", updated_at=100)
+    new = _record(key="new", source_key="server", updated_at=300)
+    repository = FakeRepository([old, new])
+    api = FakeApi(
+        {
+            "deleted": [
+                {
+                    "scope": "site",
+                    "sourceKind": "emby",
+                    "sourceKey": "server",
+                    "deletedAt": 200,
+                }
+            ],
+            "nextSince": 10,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.get_history("emby", "old", "server") is None
+    assert repository.get_history("emby", "new", "server") is not None
+
+
+def test_pull_ignores_sources_not_owned_by_local_history_repository() -> None:
+    repository = FakeRepository([])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "site",
+                    "sourceKey": "tvbox-site",
+                    "vodId": "remote-only",
+                    "updatedAt": 100,
+                }
+            ],
+            "nextSince": 10,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.saved == []
+    assert service._pull_cursor == 10
+
+
+def test_local_deletion_is_pushed_as_tombstone() -> None:
+    record = _record(key="gone", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, repository)
+    service._push()
+    repository.delete_history("emby", "gone", "server")
+
+    service._push()
+
+    event = api.pushed[-1][0]
+    assert event["event"] == "playback.deleted"
+    assert event["vodId"] == "gone"
+
+
+def test_spider_plugin_push_uses_manifest_id_not_local_database_id() -> None:
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    record = _record(
+        key="https://115cdn.com/s/example",
+        source_kind="spider_plugin",
+        source_key="99",
+        source_name="木偶（已重命名）",
+        updated_at=100,
+    )
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api,
+        FakeRepository([record]),
+        to_sync_source_key=lambda kind, key: stable_id if kind == "spider_plugin" and key == "99" else key,
+    )
+
+    service._push()
+
+    assert api.pushed[0][0]["sourceKey"] == stable_id
+    assert api.pushed[0][0]["sourceName"] == "木偶（已重命名）"
+    assert ("spider_plugin", stable_id, record.key) in service._pushed_versions
+
+
+def test_spider_plugin_delete_keeps_stable_manifest_id_in_tombstone() -> None:
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    record = _record(
+        key="vod-1", source_kind="spider_plugin", source_key="99", updated_at=100
+    )
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api,
+        repository,
+        to_sync_source_key=lambda kind, key: stable_id if kind == "spider_plugin" else key,
+    )
+    service._push()
+    repository.delete_history("spider_plugin", "vod-1", "99")
+
+    service._push()
+
+    event = api.pushed[-1][0]
+    assert event["event"] == "playback.deleted"
+    assert event["sourceKey"] == stable_id
+
+
+def test_spider_plugin_without_manifest_id_is_not_uploaded() -> None:
+    record = _record(
+        key="vod-1", source_kind="spider_plugin", source_key="99", updated_at=100
+    )
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([record]))
+
+    service._push()
+
+    assert api.pushed == []
+
+
+def test_spider_plugin_pull_maps_manifest_id_to_local_database_id() -> None:
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    repository = FakeRepository([])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "spider_plugin",
+                    "sourceKey": stable_id,
+                    "sourceName": "木偶[盘]",
+                    "vodId": "vod-1",
+                    "updatedAt": 100,
+                }
+            ],
+            "nextSince": 10,
+        }
+    )
+    service = PlaybackHistorySyncService(
+        api,
+        repository,
+        to_local_source_key=lambda kind, key: "99" if kind == "spider_plugin" and key == stable_id else key,
+    )
+
+    service._pull()
+
+    assert repository.saved == [("spider_plugin", "99", "vod-1")]
+    assert ("spider_plugin", stable_id, "vod-1") in service._pushed_versions
+
+
+def test_pull_is_skipped_when_push_fails() -> None:
+    pulled = False
+
+    class FailingApi(FakeApi):
+        def push_playback_events(self, records: list[dict]) -> None:
+            del records
+            raise RuntimeError("offline")
+
+        def pull_playback_records(self, since: int) -> dict:
+            nonlocal pulled
+            del since
+            pulled = True
+            return {}
+
+    service = PlaybackHistorySyncService(
+        FailingApi(), FakeRepository([_record(key="one", updated_at=1)])
+    )
+    service._started = True
+
+    service._run_sync()
+
+    assert pulled is False
+
+
+def test_sync_runs_outside_calling_thread() -> None:
+    worker_called = threading.Event()
+
+    class BlockingApi(FakeApi):
+        def push_playback_events(self, records: list[dict]) -> None:
+            assert threading.current_thread() is not threading.main_thread()
+            worker_called.set()
+            super().push_playback_events(records)
+
+    service = PlaybackHistorySyncService(
+        BlockingApi(),
+        FakeRepository([_record(key="one", updated_at=1)]),
+    )
+    service._started = True
+    service.sync()
+
+    assert worker_called.wait(timeout=1)

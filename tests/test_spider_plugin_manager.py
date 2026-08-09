@@ -41,6 +41,7 @@ class FakeLoader:
                 last_loaded_at=config.last_loaded_at,
                 last_error=config.last_error,
                 config_text=config.config_text,
+                manifest_id=config.manifest_id,
             ),
             spider=object(),
             plugin_name="",
@@ -350,6 +351,38 @@ def test_manager_add_local_txt_plugin_overwrites_existing_plugin_with_same_id(tm
     assert plugins[0].source_type == "local"
     assert plugins[0].source_value == str(second_path)
     assert plugins[0].plugin_version == 2
+
+
+def test_manager_reads_stable_id_from_plain_python_plugin_metadata(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "木偶.py"
+    plugin_path.write_text(
+        'PLUGIN_ID = "02544b320a6d45de997bc0bd3975d0c060b8"\nclass Spider: pass\n',
+        encoding="utf-8",
+    )
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    manager.add_local_plugin(str(plugin_path))
+
+    plugin = repository.list_plugins()[0]
+    assert plugin.manifest_id == "02544b320a6d45de997bc0bd3975d0c060b8"
+
+
+def test_manager_backfills_stable_id_for_existing_plain_python_plugin(tmp_path: Path) -> None:
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    plugin_path = tmp_path / "木偶.py"
+    plugin_path.write_text(
+        f'PLUGIN_ID = "{stable_id}"\nclass Spider: pass\n', encoding="utf-8"
+    )
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    old_plugin = repository.add_plugin("local", str(plugin_path), "木偶")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    assert manager.backfill_source_metadata() == 1
+
+    plugin = repository.get_plugin(old_plugin.id)
+    assert plugin.id == old_plugin.id
+    assert plugin.manifest_id == stable_id
 
 
 def test_manager_import_github_repository_imports_manifest_plugins_and_disables_invalid_entries(tmp_path: Path) -> None:

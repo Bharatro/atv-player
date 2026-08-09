@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import ast
 import re
 import time
-from pathlib import Path
-from pathlib import PurePosixPath
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx
@@ -114,6 +114,24 @@ def _parse_plugin_source_metadata(source_text: str) -> tuple[str, int]:
         version_match = re.match(r"^//\s*@version\s*:\s*(\d+)\s*$", line)
         if version_match is not None:
             plugin_version = max(1, int(version_match.group(1)))
+    try:
+        module = ast.parse(source_text)
+        for node in module.body:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            name = next(
+                (target.id for target in targets if isinstance(target, ast.Name)), ""
+            )
+            if name not in {"PLUGIN_ID", "PLUGIN_VERSION"}:
+                continue
+            value = ast.literal_eval(node.value)
+            if name == "PLUGIN_ID" and isinstance(value, str) and value.strip():
+                plugin_id = value.strip()
+            elif name == "PLUGIN_VERSION" and isinstance(value, int):
+                plugin_version = max(1, value)
+    except (SyntaxError, ValueError):
+        pass
     return plugin_id, plugin_version
 
 
@@ -176,6 +194,47 @@ class SpiderPluginManager:
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
 
+    def backfill_source_metadata(self) -> int:
+        """Backfill stable ids for plugins installed before PLUGIN_ID existed."""
+        updated = 0
+        for plugin in self._repository.list_plugins():
+            if plugin.manifest_id:
+                continue
+            source_path = Path(
+                plugin.source_value
+                if plugin.source_type == "local"
+                else plugin.cached_file_path
+            )
+            if source_path.suffix.lower() not in {".py", ".txt"} or not source_path.is_file():
+                continue
+            try:
+                manifest_id, _ = _parse_plugin_source_metadata(
+                    source_path.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError):
+                continue
+            if not manifest_id:
+                continue
+            existing = self._repository.find_plugin_by_manifest_id(manifest_id)
+            if existing is not None and existing.id != plugin.id:
+                continue
+            self._repository.update_plugin(
+                plugin.id,
+                display_name=plugin.display_name,
+                enabled=plugin.enabled,
+                cached_file_path=plugin.cached_file_path,
+                last_loaded_at=plugin.last_loaded_at,
+                last_error=plugin.last_error,
+                config_text=plugin.config_text,
+                plugin_version=plugin.plugin_version,
+                category_overrides_json=plugin.category_overrides_json,
+                source_type=plugin.source_type,
+                source_value=plugin.source_value,
+                manifest_id=manifest_id,
+            )
+            updated += 1
+        return updated
+
     def _upsert_single_plugin(
         self,
         source_type: str,
@@ -213,8 +272,10 @@ class SpiderPluginManager:
     def add_local_plugin(self, path: str) -> None:
         manifest_id = ""
         plugin_version = 1
-        if Path(path).suffix.lower() == ".txt":
-            manifest_id, plugin_version = _parse_plugin_source_metadata(Path(path).read_text(encoding="utf-8"))
+        if Path(path).suffix.lower() in {".py", ".txt"}:
+            manifest_id, plugin_version = _parse_plugin_source_metadata(
+                Path(path).read_text(encoding="utf-8")
+            )
         plugin = self._upsert_single_plugin(
             "local",
             path,
@@ -228,9 +289,11 @@ class SpiderPluginManager:
         name = _default_plugin_name("remote", url)
         manifest_id = ""
         plugin_version = 1
-        if Path(urlparse(url).path).suffix.lower() == ".txt":
+        if Path(urlparse(url).path).suffix.lower() in {".py", ".txt"}:
             try:
-                manifest_id, plugin_version = _parse_plugin_source_metadata(self._fetch_text(url))
+                manifest_id, plugin_version = _parse_plugin_source_metadata(
+                    self._fetch_text(url)
+                )
             except Exception:
                 manifest_id = ""
                 plugin_version = 1
@@ -289,6 +352,7 @@ class SpiderPluginManager:
             config_text=plugin.config_text,
             plugin_version=plugin.plugin_version,
             category_overrides_json=plugin.category_overrides_json,
+            manifest_id=loaded.config.manifest_id,
         )
 
     def delete_plugin(self, plugin_id: int) -> None:
@@ -653,6 +717,7 @@ class SpiderPluginManager:
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
+            self._persist_loaded_manifest_id(plugin, loaded)
             yield self._build_plugin_definition(
                 plugin,
                     loaded,
@@ -705,6 +770,7 @@ class SpiderPluginManager:
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
+            self._persist_loaded_manifest_id(plugin, loaded)
             definitions.append(
                 self._build_plugin_definition(
                     plugin,
@@ -714,6 +780,27 @@ class SpiderPluginManager:
                 )
             )
         return definitions
+
+    def _persist_loaded_manifest_id(
+        self, plugin: SpiderPluginConfig, loaded: LoadedSpiderPlugin
+    ) -> None:
+        manifest_id = loaded.config.manifest_id.strip()
+        if not manifest_id or manifest_id == plugin.manifest_id:
+            return
+        self._repository.update_plugin(
+            plugin.id,
+            display_name=plugin.display_name,
+            enabled=plugin.enabled,
+            cached_file_path=loaded.config.cached_file_path,
+            last_loaded_at=plugin.last_loaded_at,
+            last_error=plugin.last_error,
+            config_text=plugin.config_text,
+            plugin_version=plugin.plugin_version,
+            category_overrides_json=plugin.category_overrides_json,
+            source_type=plugin.source_type,
+            source_value=plugin.source_value,
+            manifest_id=manifest_id,
+        )
 
 
 __all__ = [

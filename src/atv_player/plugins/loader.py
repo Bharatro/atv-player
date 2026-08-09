@@ -84,6 +84,7 @@ class SpiderPluginLoader:
         source_path = self._resolve_source_path(config, force_refresh=force_refresh)
         module_name = f"spider_plugin_{config.id}_{source_path.stem}"
         source_language = self._detect_source_language(source_path)
+        manifest_id = config.manifest_id
         if source_language == "js":
             spider = NodeSpider(
                 plugin_path=source_path,
@@ -112,6 +113,9 @@ class SpiderPluginLoader:
             spider_cls = getattr(module, "Spider", None)
             if spider_cls is None:
                 raise ValueError("缺少 Spider 类")
+            manifest_id = (
+                str(getattr(module, "PLUGIN_ID", "") or "").strip() or manifest_id
+            )
             spider = spider_cls()
         initialized = False
         initialize_lock = threading.Lock()
@@ -149,6 +153,7 @@ class SpiderPluginLoader:
             config_text=config.config_text,
             plugin_version=config.plugin_version,
             category_overrides_json=config.category_overrides_json,
+            manifest_id=manifest_id,
         )
         logger.info(
             "Loaded spider plugin id=%s name=%s source_type=%s search_enabled=%s",

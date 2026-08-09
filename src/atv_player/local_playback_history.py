@@ -59,6 +59,28 @@ class LocalPlaybackHistoryRepository:
             if "drive_dir_id" not in columns:
                 conn.execute("ALTER TABLE media_playback_history ADD COLUMN drive_dir_id TEXT NOT NULL DEFAULT ''")
             self._migrate_spider_plugin_history(conn)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playback_sync_state (
+                    namespace TEXT NOT NULL,
+                    state_key TEXT NOT NULL,
+                    state_value TEXT NOT NULL,
+                    PRIMARY KEY (namespace, state_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playback_sync_snapshot (
+                    namespace TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_key TEXT NOT NULL,
+                    vod_id TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (namespace, source_kind, source_key, vod_id)
+                )
+                """
+            )
 
     def _migrate_spider_plugin_history(self, conn: sqlite3.Connection) -> None:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
@@ -260,4 +282,102 @@ class LocalPlaybackHistoryRepository:
             conn.execute(
                 "DELETE FROM media_playback_history WHERE source_kind = ? AND source_key = ? AND vod_id = ?",
                 (source_kind, source_key, vod_id),
+            )
+
+    def delete_site_history(self, source_kind: str, source_key: str, deleted_at: int) -> list[tuple[str, str, str]]:
+        clause = "source_kind = ? AND source_key = ?"
+        args: list[object] = [source_kind, source_key]
+        if deleted_at > 0:
+            clause += " AND updated_at <= ?"
+            args.append(deleted_at)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT source_kind, source_key, vod_id FROM media_playback_history WHERE {clause}",
+                args,
+            ).fetchall()
+            conn.execute(f"DELETE FROM media_playback_history WHERE {clause}", args)
+        return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+
+    def delete_all_histories(self, deleted_at: int) -> list[tuple[str, str, str]]:
+        clause = "1 = 1"
+        args: list[object] = []
+        if deleted_at > 0:
+            clause = "updated_at <= ?"
+            args.append(deleted_at)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT source_kind, source_key, vod_id FROM media_playback_history WHERE {clause}",
+                args,
+            ).fetchall()
+            conn.execute(f"DELETE FROM media_playback_history WHERE {clause}", args)
+        return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+
+    def get_sync_cursor(self, namespace: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT state_value FROM playback_sync_state WHERE namespace = ? AND state_key = 'cursor'",
+                (namespace,),
+            ).fetchone()
+        try:
+            return int(row[0]) if row is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def set_sync_cursor(self, namespace: str, cursor: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO playback_sync_state(namespace, state_key, state_value) VALUES (?, 'cursor', ?)
+                ON CONFLICT(namespace, state_key) DO UPDATE SET state_value = excluded.state_value
+                """,
+                (namespace, str(cursor)),
+            )
+
+    def load_sync_snapshot(self, namespace: str) -> dict[tuple[str, str, str], int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_kind, source_key, vod_id, updated_at
+                FROM playback_sync_snapshot WHERE namespace = ?
+                """,
+                (namespace,),
+            ).fetchall()
+        return {(str(row[0]), str(row[1]), str(row[2])): int(row[3]) for row in rows}
+
+    def replace_sync_snapshot(self, namespace: str, versions: dict[tuple[str, str, str], int]) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM playback_sync_snapshot WHERE namespace = ?", (namespace,))
+            conn.executemany(
+                """
+                INSERT INTO playback_sync_snapshot(namespace, source_kind, source_key, vod_id, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [(namespace, *identity, updated_at) for identity, updated_at in versions.items()],
+            )
+
+    def set_sync_snapshot_version(
+        self,
+        namespace: str,
+        identity: tuple[str, str, str],
+        updated_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO playback_sync_snapshot(namespace, source_kind, source_key, vod_id, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(namespace, source_kind, source_key, vod_id)
+                DO UPDATE SET updated_at = excluded.updated_at
+                """,
+                (namespace, *identity, updated_at),
+            )
+
+    def remove_sync_snapshot(self, namespace: str, identity: tuple[str, str, str]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM playback_sync_snapshot
+                WHERE namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?
+                """,
+                (namespace, *identity),
             )

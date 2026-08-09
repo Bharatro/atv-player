@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import platform
 from collections.abc import Callable
@@ -32,6 +33,8 @@ class ApiClient:
         proxy_decider: ProxyDecider | None = None,
         client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
+        self._base_url = base_url
+        self._playback_sync_identity = self._build_playback_sync_identity(token)
         headers = {"Authorization": token} if token else {}
         headers.setdefault("User-Agent", platform.platform() + " ATV-Player")
         self._vod_token = vod_token
@@ -45,10 +48,19 @@ class ApiClient:
         self._client = client_factory(**client_kwargs)
 
     def set_token(self, token: str) -> None:
+        self._playback_sync_identity = self._build_playback_sync_identity(token)
         if token:
             self._client.headers["Authorization"] = token
         else:
             self._client.headers.pop("Authorization", None)
+
+    @property
+    def playback_sync_identity(self) -> str:
+        return self._playback_sync_identity
+
+    def _build_playback_sync_identity(self, token: str) -> str:
+        value = f"{self._base_url}\n{token}".encode()
+        return hashlib.sha256(value).hexdigest()[:32]
 
     def set_vod_token(self, vod_token: str) -> None:
         self._vod_token = vod_token
@@ -439,6 +451,21 @@ class ApiClient:
 
     def save_history(self, payload: dict[str, Any]) -> None:
         self._request("POST", "/api/history", params={"log": "false"}, json=payload)
+
+    def push_playback_events(self, records: list[dict[str, Any]]) -> None:
+        # 多端播放记录同步:PUSH 本地 Tier-B 记录。Authorization(session)由客户端自动携带,
+        # 服务端 resolveUid 经 session 路径解析为 uid。
+        if not records:
+            return
+        self._request("POST", "/api/playback/events", json=records)
+
+    def pull_playback_records(self, since: int, limit: int = 100) -> dict[str, Any]:
+        data = self._request(
+            "GET",
+            "/api/playback/changes",
+            headers={"X-PlaySync-Since": str(since), "X-PlaySync-Limit": str(limit)},
+        )
+        return data or {}
 
     def delete_history(self, history_id: int) -> None:
         self._request("DELETE", f"/api/history/{history_id}")
