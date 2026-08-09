@@ -2181,6 +2181,63 @@ def test_controller_populates_grouped_danmaku_candidates_on_successful_search() 
     assert len(item.danmaku_candidates) == 1
 
 
+def test_controller_auto_resolve_danmaku_searches_and_downloads_default_source() -> None:
+    """auto_resolve_danmaku is the player window's generic auto-load fallback for
+    plugin sources (the path taken when opening from playback history, where the
+    loader-based _maybe_resolve_danmaku does not run for the resumed episode). It
+    must search sources and download the default, mirroring the generic controller."""
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="bilibili",
+                                name="凡人修仙传 第127话",
+                                url="https://www.bilibili.com/bangumi/127",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://www.bilibili.com/bangumi/127",
+                default_provider="bilibili",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="网盘资源",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(
+        title="第127集 外海风云3",
+        url="https://stream.example/play/127.m3u8",
+        media_title="凡人修仙传",
+        vod_id="/play/127",
+    )
+
+    resolved = controller.auto_resolve_danmaku(item)
+
+    assert resolved is True
+    assert item.selected_danmaku_url == "https://www.bilibili.com/bangumi/127"
+    assert item.danmaku_xml != ""
+    assert item.danmaku_search_query == "凡人修仙传 127集"
+
+
 def test_controller_research_danmaku_uses_temporary_query_only_for_current_item() -> None:
     calls: list[str] = []
 

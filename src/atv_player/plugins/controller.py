@@ -2160,6 +2160,37 @@ class SpiderPluginController:
         candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
         self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
 
+    def auto_resolve_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+        *,
+        media_duration_seconds: int = 0,
+    ) -> bool:
+        """Find and download the default danmaku source for one playlist item.
+
+        Mirrors ``GenericDanmakuController.auto_resolve_danmaku`` so the player
+        window's generic auto-load fallback (``_maybe_restore_cached_danmaku_for_current_item``)
+        can search and download danmaku for spider-plugin sources, not just restore
+        from a cached source. Without this, opening a plugin item from playback
+        history — where the loader-based ``_maybe_resolve_danmaku`` does not always
+        run for the resumed episode — left danmaku unloaded until a manual search.
+        """
+        if item.danmaku_xml:
+            return True
+        query_override = item.danmaku_search_query if item.danmaku_search_query_overridden else None
+        self.refresh_danmaku_sources(
+            item,
+            query_override=query_override,
+            playlist=playlist,
+            media_duration_seconds=media_duration_seconds,
+        )
+        selected_url = str(item.selected_danmaku_url or "").strip()
+        if not selected_url:
+            return False
+        self.switch_danmaku_source(item, selected_url)
+        return bool(item.danmaku_xml)
+
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = None
         selected_provider_label = ""
