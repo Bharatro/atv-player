@@ -66,6 +66,7 @@ def map_drive_video_to_play_item(
         media_title=media_title,
         play_source=play_source,
         vod_id=str(payload.get("path") or payload.get("url") or ""),
+        play_id=str(payload.get("playId") or payload.get("play_id") or ""),
     )
 
 

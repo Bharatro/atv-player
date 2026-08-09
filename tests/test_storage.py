@@ -294,6 +294,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
             "sourceGroupIndex": 1,
             "sourceIndex": 1,
             "sourceSubgroupIndex": 2,
+            "sourceSubgroupName": "第三季",
             "driveDirId": "season-3",
             "createTime": 42,
         },
@@ -308,6 +309,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
     assert history.source_group_index == 1
     assert history.source_index == 1
     assert history.source_subgroup_index == 2
+    assert history.source_subgroup_name == "第三季"
     assert history.drive_dir_id == "season-3"
 
 

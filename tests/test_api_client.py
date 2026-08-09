@@ -192,6 +192,7 @@ def test_api_client_maps_history_record() -> None:
                 "speed": 1.25,
                 "createTime": 123456,
                 "sourceSubgroupIndex": 2,
+                "sourceSubgroupName": "第三季",
                 "driveDirId": "season-3",
             },
         )
@@ -208,6 +209,7 @@ def test_api_client_maps_history_record() -> None:
     assert history.key == "movie-1"
     assert history.speed == 1.25
     assert history.source_subgroup_index == 2
+    assert history.source_subgroup_name == "第三季"
     assert history.drive_dir_id == "season-3"
 
 

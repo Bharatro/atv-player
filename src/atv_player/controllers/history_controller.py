@@ -25,6 +25,7 @@ class HistoryController:
                 speed=item.get("speed", 1.0),
                 create_time=item.get("createTime", 0),
                 source_subgroup_index=item.get("sourceSubgroupIndex", 0),
+                source_subgroup_name=item.get("sourceSubgroupName", ""),
                 drive_dir_id=item.get("driveDirId", ""),
                 source_kind="remote",
             )

@@ -200,6 +200,7 @@ class PlayItem:
     time: str = ""
     duration_seconds: int = 0
     vod_id: str = ""
+    play_id: str = ""
     detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
@@ -405,6 +406,7 @@ class HistoryRecord:
     source_group_index: int = 0
     source_index: int = 0
     source_subgroup_index: int = 0
+    source_subgroup_name: str = ""
     drive_dir_id: str = ""
     source_kind: str = "remote"
     source_plugin_id: int = 0

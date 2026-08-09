@@ -439,6 +439,7 @@ class ApiClient:
             source_group_index=int(data.get("sourceGroupIndex", 0)),
             source_index=int(data.get("sourceIndex", 0)),
             source_subgroup_index=int(data.get("sourceSubgroupIndex", 0)),
+            source_subgroup_name=str(data.get("sourceSubgroupName") or ""),
             drive_dir_id=str(data.get("driveDirId") or ""),
         )
 
@@ -460,10 +461,13 @@ class ApiClient:
         self._request("POST", "/api/playback/events", json=records)
 
     def pull_playback_records(self, since: int, limit: int = 100) -> dict[str, Any]:
+        headers = {"X-PlaySync-Since": str(since), "X-PlaySync-Limit": str(limit)}
+        if since <= 0:
+            headers["X-PlaySync-Latest"] = "true"
         data = self._request(
             "GET",
             "/api/playback/changes",
-            headers={"X-PlaySync-Since": str(since), "X-PlaySync-Limit": str(limit)},
+            headers=headers,
         )
         return data or {}
 

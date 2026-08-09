@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # Tier-A(browse/douban/pansou)已由 /api/history 同步,本服务只覆盖 Tier-B
 # (spider_plugin/telegram/bilibili/youtube/emby/jellyfin/feiniu/direct_parse)。
 # 鉴权复用 ApiClient 的 session 令牌(Authorization),服务端 resolveUid 解析为 uid。
-INITIAL_DELAY_MS = 90_000
-PERIOD_MS = 5 * 60 * 1000
+INITIAL_DELAY_MS = 30_000
+PERIOD_MS = 30_000
 SYNC_SOURCE_KINDS = frozenset(
     {
         "telegram",
@@ -30,7 +30,8 @@ SYNC_SOURCE_KINDS = frozenset(
         "spider_plugin",
     }
 )
-SYNC_NAMESPACE_VERSION = "v2-stable-plugin-key"
+SYNC_NAMESPACE_VERSION = "v4-playurl-selection-context"
+SYNC_LIMIT = 100
 SourceKeyResolver = Callable[[str, str], str | None]
 
 
@@ -113,11 +114,15 @@ class PlaybackHistorySyncService(QObject):
     # ── PUSH:本地 Tier-B → 服务端 ──────────────────────────────────────────
 
     def _push(self) -> None:
-        records = [
-            record
-            for record in self._repo.list_histories()
-            if record.source_kind in SYNC_SOURCE_KINDS
-        ]
+        records = sorted(
+            [
+                record
+                for record in self._repo.list_histories()
+                if record.source_kind in SYNC_SOURCE_KINDS
+            ],
+            key=lambda record: int(record.create_time or 0),
+            reverse=True,
+        )[:SYNC_LIMIT]
         current_versions: dict[tuple[str, str, str], int] = {}
         changed: list[tuple[tuple[str, str, str], int, dict[str, Any]]] = []
         for record in records:
@@ -169,6 +174,12 @@ class PlaybackHistorySyncService(QObject):
             "updatedAt": record.create_time,
             "speed": record.speed,
             "clientKey": self._client_key,
+            "playlistIndex": record.playlist_index,
+            "sourceGroupIndex": record.source_group_index,
+            "sourceIndex": record.source_index,
+            "sourceSubgroupIndex": record.source_subgroup_index,
+            "sourceSubgroupName": record.source_subgroup_name,
+            "driveDirId": record.drive_dir_id,
         }
 
     # ── PULL:服务端 → 本地 Tier-B(LWW by updated_at) ──────────────────────
@@ -257,6 +268,16 @@ class PlaybackHistorySyncService(QObject):
                 "position": int(item.get("positionMs") or item.get("position") or 0),
                 "speed": float(item.get("speed") or 1.0),
                 "createTime": updated_at,
+                "playlistIndex": int(item.get("playlistIndex") or item.get("playlist_index") or 0),
+                "sourceGroupIndex": int(item.get("sourceGroupIndex") or item.get("source_group_index") or 0),
+                "sourceIndex": int(item.get("sourceIndex") or item.get("source_index") or 0),
+                "sourceSubgroupIndex": int(
+                    item.get("sourceSubgroupIndex") or item.get("source_subgroup_index") or 0
+                ),
+                "sourceSubgroupName": item.get("sourceSubgroupName")
+                or item.get("source_subgroup_name")
+                or "",
+                "driveDirId": item.get("driveDirId") or item.get("drive_dir_id") or "",
             }
             source_name = str(item.get("sourceName") or item.get("source_name") or "")
             self._repo.save_history(source_kind, vod_id, payload, source_key=source_key, source_name=source_name)

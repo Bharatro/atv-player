@@ -1,6 +1,11 @@
 from datetime import datetime
 
-from atv_player.controllers.browse_controller import BrowseController, build_vod_list_path, filter_search_results
+from atv_player.controllers.browse_controller import (
+    BrowseController,
+    build_vod_list_path,
+    filter_search_results,
+    map_drive_video_to_play_item,
+)
 from atv_player.models import VodItem
 from atv_player.share_types import infer_share_type
 
@@ -67,6 +72,21 @@ def test_filter_search_results_by_drive_type() -> None:
     filtered = filter_search_results(items, "0")
 
     assert [item.vod_id for item in filtered] == ["1"]
+
+
+def test_map_drive_video_preserves_backend_play_url_short_id() -> None:
+    item = map_drive_video_to_play_item(
+        {
+            "name": "S01E126.mp4",
+            "url": "http://atb/p/token/1@185535",
+            "path": "/凡人修仙传/S01E126.mp4",
+            "playId": "1@185535",
+        },
+        index=1,
+    )
+
+    assert item.play_id == "1@185535"
+    assert item.vod_id == "/凡人修仙传/S01E126.mp4"
 
 
 def test_infer_share_type_uses_share_link_hostname() -> None:

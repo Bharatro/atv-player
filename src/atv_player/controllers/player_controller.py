@@ -174,7 +174,20 @@ class PlayerController:
         normalized_vod_id = str(current_item.vod_id or "").strip().lower()
         return normalized_vod_id.startswith(("yt:channel:", "yt:playlist:"))
 
-    def _history_episode_url(self, current_item: PlayItem) -> str:
+    def _history_episode_url(
+        self,
+        current_item: PlayItem,
+        session: PlayerSession | None = None,
+    ) -> str:
+        play_id = str(current_item.play_id or "").strip()
+        if play_id:
+            subgroup_index = (
+                self._history_source_subgroup_index(session)
+                if session is not None
+                else 0
+            )
+            episode_index = max(0, int(current_item.index))
+            return f"{play_id}@{subgroup_index}@{episode_index}"
         url = str(current_item.url or "").strip()
         original_url = str(current_item.original_url or "").strip()
         if original_url and self._is_youtube_play_item(current_item):
@@ -556,7 +569,7 @@ class PlayerController:
             "vodPic": session.vod.vod_pic,
             "vodRemarks": playlist_item_display_title(current_item, "episode"),
             "episode": current_index,
-            "episodeUrl": self._history_episode_url(current_item),
+            "episodeUrl": self._history_episode_url(current_item, session),
             "position": position_ms,
             "opening": opening_seconds * 1000,
             "ending": ending_seconds * 1000,
@@ -565,6 +578,7 @@ class PlayerController:
             "sourceGroupIndex": session.source_group_index,
             "sourceIndex": session.source_index,
             "sourceSubgroupIndex": self._history_source_subgroup_index(session),
+            "sourceSubgroupName": self._history_source_subgroup_name(session),
             "driveDirId": self._history_drive_dir_id(session),
             "createTime": int(time() * 1000),
         }
@@ -592,12 +606,18 @@ class PlayerController:
             return None
         return source.subgroups[source.subgroup_index]
 
-    def _history_source_subgroup_index(self, session: PlayerSession) -> int:
+    def _history_source_subgroup_index(self, session: PlayerSession | None) -> int:
+        if session is None:
+            return 0
         subgroup = self._history_drive_subgroup(session)
         if subgroup is None:
             return 0
         group = session.source_groups[session.source_group_index]
         return group.sources[session.source_index].subgroup_index
+
+    def _history_source_subgroup_name(self, session: PlayerSession) -> str:
+        subgroup = self._history_drive_subgroup(session)
+        return subgroup.label if subgroup is not None else ""
 
     def _history_drive_dir_id(self, session: PlayerSession) -> str:
         subgroup = self._history_drive_subgroup(session)

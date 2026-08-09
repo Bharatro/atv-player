@@ -3,7 +3,11 @@ from __future__ import annotations
 import threading
 
 from atv_player.models import HistoryRecord
-from atv_player.playback_sync_service import PlaybackHistorySyncService
+from atv_player.playback_sync_service import (
+    INITIAL_DELAY_MS,
+    PERIOD_MS,
+    PlaybackHistorySyncService,
+)
 
 
 def _record(
@@ -41,6 +45,7 @@ class FakeRepository:
         }
         self.deleted: list[tuple[str, str, str]] = []
         self.saved: list[tuple[str, str, str]] = []
+        self.saved_payloads: list[dict] = []
         self.cursor = 0
         self.snapshots: dict[str, dict[tuple[str, str, str], int]] = {}
 
@@ -61,6 +66,7 @@ class FakeRepository:
     ) -> None:
         del source_name
         self.saved.append((source_kind, source_key, vod_id))
+        self.saved_payloads.append(dict(payload))
 
     def delete_history(
         self, source_kind: str, vod_id: str, source_key: str = ""
@@ -137,6 +143,11 @@ class FakeApi:
         return self.page
 
 
+def test_playback_sync_runs_every_30_seconds() -> None:
+    assert INITIAL_DELAY_MS == 30_000
+    assert PERIOD_MS == 30_000
+
+
 def test_push_versions_are_tracked_per_record() -> None:
     first = _record(key="first", updated_at=100)
     second = _record(key="second", updated_at=10)
@@ -148,6 +159,64 @@ def test_push_versions_are_tracked_per_record() -> None:
 
     pushed_ids = [[payload["vodId"] for payload in batch] for batch in api.pushed]
     assert pushed_ids == [["second"]]
+
+
+def test_push_only_uploads_latest_100_records() -> None:
+    records = [_record(key=f"vod-{index}", updated_at=index) for index in range(1, 102)]
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository(records))
+
+    service._push()
+
+    pushed_ids = {payload["vodId"] for payload in api.pushed[0]}
+    assert len(pushed_ids) == 100
+    assert "vod-101" in pushed_ids
+    assert "vod-1" not in pushed_ids
+
+
+def test_selection_context_round_trips_through_sync_payloads() -> None:
+    record = _record(
+        key="173",
+        source_kind="spider_plugin",
+        source_key="99",
+        source_name="木偶",
+        updated_at=100,
+    )
+    record.episode_url = "1@185535@6@1"
+    record.playlist_index = 0
+    record.source_group_index = 2
+    record.source_index = 0
+    record.source_subgroup_index = 6
+    record.source_subgroup_name = "07外海风云"
+    record.drive_dir_id = "local-only-dir"
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api,
+        FakeRepository([record]),
+        to_sync_source_key=lambda kind, key: stable_id if kind == "spider_plugin" else key,
+    )
+
+    service._push()
+
+    payload = api.pushed[0][0]
+    assert payload["vodId"] == "173"
+    assert payload["episodeUrl"] == "1@185535@6@1"
+    assert payload["playlistIndex"] == 0
+    assert payload["sourceSubgroupIndex"] == 6
+    assert payload["sourceSubgroupName"] == "07外海风云"
+
+    repository = FakeRepository([])
+    service = PlaybackHistorySyncService(
+        FakeApi({"items": [payload], "nextSince": 1}),
+        repository,
+        to_local_source_key=lambda kind, key: "99" if kind == "spider_plugin" else key,
+    )
+    service._pull()
+
+    assert repository.saved_payloads[0]["episodeUrl"] == "1@185535@6@1"
+    assert repository.saved_payloads[0]["sourceSubgroupIndex"] == 6
+    assert repository.saved_payloads[0]["sourceSubgroupName"] == "07外海风云"
 
 
 def test_pull_applies_tombstones_before_advancing_cursor() -> None:

@@ -1088,7 +1088,14 @@ def test_player_controller_reports_nested_drive_directory_history_identity() -> 
     api = FakeApiClient()
     controller = PlayerController(api)
     first = [PlayItem(title="01.mp4", url="https://drive/season-1/01.mp4")]
-    second = [PlayItem(title="02.mp4", url="https://drive/season-2/02.mp4")]
+    second = [
+        PlayItem(
+            title="02.mp4",
+            url="https://drive/season-2/02.mp4",
+            play_id="1@185535",
+            index=1,
+        )
+    ]
     source = PlaybackSource(
         label="百度资源",
         playlist=first,
@@ -1124,7 +1131,9 @@ def test_player_controller_reports_nested_drive_directory_history_identity() -> 
     )
 
     assert saved_payloads[0]["sourceSubgroupIndex"] == 1
+    assert saved_payloads[0]["sourceSubgroupName"] == "第二季"
     assert saved_payloads[0]["driveDirId"] == "season-2"
+    assert saved_payloads[0]["episodeUrl"] == "1@185535@1@1"
 
 
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:

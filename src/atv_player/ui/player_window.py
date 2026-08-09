@@ -3792,7 +3792,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if not subgroup.sources:
                 return False
             playlist = subgroup.sources[0].playlist
+            target_play_id = target_url
+            parts = target_play_id.split("@")
+            if len(parts) >= 4:
+                target_play_id = "@".join(parts[:2])
             for index, item in enumerate(playlist):
+                if item.play_id and item.play_id == target_play_id:
+                    return self._select_nested_drive_history_item(
+                        parent_source, subgroup_index, playlist, index
+                    )
                 if item.url.strip() == target_url:
                     return self._select_nested_drive_history_item(
                         parent_source, subgroup_index, playlist, index
@@ -3803,15 +3811,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 )
             return False
 
+        if history.source_subgroup_name:
+            for subgroup_index, subgroup in enumerate(parent_source.subgroups):
+                if (
+                    subgroup.label == history.source_subgroup_name
+                    and restore_subgroup(subgroup_index)
+                ):
+                    return True
+            if restore_subgroup(history.source_subgroup_index):
+                return True
+
         if history.drive_dir_id:
             for subgroup_index, subgroup in enumerate(parent_source.subgroups):
                 if subgroup.drive_dir_id == history.drive_dir_id:
                     return restore_subgroup(subgroup_index)
-            # Directory IDs can disappear when a share is regenerated.  New records
-            # also keep the selected index as a best-effort fallback.
-            if restore_subgroup(history.source_subgroup_index):
-                return True
-
         # Records created before directory IDs were persisted fall back to URL
         # matching, which also preserves compatibility with existing histories.
         if not target_name:
