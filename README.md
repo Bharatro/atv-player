@@ -101,6 +101,7 @@ scripts/build_mpv.sh --master
 
 - 默认使用 `mpv-build` 的 release 轨道构建 `mpv/libmpv`
 - 默认执行 `sudo ./install`
+- 默认启用 FFmpeg 的 `libxml2`，确保 DASH/MPD 解复用可用；缺少开发包时会自动安装 `libxml2-dev`
 - 如果缺少 Lua 开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y liblua5.2-dev`
 - 如果缺少硬件解码相关开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libva-dev libvdpau-dev`
 - 如果缺少 NVIDIA codec headers，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libffmpeg-nvenc-dev`
