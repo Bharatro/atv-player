@@ -256,6 +256,30 @@ def test_atv_source_alias_pushes_as_tvbox_site_identity() -> None:
     assert payload["sourceKey"] == "csp_TgDouBan"
 
 
+def test_tvbox_site_aliases_round_trip_to_atv_sources() -> None:
+    expected = {
+        "csp_TgChannel": "telegram_channel",
+        "csp_TgDouBan": "telegram",
+        "csp_TgSearch": "telegram",
+        "csp_TgWeb": "telegram",
+        "csp_FishPanSou": "telegram",
+        "csp_FishPanSouGroup": "telegram",
+        "csp_AList": "browse",
+        "csp_XiaoYa": "browse",
+        "csp_BiliBili": "bilibili",
+        "csp_FeiNiu": "feiniu",
+        "csp_Jellyfin": "jellyfin",
+    }
+
+    for site_key, source_kind in expected.items():
+        local_kind, local_key = PlaybackHistorySyncService._local_source("site", site_key)
+        assert local_kind == source_kind
+        assert PlaybackHistorySyncService._sync_source(local_kind, local_key) == (
+            "site",
+            site_key,
+        )
+
+
 def test_emby_pushes_and_pulls_with_tvbox_site_identity() -> None:
     record = _record(key="emby-1", source_kind="emby", updated_at=100)
     api = FakeApi()
@@ -291,6 +315,30 @@ def test_tvbox_alist_site_pulls_as_atv_browse_source() -> None:
     assert repository.saved == [("browse", "csp_AList", "1$185535$1")]
     assert "site" in api.pull_source_kinds.split(",")
     assert "csp_AList" in api.pull_site_keys.split(",")
+
+
+def test_tvbox_xiaoya_site_pulls_as_atv_browse_source() -> None:
+    repository = FakeRepository([])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "site",
+                    "sourceKey": "csp_XiaoYa",
+                    "sourceName": "小雅",
+                    "vodId": "xiaoya-vod-1",
+                    "updatedAt": 100,
+                }
+            ],
+            "nextSince": 1,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.saved == [("browse", "csp_XiaoYa", "xiaoya-vod-1")]
+    assert "csp_XiaoYa" in api.pull_site_keys.split(",")
 
 
 def test_pull_preserves_local_opening_and_ending_markers() -> None:

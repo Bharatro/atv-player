@@ -32,14 +32,17 @@ SYNC_SOURCE_KINDS = frozenset(
         "spider_plugin",
     }
 )
-SYNC_NAMESPACE_VERSION = "v5-source-aliases"
+SYNC_NAMESPACE_VERSION = "v6-telegram-site-aliases"
 SYNC_LIMIT = 100
 TVBOX_SITE_TO_ATV_KIND = {
     "csp_TgDouBan": "telegram",
     "csp_TgChannel": "telegram_channel",
-    "csp_TgSearch": "browse",
-    "csp_TgWeb": "browse",
+    "csp_TgSearch": "telegram",
+    "csp_TgWeb": "telegram",
+    "csp_FishPanSou": "telegram",
+    "csp_FishPanSouGroup": "telegram",
     "csp_AList": "browse",
+    "csp_XiaoYa": "browse",
     "csp_BiliBili": "bilibili",
     "csp_FeiNiu": "feiniu",
     "csp_Emby": "emby",
@@ -53,7 +56,10 @@ ATV_KIND_TO_TVBOX_SITE = {
     "emby": "csp_Emby",
     "jellyfin": "csp_Jellyfin",
 }
-BROWSE_SITE_KEYS = frozenset({"csp_TgSearch", "csp_TgWeb", "csp_AList"})
+TELEGRAM_SITE_KEYS = frozenset(
+    {"csp_TgDouBan", "csp_TgSearch", "csp_TgWeb", "csp_FishPanSou", "csp_FishPanSouGroup"}
+)
+BROWSE_SITE_KEYS = frozenset({"csp_AList", "csp_XiaoYa"})
 SYNC_PULL_SOURCE_KINDS = tuple(sorted(SYNC_SOURCE_KINDS | {"site"}))
 SYNC_PULL_SITE_KEYS = tuple(sorted(TVBOX_SITE_TO_ATV_KIND))
 SourceKeyResolver = Callable[[str, str], str | None]
@@ -450,6 +456,8 @@ class PlaybackHistorySyncService(QObject):
     def _sync_source(source_kind: str, source_key: str) -> tuple[str, str]:
         if source_kind == "browse":
             return "site", source_key if source_key in BROWSE_SITE_KEYS else "csp_AList"
+        if source_kind == "telegram":
+            return "site", source_key if source_key in TELEGRAM_SITE_KEYS else "csp_TgDouBan"
         site_key = ATV_KIND_TO_TVBOX_SITE.get(source_kind)
         return ("site", site_key) if site_key else (source_kind, source_key)
 
@@ -460,7 +468,7 @@ class PlaybackHistorySyncService(QObject):
         local_kind = TVBOX_SITE_TO_ATV_KIND.get(source_key)
         if local_kind is None:
             return source_kind, source_key
-        return local_kind, source_key if local_kind == "browse" else ""
+        return local_kind, source_key if local_kind in {"browse", "telegram"} else ""
 
     @classmethod
     def _resolved_sync_identity(
