@@ -46,6 +46,7 @@ class FakeRepository:
         }
         self.deleted: list[tuple[str, str, str]] = []
         self.saved: list[tuple[str, str, str]] = []
+        self.saved_source_names: list[str] = []
         self.saved_payloads: list[dict] = []
         self.cursors: dict[str, int] = {}
         self.snapshots: dict[str, dict[tuple[str, str, str], int]] = {}
@@ -65,8 +66,8 @@ class FakeRepository:
         source_key: str = "",
         source_name: str = "",
     ) -> None:
-        del source_name
         self.saved.append((source_kind, source_key, vod_id))
+        self.saved_source_names.append(source_name)
         self.saved_payloads.append(dict(payload))
 
     def delete_history(
@@ -583,7 +584,46 @@ def test_spider_plugin_pull_maps_manifest_id_to_local_database_id() -> None:
     service._pull()
 
     assert repository.saved == [("spider_plugin", "99", "vod-1")]
+    assert repository.saved_source_names == ["木偶[盘]"]
     assert ("spider_plugin", stable_id, "vod-1") in service._pushed_versions
+
+
+def test_spider_plugin_pull_repairs_source_name_at_same_version() -> None:
+    stable_id = "ff03a81ea2c940d4838e71fb21cf6651157d"
+    existing = _record(
+        key="vod-1",
+        source_kind="spider_plugin",
+        source_key="3",
+        source_name="插件",
+        updated_at=100,
+    )
+    repository = FakeRepository([existing])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "spider_plugin",
+                    "sourceKey": stable_id,
+                    "sourceName": "短剧优选",
+                    "vodId": "vod-1",
+                    "updatedAt": 100,
+                }
+            ],
+            "nextSince": 10,
+        }
+    )
+    service = PlaybackHistorySyncService(
+        api,
+        repository,
+        to_local_source_key=lambda kind, key: "3"
+        if kind == "spider_plugin" and key == stable_id
+        else key,
+    )
+
+    service._pull()
+
+    assert repository.saved == [("spider_plugin", "3", "vod-1")]
+    assert repository.saved_source_names == ["短剧优选"]
 
 
 def test_installing_plugin_uses_fresh_filtered_pull_cursor() -> None:

@@ -32,7 +32,7 @@ SYNC_SOURCE_KINDS = frozenset(
         "spider_plugin",
     }
 )
-SYNC_NAMESPACE_VERSION = "v6-telegram-site-aliases"
+SYNC_NAMESPACE_VERSION = "v7-plugin-source-name"
 SYNC_LIMIT = 100
 TVBOX_SITE_TO_ATV_KIND = {
     "csp_TgDouBan": "telegram",
@@ -372,9 +372,15 @@ class PlaybackHistorySyncService(QObject):
                 continue
             source_kind, source_key, vod_id = local_identity
             updated_at = int(item.get("updatedAt") or item.get("updated_at") or item.get("timestamp") or 0)
+            source_name = str(item.get("sourceName") or item.get("source_name") or "")
             existing = self._repo.get_history(source_kind, vod_id, source_key)
-            if existing is not None and existing.create_time >= updated_at:
-                continue  # 本地不旧于远端,跳过
+            if existing is not None:
+                if existing.create_time > updated_at:
+                    continue  # 本地进度更新,跳过远端旧版本
+                if existing.create_time == updated_at and (
+                    not source_name or existing.source_name == source_name
+                ):
+                    continue  # 同版本且来源名无需修复
             payload = {
                 "vodName": item.get("vodName") or item.get("vod_name") or "",
                 "vodPic": item.get("vodPic") or item.get("vod_pic") or "",
@@ -399,7 +405,6 @@ class PlaybackHistorySyncService(QObject):
                 or "",
                 "driveDirId": item.get("driveDirId") or item.get("drive_dir_id") or "",
             }
-            source_name = str(item.get("sourceName") or item.get("source_name") or "")
             self._repo.save_history(source_kind, vod_id, payload, source_key=source_key, source_name=source_name)
             self._repo.set_sync_snapshot_version(self._namespace, sync_identity, updated_at)
             self._pushed_versions[sync_identity] = updated_at
