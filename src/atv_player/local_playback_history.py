@@ -10,6 +10,7 @@ from atv_player.sqlite_utils import managed_connection
 class LocalPlaybackHistoryRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
+        self._account_namespace = ""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -21,6 +22,7 @@ class LocalPlaybackHistoryRepository:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS media_playback_history (
+                    account_namespace TEXT NOT NULL DEFAULT '',
                     source_kind TEXT NOT NULL,
                     source_key TEXT NOT NULL DEFAULT '',
                     source_name TEXT NOT NULL DEFAULT '',
@@ -42,7 +44,7 @@ class LocalPlaybackHistoryRepository:
                     source_subgroup_name TEXT NOT NULL DEFAULT '',
                     drive_dir_id TEXT NOT NULL DEFAULT '',
                     updated_at INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (source_kind, source_key, vod_id)
+                    PRIMARY KEY (account_namespace, source_kind, source_key, vod_id)
                 )
                 """
             )
@@ -66,7 +68,6 @@ class LocalPlaybackHistoryRepository:
                 )
             if "drive_dir_id" not in columns:
                 conn.execute("ALTER TABLE media_playback_history ADD COLUMN drive_dir_id TEXT NOT NULL DEFAULT ''")
-            self._migrate_spider_plugin_history(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS playback_sync_state (
@@ -77,6 +78,9 @@ class LocalPlaybackHistoryRepository:
                 )
                 """
             )
+            self._migrate_spider_plugin_history(conn)
+            if "account_namespace" not in columns:
+                self._migrate_account_namespace(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS playback_sync_snapshot (
@@ -90,7 +94,75 @@ class LocalPlaybackHistoryRepository:
                 """
             )
 
+    def _migrate_account_namespace(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE media_playback_history_account (
+                account_namespace TEXT NOT NULL DEFAULT '',
+                source_kind TEXT NOT NULL,
+                source_key TEXT NOT NULL DEFAULT '',
+                source_name TEXT NOT NULL DEFAULT '',
+                vod_id TEXT NOT NULL,
+                vod_name TEXT NOT NULL DEFAULT '',
+                vod_pic TEXT NOT NULL DEFAULT '',
+                vod_remarks TEXT NOT NULL DEFAULT '',
+                episode INTEGER NOT NULL DEFAULT 0,
+                episode_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                duration INTEGER NOT NULL DEFAULT 0,
+                opening INTEGER NOT NULL DEFAULT 0,
+                ending INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                playlist_index INTEGER NOT NULL DEFAULT 0,
+                source_group_index INTEGER NOT NULL DEFAULT 0,
+                source_index INTEGER NOT NULL DEFAULT 0,
+                source_subgroup_index INTEGER NOT NULL DEFAULT 0,
+                source_subgroup_name TEXT NOT NULL DEFAULT '',
+                drive_dir_id TEXT NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_namespace, source_kind, source_key, vod_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO media_playback_history_account (
+                source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
+                episode, episode_url, position, duration, opening, ending, speed, playlist_index,
+                source_group_index, source_index, source_subgroup_index, source_subgroup_name,
+                drive_dir_id, updated_at
+            )
+            SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
+                   episode, episode_url, position, duration, opening, ending, speed, playlist_index,
+                   source_group_index, source_index, source_subgroup_index, source_subgroup_name,
+                   drive_dir_id, updated_at
+            FROM media_playback_history
+            """
+        )
+        conn.execute("DROP TABLE media_playback_history")
+        conn.execute("ALTER TABLE media_playback_history_account RENAME TO media_playback_history")
+
+    def set_active_account(self, namespace: str) -> None:
+        value = str(namespace or "").strip()
+        if not value:
+            raise ValueError("playback history account namespace is required")
+        with self._connect() as conn:
+            # 旧版本没有账户维度；首次登录时把遗留记录归属给当前账户。
+            conn.execute(
+                "UPDATE media_playback_history SET account_namespace = ? WHERE account_namespace = ''",
+                (value,),
+            )
+        self._account_namespace = value
+
     def _migrate_spider_plugin_history(self, conn: sqlite3.Connection) -> None:
+        marker = conn.execute(
+            """
+            SELECT 1 FROM playback_sync_state
+            WHERE namespace = '__migration__' AND state_key = 'spider_plugin_history'
+            """
+        ).fetchone()
+        if marker is not None:
+            return
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         if "spider_plugin_playback_history" not in tables or "spider_plugins" not in tables:
             return
@@ -138,6 +210,12 @@ class LocalPlaybackHistoryRepository:
                     int(row[12]),
                 ),
             )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO playback_sync_state(namespace, state_key, state_value)
+            VALUES ('__migration__', 'spider_plugin_history', '1')
+            """
+        )
 
     def get_history(self, source_kind: str, vod_id: str, source_key: str = "") -> HistoryRecord | None:
         with self._connect() as conn:
@@ -148,9 +226,9 @@ class LocalPlaybackHistoryRepository:
                        source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                        drive_dir_id, updated_at
                 FROM media_playback_history
-                WHERE source_kind = ? AND source_key = ? AND vod_id = ?
+                WHERE account_namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?
                 """,
-                (source_kind, source_key, vod_id),
+                (self._account_namespace, source_kind, source_key, vod_id),
             ).fetchone()
             if row is None and source_kind == "spider_plugin" and source_key:
                 row = conn.execute(
@@ -160,9 +238,9 @@ class LocalPlaybackHistoryRepository:
                            source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                            drive_dir_id, updated_at
                     FROM media_playback_history
-                    WHERE source_kind = ? AND source_key = '' AND vod_id = ?
+                    WHERE account_namespace = ? AND source_kind = ? AND source_key = '' AND vod_id = ?
                     """,
-                    (source_kind, vod_id),
+                    (self._account_namespace, source_kind, vod_id),
                 ).fetchone()
         if row is None:
             return None
@@ -206,13 +284,13 @@ class LocalPlaybackHistoryRepository:
             conn.execute(
                 """
                 INSERT INTO media_playback_history (
-                    source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
+                    account_namespace, source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
                     episode, episode_url, position, duration, opening, ending, speed, playlist_index,
                     source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                     drive_dir_id, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(source_kind, source_key, vod_id) DO UPDATE SET
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_namespace, source_kind, source_key, vod_id) DO UPDATE SET
                     source_name = excluded.source_name,
                     vod_name = excluded.vod_name,
                     vod_pic = excluded.vod_pic,
@@ -233,6 +311,7 @@ class LocalPlaybackHistoryRepository:
                     updated_at = excluded.updated_at
                 """,
                 (
+                    self._account_namespace,
                     source_kind,
                     source_key,
                     source_name,
@@ -266,7 +345,9 @@ class LocalPlaybackHistoryRepository:
                        source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                        drive_dir_id, updated_at
                 FROM media_playback_history
-                """
+                WHERE account_namespace = ?
+                """,
+                (self._account_namespace,),
             ).fetchall()
         return [
             HistoryRecord(
@@ -301,13 +382,13 @@ class LocalPlaybackHistoryRepository:
     def delete_history(self, source_kind: str, vod_id: str, source_key: str = "") -> None:
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM media_playback_history WHERE source_kind = ? AND source_key = ? AND vod_id = ?",
-                (source_kind, source_key, vod_id),
+                "DELETE FROM media_playback_history WHERE account_namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?",
+                (self._account_namespace, source_kind, source_key, vod_id),
             )
 
     def delete_site_history(self, source_kind: str, source_key: str, deleted_at: int) -> list[tuple[str, str, str]]:
-        clause = "source_kind = ? AND source_key = ?"
-        args: list[object] = [source_kind, source_key]
+        clause = "account_namespace = ? AND source_kind = ? AND source_key = ?"
+        args: list[object] = [self._account_namespace, source_kind, source_key]
         if deleted_at > 0:
             clause += " AND updated_at <= ?"
             args.append(deleted_at)
@@ -320,10 +401,10 @@ class LocalPlaybackHistoryRepository:
         return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
 
     def delete_all_histories(self, deleted_at: int) -> list[tuple[str, str, str]]:
-        clause = "1 = 1"
-        args: list[object] = []
+        clause = "account_namespace = ?"
+        args: list[object] = [self._account_namespace]
         if deleted_at > 0:
-            clause = "updated_at <= ?"
+            clause += " AND updated_at <= ?"
             args.append(deleted_at)
         with self._connect() as conn:
             rows = conn.execute(

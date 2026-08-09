@@ -47,7 +47,7 @@ class FakeRepository:
         self.deleted: list[tuple[str, str, str]] = []
         self.saved: list[tuple[str, str, str]] = []
         self.saved_payloads: list[dict] = []
-        self.cursor = 0
+        self.cursors: dict[str, int] = {}
         self.snapshots: dict[str, dict[tuple[str, str, str], int]] = {}
 
     def list_histories(self) -> list[HistoryRecord]:
@@ -101,12 +101,10 @@ class FakeRepository:
         return removed
 
     def get_sync_cursor(self, namespace: str) -> int:
-        del namespace
-        return self.cursor
+        return self.cursors.get(namespace, 0)
 
     def set_sync_cursor(self, namespace: str, cursor: int) -> None:
-        del namespace
-        self.cursor = cursor
+        self.cursors[namespace] = cursor
 
     def load_sync_snapshot(self, namespace: str) -> dict[tuple[str, str, str], int]:
         return dict(self.snapshots.get(namespace, {}))
@@ -136,6 +134,7 @@ class FakeApi:
         self.pushed: list[list[dict]] = []
         self.pull_source_kinds = ""
         self.pull_site_keys = ""
+        self.pull_since: list[int] = []
         self.playback_sync_identity = "test-user"
 
     def push_playback_events(self, records: list[dict]) -> None:
@@ -144,7 +143,7 @@ class FakeApi:
     def pull_playback_records(
         self, since: int, *, source_kinds: str = "", site_keys: str = ""
     ) -> dict:
-        del since
+        self.pull_since.append(since)
         self.pull_source_kinds = source_kinds
         self.pull_site_keys = site_keys
         return self.page
@@ -162,7 +161,7 @@ def test_push_versions_are_tracked_per_record() -> None:
     api = FakeApi()
     service = PlaybackHistorySyncService(api, FakeRepository([first, second]))
 
-    service._pushed_versions[("emby", "", "first")] = 200
+    service._pushed_versions[("site", "csp_Emby", "first")] = 200
     service._push()
 
     pushed_ids = [[payload["vodId"] for payload in batch] for batch in api.pushed]
@@ -194,7 +193,7 @@ def test_record_aging_out_of_latest_100_is_not_pushed_as_deletion() -> None:
 
     assert [event["vodId"] for event in api.pushed[-1]] == ["vod-101"]
     assert all(event.get("event") != "playback.deleted" for event in api.pushed[-1])
-    assert ("emby", "", "vod-1") not in service._pushed_versions
+    assert ("site", "csp_Emby", "vod-1") not in service._pushed_versions
 
 
 def test_selection_context_round_trips_through_sync_payloads() -> None:
@@ -255,6 +254,18 @@ def test_atv_source_alias_pushes_as_tvbox_site_identity() -> None:
     payload = api.pushed[0][0]
     assert payload["sourceKind"] == "site"
     assert payload["sourceKey"] == "csp_TgDouBan"
+
+
+def test_emby_pushes_and_pulls_with_tvbox_site_identity() -> None:
+    record = _record(key="emby-1", source_kind="emby", updated_at=100)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([record]))
+
+    service._push()
+
+    assert api.pushed[0][0]["sourceKind"] == "site"
+    assert api.pushed[0][0]["sourceKey"] == "csp_Emby"
+    assert "csp_Emby" in service._current_pull_source_keys()
 
 
 def test_tvbox_alist_site_pulls_as_atv_browse_source() -> None:
@@ -525,6 +536,36 @@ def test_spider_plugin_pull_maps_manifest_id_to_local_database_id() -> None:
 
     assert repository.saved == [("spider_plugin", "99", "vod-1")]
     assert ("spider_plugin", stable_id, "vod-1") in service._pushed_versions
+
+
+def test_installing_plugin_uses_fresh_filtered_pull_cursor() -> None:
+    stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
+    plugin_keys: list[str] = []
+    repository = FakeRepository([])
+    api = FakeApi({"nextSince": 10})
+    service = PlaybackHistorySyncService(
+        api,
+        repository,
+        playback_source_keys_loader=lambda: plugin_keys,
+        to_local_source_key=lambda kind, key: "99" if kind == "spider_plugin" else key,
+    )
+
+    service._pull()
+    plugin_keys.append(stable_id)
+    api.page = {
+        "items": [{
+            "sourceKind": "spider_plugin",
+            "sourceKey": stable_id,
+            "vodId": "vod-1",
+            "updatedAt": 100,
+        }],
+        "nextSince": 20,
+    }
+    service._pull()
+
+    assert api.pull_since == [0, 0]
+    assert stable_id in api.pull_site_keys.split(",")
+    assert repository.saved == [("spider_plugin", "99", "vod-1")]
 
 
 def test_pull_is_skipped_when_push_fails() -> None:

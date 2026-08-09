@@ -1960,6 +1960,11 @@ class AppCoordinator(QObject):
     def _show_main(self):
         self._close_api_client()
         self._api_client = self._build_api_client()
+        identity = str(
+            getattr(self._api_client, "playback_sync_identity", "") or ""
+        ).strip()
+        if self._playback_history_repository is not None and identity:
+            self._playback_history_repository.set_active_account(identity)
         metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
         metadata_scrape_service_factory = self._build_metadata_scrape_service_factory(self._api_client)
         danmaku_controller_factory = self._build_danmaku_controller_factory()
@@ -2212,6 +2217,7 @@ class AppCoordinator(QObject):
                 installation_id=app_identity.installation_id,
                 to_sync_source_key=self._to_playback_sync_source_key,
                 to_local_source_key=self._to_local_playback_source_key,
+                playback_source_keys_loader=self._playback_sync_source_keys,
                 parent=self,
             )
         player_controller = PlayerController(self._api_client)
@@ -2342,6 +2348,15 @@ class AppCoordinator(QObject):
             return None
         plugin = self._plugin_repository.find_plugin_by_manifest_id(source_key)
         return str(plugin.id) if plugin is not None else None
+
+    def _playback_sync_source_keys(self) -> list[str]:
+        if self._plugin_repository is None:
+            return []
+        return [
+            plugin.manifest_id.strip()
+            for plugin in self._plugin_repository.list_plugins()
+            if plugin.enabled and plugin.manifest_id.strip()
+        ]
 
     def _start_live_background_refresh(self, live_source_manager, live_epg_service) -> None:
         def refresh_epg() -> None:

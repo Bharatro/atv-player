@@ -1,6 +1,7 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 from collections.abc import Callable
@@ -41,6 +42,7 @@ TVBOX_SITE_TO_ATV_KIND = {
     "csp_AList": "browse",
     "csp_BiliBili": "bilibili",
     "csp_FeiNiu": "feiniu",
+    "csp_Emby": "emby",
     "csp_Jellyfin": "jellyfin",
 }
 ATV_KIND_TO_TVBOX_SITE = {
@@ -48,12 +50,14 @@ ATV_KIND_TO_TVBOX_SITE = {
     "telegram_channel": "csp_TgChannel",
     "bilibili": "csp_BiliBili",
     "feiniu": "csp_FeiNiu",
+    "emby": "csp_Emby",
     "jellyfin": "csp_Jellyfin",
 }
 BROWSE_SITE_KEYS = frozenset({"csp_TgSearch", "csp_TgWeb", "csp_AList"})
 SYNC_PULL_SOURCE_KINDS = tuple(sorted(SYNC_SOURCE_KINDS | {"site"}))
 SYNC_PULL_SITE_KEYS = tuple(sorted(TVBOX_SITE_TO_ATV_KIND))
 SourceKeyResolver = Callable[[str, str], str | None]
+SourceKeysLoader = Callable[[], list[str]]
 
 
 class PlaybackHistorySyncService(QObject):
@@ -65,6 +69,7 @@ class PlaybackHistorySyncService(QObject):
         installation_id: str = "",
         to_sync_source_key: SourceKeyResolver | None = None,
         to_local_source_key: SourceKeyResolver | None = None,
+        playback_source_keys_loader: SourceKeysLoader | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -75,13 +80,16 @@ class PlaybackHistorySyncService(QObject):
         self._namespace = f"{identity}:{SYNC_NAMESPACE_VERSION}"
         self._sync_key_resolver = to_sync_source_key or self._default_source_key_resolver
         self._local_key_resolver = to_local_source_key or self._default_source_key_resolver
+        self._playback_source_keys_loader = playback_source_keys_loader or (lambda: [])
         self._unmapped_plugins: set[tuple[str, str]] = set()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.sync)
         load_snapshot = getattr(self._repo, "load_sync_snapshot", lambda _namespace: {})
         load_cursor = getattr(self._repo, "get_sync_cursor", lambda _namespace: 0)
         self._pushed_versions: dict[tuple[str, str, str], int] = load_snapshot(self._namespace)
-        self._pull_cursor = load_cursor(self._namespace)
+        self._pull_source_keys = self._current_pull_source_keys()
+        self._cursor_namespace = self._build_cursor_namespace(self._pull_source_keys)
+        self._pull_cursor = load_cursor(self._cursor_namespace)
         self._sync_lock = threading.Lock()
         self._sync_in_progress = False
         self._started = False
@@ -264,10 +272,16 @@ class PlaybackHistorySyncService(QObject):
     # ── PULL:服务端 → 本地 Tier-B(LWW by updated_at) ──────────────────────
 
     def _pull(self) -> None:
+        pull_source_keys = self._current_pull_source_keys()
+        cursor_namespace = self._build_cursor_namespace(pull_source_keys)
+        if cursor_namespace != self._cursor_namespace:
+            self._pull_source_keys = pull_source_keys
+            self._cursor_namespace = cursor_namespace
+            self._pull_cursor = self._repo.get_sync_cursor(cursor_namespace)
         page = self._api.pull_playback_records(
             self._pull_cursor,
             source_kinds=",".join(SYNC_PULL_SOURCE_KINDS),
-            site_keys=",".join(SYNC_PULL_SITE_KEYS),
+            site_keys=",".join(pull_source_keys),
         )
         deleted = page.get("deleted") or []
         items = page.get("items") or []
@@ -387,9 +401,21 @@ class PlaybackHistorySyncService(QObject):
         if next_since is not None:
             try:
                 self._pull_cursor = int(next_since)
-                self._repo.set_sync_cursor(self._namespace, self._pull_cursor)
+                self._repo.set_sync_cursor(self._cursor_namespace, self._pull_cursor)
             except (TypeError, ValueError):
                 pass
+
+    def _current_pull_source_keys(self) -> tuple[str, ...]:
+        plugin_keys = {
+            str(value).strip()
+            for value in self._playback_source_keys_loader()
+            if str(value).strip()
+        }
+        return tuple(sorted(set(SYNC_PULL_SITE_KEYS) | plugin_keys))
+
+    def _build_cursor_namespace(self, source_keys: tuple[str, ...]) -> str:
+        digest = hashlib.sha256("\n".join(source_keys).encode()).hexdigest()[:16]
+        return f"{self._namespace}:pull:{digest}"
 
     @staticmethod
     def _item_identity(item: Any) -> tuple[str, str, str] | None:

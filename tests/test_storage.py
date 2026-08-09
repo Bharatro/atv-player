@@ -450,6 +450,23 @@ def test_local_playback_sync_state_survives_repository_restart(tmp_path: Path) -
     assert reloaded.load_sync_snapshot("account-b") == {}
 
 
+def test_local_playback_history_is_partitioned_by_account(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.set_active_account("account-a")
+    repo.save_history("emby", "movie", {"vodName": "A", "position": 100, "createTime": 1})
+
+    repo.set_active_account("account-b")
+    assert repo.get_history("emby", "movie") is None
+    repo.save_history("emby", "movie", {"vodName": "B", "position": 200, "createTime": 2})
+
+    repo.set_active_account("account-a")
+    assert repo.get_history("emby", "movie").position == 100
+    repo.set_active_account("account-b")
+    assert repo.get_history("emby", "movie").position == 200
+
+
 def test_local_playback_scope_delete_preserves_newer_rows(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 
