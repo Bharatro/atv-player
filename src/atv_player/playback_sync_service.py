@@ -69,6 +69,13 @@ class PlaybackHistorySyncService(QObject):
         self._started = True
         QTimer.singleShot(INITIAL_DELAY_MS, self.sync)
         self._timer.start(PERIOD_MS)
+        logger.info(
+            "playback sync started: initial_delay_ms=%d period_ms=%d cursor=%s snapshot=%d",
+            INITIAL_DELAY_MS,
+            PERIOD_MS,
+            self._pull_cursor,
+            len(self._pushed_versions),
+        )
 
     def stop(self) -> None:
         self._started = False
@@ -114,7 +121,7 @@ class PlaybackHistorySyncService(QObject):
     # ── PUSH:本地 Tier-B → 服务端 ──────────────────────────────────────────
 
     def _push(self) -> None:
-        records = sorted(
+        all_records = sorted(
             [
                 record
                 for record in self._repo.list_histories()
@@ -122,7 +129,15 @@ class PlaybackHistorySyncService(QObject):
             ],
             key=lambda record: int(record.create_time or 0),
             reverse=True,
-        )[:SYNC_LIMIT]
+        )
+        records = all_records[:SYNC_LIMIT]
+        present_identities: set[tuple[str, str, str]] = set()
+        for record in all_records:
+            record_key = self._resolved_identity(
+                record.source_kind, record.source_key, record.key, self._sync_key_resolver
+            )
+            if record_key is not None:
+                present_identities.add(record_key)
         current_versions: dict[tuple[str, str, str], int] = {}
         changed: list[tuple[tuple[str, str, str], int, dict[str, Any]]] = []
         for record in records:
@@ -147,11 +162,27 @@ class PlaybackHistorySyncService(QObject):
                 "vodId": vod_id,
                 "deletedAt": deleted_at,
             }
-            for source_kind, source_key, vod_id in self._pushed_versions.keys() - current_versions.keys()
+            for source_kind, source_key, vod_id in self._pushed_versions.keys() - present_identities
         ]
+        logger.info(
+            "playback sync scan: local=%d latest=%d snapshot=%d updates=%d deletes=%d",
+            len(all_records),
+            len(records),
+            len(self._pushed_versions),
+            len(changed),
+            len(deleted),
+        )
         if not changed and not deleted:
+            if current_versions != self._pushed_versions:
+                self._repo.replace_sync_snapshot(self._namespace, current_versions)
+                self._pushed_versions = current_versions
             return
         self._api.push_playback_events([payload for _, _, payload in changed] + deleted)
+        logger.info(
+            "playback sync push succeeded: updates=%d deletes=%d",
+            len(changed),
+            len(deleted),
+        )
         self._repo.replace_sync_snapshot(self._namespace, current_versions)
         self._pushed_versions = current_versions
 
@@ -188,6 +219,13 @@ class PlaybackHistorySyncService(QObject):
         page = self._api.pull_playback_records(self._pull_cursor)
         deleted = page.get("deleted") or []
         items = page.get("items") or []
+        logger.info(
+            "playback sync pull: since=%s items=%d deleted=%d next=%s",
+            self._pull_cursor,
+            len(items),
+            len(deleted),
+            page.get("nextSince"),
+        )
 
         # Process tombstones first: an item in the same page may be a newer
         # re-created record and should therefore be allowed to save afterwards.

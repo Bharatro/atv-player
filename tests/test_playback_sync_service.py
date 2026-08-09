@@ -174,6 +174,21 @@ def test_push_only_uploads_latest_100_records() -> None:
     assert "vod-1" not in pushed_ids
 
 
+def test_record_aging_out_of_latest_100_is_not_pushed_as_deletion() -> None:
+    records = [_record(key=f"vod-{index}", updated_at=index) for index in range(1, 101)]
+    repository = FakeRepository(records)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, repository)
+    service._push()
+
+    repository.records[("emby", "", "vod-101")] = _record(key="vod-101", updated_at=101)
+    service._push()
+
+    assert [event["vodId"] for event in api.pushed[-1]] == ["vod-101"]
+    assert all(event.get("event") != "playback.deleted" for event in api.pushed[-1])
+    assert ("emby", "", "vod-1") not in service._pushed_versions
+
+
 def test_selection_context_round_trips_through_sync_payloads() -> None:
     record = _record(
         key="173",
