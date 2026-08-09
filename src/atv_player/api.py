@@ -32,8 +32,12 @@ class ApiClient:
         transport: httpx.BaseTransport | None = None,
         proxy_decider: ProxyDecider | None = None,
         client_factory: Callable[..., httpx.Client] = httpx.Client,
+        username: str = "",
     ) -> None:
         self._base_url = base_url
+        # 令牌随每次登录轮换,而用户名稳定。身份按用户名派生,使同步游标/快照跨会话保留,
+        # 避免每次登录全量重拉重推;用户名为空时退化回令牌派生(旧行为)。
+        self._username = username or ""
         self._playback_sync_identity = self._build_playback_sync_identity(token)
         headers = {"Authorization": token} if token else {}
         headers.setdefault("User-Agent", platform.platform() + " ATV-Player")
@@ -59,7 +63,8 @@ class ApiClient:
         return self._playback_sync_identity
 
     def _build_playback_sync_identity(self, token: str) -> str:
-        value = f"{self._base_url}\n{token}".encode()
+        stable = self._username or token
+        value = f"{self._base_url}\n{stable}".encode()
         return hashlib.sha256(value).hexdigest()[:32]
 
     def set_vod_token(self, vod_token: str) -> None:

@@ -673,6 +673,7 @@ class AppCoordinator(QObject):
                 token=config.token,
                 vod_token=config.vod_token,
                 proxy_decider=self._build_proxy_decider(),
+                username=config.username,
             )
         except TypeError as exc:
             if "proxy_decider" not in str(exc):
@@ -2318,7 +2319,8 @@ class AppCoordinator(QObject):
     def _stop_playback_sync_service(self) -> None:
         if self._playback_sync_service is None:
             return
-        self._playback_sync_service.stop()
+        # 关闭/登出/重建前 flush 最后一次 PUSH,避免 <30s tick 窗口内的进度丢失。
+        self._playback_sync_service.flush()
         self._playback_sync_service.deleteLater()
         self._playback_sync_service = None
 

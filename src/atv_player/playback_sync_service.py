@@ -85,6 +85,7 @@ class PlaybackHistorySyncService(QObject):
         self._sync_lock = threading.Lock()
         self._sync_in_progress = False
         self._started = False
+        self._worker = None
         self._last_pull_at = 0.0
 
     def start(self) -> None:
@@ -104,6 +105,22 @@ class PlaybackHistorySyncService(QObject):
         self._started = False
         self._timer.stop()
 
+    def flush(self) -> None:
+        """关闭/登出前同步执行最后一次 PUSH,把未到 tick 的进度上报到服务端。
+
+        Qt 进程退出会强杀守护线程,故最终 PUSH 必须在调用线程内联执行而非再交给 worker;
+        先 join 正在运行的 worker 以避免并发双推。PULL 留待下次启动续上。
+        """
+        self._started = False
+        self._timer.stop()
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=10.0)
+        try:
+            self._push()
+        except Exception as exc:  # noqa: BLE001 - 关闭路径不能抛
+            logger.warning("playback sync final flush failed: %s", exc)
+
     def sync(self) -> None:
         """Schedule one sync without blocking the Qt event loop.
 
@@ -118,11 +135,12 @@ class PlaybackHistorySyncService(QObject):
             if self._sync_in_progress:
                 return
             self._sync_in_progress = True
-        threading.Thread(
+        self._worker = threading.Thread(
             target=self._run_sync,
             name="playback-history-sync",
             daemon=True,
-        ).start()
+        )
+        self._worker.start()
 
     def _run_sync(self) -> None:
         try:
@@ -273,6 +291,11 @@ class PlaybackHistorySyncService(QObject):
                 or tombstone.get("timestamp")
                 or 0
             )
+            if deleted_at <= 0:
+                # 服务端协议保证 deletedAt 非空(NOT NULL);缺失时保守跳过,
+                # 绝不退化为无条件全量删除(scope=all 会清空整库)。
+                logger.warning("playback sync: skip tombstone without deletedAt scope=%s", scope)
+                continue
             removed: list[tuple[str, str, str]] = []
             if scope == "all":
                 removed = self._repo.delete_all_histories(deleted_at)

@@ -313,7 +313,12 @@ def test_pull_applies_tombstones_before_advancing_cursor() -> None:
     api = FakeApi(
         {
             "deleted": [
-                {"sourceKind": "emby", "sourceKey": "server", "vodId": "removed"}
+                {
+                    "sourceKind": "emby",
+                    "sourceKey": "server",
+                    "vodId": "removed",
+                    "deletedAt": 100,
+                }
             ],
             "items": [],
             "nextSince": 42,
@@ -324,6 +329,26 @@ def test_pull_applies_tombstones_before_advancing_cursor() -> None:
     service._pull()
 
     assert repository.deleted == [("emby", "server", "removed")]
+    assert service._pull_cursor == 42
+
+
+def test_tombstone_without_deleted_at_is_skipped_not_mass_deleted() -> None:
+    kept = _record(key="kept", source_key="server", updated_at=10)
+    repository = FakeRepository([kept])
+    api = FakeApi(
+        {
+            # scope=all 但缺失 deletedAt:曾导致无条件清空整库。现在必须保守跳过。
+            "deleted": [{"scope": "all"}],
+            "items": [],
+            "nextSince": 42,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.get_history("emby", "kept", "server") is not None
+    assert repository.deleted == []
     assert service._pull_cursor == 42
 
 
