@@ -571,6 +571,7 @@ class PlayerController:
             "episode": current_index,
             "episodeUrl": self._history_episode_url(current_item, session),
             "position": position_ms,
+            "duration": duration_seconds * 1000,
             "opening": opening_seconds * 1000,
             "ending": ending_seconds * 1000,
             "speed": speed,

@@ -755,10 +755,12 @@ def test_player_controller_reports_progress_to_plugin_local_saver_without_backen
         opening_seconds=5,
         ending_seconds=10,
         paused=False,
+        duration_seconds=120,
     )
 
     assert len(saved_payloads) == 1
     assert saved_payloads[0]["key"] == "plugin-1"
+    assert saved_payloads[0]["duration"] == 120000
     assert api.saved_payloads == []
 
 

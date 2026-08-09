@@ -287,6 +287,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
             "episode": 1,
             "episodeUrl": "https://b2/2.m3u8",
             "position": 90000,
+            "duration": 120000,
             "opening": 5000,
             "ending": 10000,
             "speed": 1.25,
@@ -305,6 +306,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
     history = repo.get_history("spider_plugin", "detail-1", source_key="7")
 
     assert history is not None
+    assert history.duration == 120000
     assert history.playlist_index == 3
     assert history.source_group_index == 1
     assert history.source_index == 1
@@ -428,6 +430,7 @@ def test_local_playback_history_repository_reads_legacy_spider_plugin_rows_witho
     assert history.key == "detail-1"
     assert history.source_key == ""
     assert history.episode == 1
+    assert history.duration == 0
 
 
 def test_local_playback_sync_state_survives_repository_restart(tmp_path: Path) -> None:

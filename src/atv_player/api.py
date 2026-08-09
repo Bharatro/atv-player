@@ -431,6 +431,7 @@ class ApiClient:
             episode=int(data.get("episode", 0)),
             episode_url=str(data.get("episodeUrl") or ""),
             position=int(data.get("position", 0)),
+            duration=int(data.get("duration", 0)),
             opening=int(data.get("opening", 0)),
             ending=int(data.get("ending", 0)),
             speed=float(data.get("speed", 1.0)),

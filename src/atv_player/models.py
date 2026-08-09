@@ -402,6 +402,7 @@ class HistoryRecord:
     ending: int
     speed: float
     create_time: int
+    duration: int = 0
     playlist_index: int = 0
     source_group_index: int = 0
     source_index: int = 0

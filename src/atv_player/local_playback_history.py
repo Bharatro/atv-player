@@ -31,6 +31,7 @@ class LocalPlaybackHistoryRepository:
                     episode INTEGER NOT NULL DEFAULT 0,
                     episode_url TEXT NOT NULL DEFAULT '',
                     position INTEGER NOT NULL DEFAULT 0,
+                    duration INTEGER NOT NULL DEFAULT 0,
                     opening INTEGER NOT NULL DEFAULT 0,
                     ending INTEGER NOT NULL DEFAULT 0,
                     speed REAL NOT NULL DEFAULT 1.0,
@@ -51,6 +52,8 @@ class LocalPlaybackHistoryRepository:
             }
             if "source_group_index" not in columns:
                 conn.execute("ALTER TABLE media_playback_history ADD COLUMN source_group_index INTEGER NOT NULL DEFAULT 0")
+            if "duration" not in columns:
+                conn.execute("ALTER TABLE media_playback_history ADD COLUMN duration INTEGER NOT NULL DEFAULT 0")
             if "source_index" not in columns:
                 conn.execute("ALTER TABLE media_playback_history ADD COLUMN source_index INTEGER NOT NULL DEFAULT 0")
             if "source_subgroup_index" not in columns:
@@ -141,7 +144,7 @@ class LocalPlaybackHistoryRepository:
             row = conn.execute(
                 """
                 SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
-                       episode, episode_url, position, opening, ending, speed, playlist_index,
+                       episode, episode_url, position, duration, opening, ending, speed, playlist_index,
                        source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                        drive_dir_id, updated_at
                 FROM media_playback_history
@@ -153,7 +156,7 @@ class LocalPlaybackHistoryRepository:
                 row = conn.execute(
                     """
                     SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
-                           episode, episode_url, position, opening, ending, speed, playlist_index,
+                           episode, episode_url, position, duration, opening, ending, speed, playlist_index,
                            source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                            drive_dir_id, updated_at
                     FROM media_playback_history
@@ -172,16 +175,17 @@ class LocalPlaybackHistoryRepository:
             episode=int(row[7]),
             episode_url=row[8],
             position=int(row[9]),
-            opening=int(row[10]),
-            ending=int(row[11]),
-            speed=float(row[12]),
-            playlist_index=int(row[13]),
-            source_group_index=int(row[14]),
-            source_index=int(row[15]),
-            source_subgroup_index=int(row[16]),
-            source_subgroup_name=str(row[17]),
-            drive_dir_id=str(row[18]),
-            create_time=int(row[19]),
+            duration=int(row[10]),
+            opening=int(row[11]),
+            ending=int(row[12]),
+            speed=float(row[13]),
+            playlist_index=int(row[14]),
+            source_group_index=int(row[15]),
+            source_index=int(row[16]),
+            source_subgroup_index=int(row[17]),
+            source_subgroup_name=str(row[18]),
+            drive_dir_id=str(row[19]),
+            create_time=int(row[20]),
             source_kind=str(row[0]),
             source_key=str(row[1]),
             source_name=str(row[2]),
@@ -203,11 +207,11 @@ class LocalPlaybackHistoryRepository:
                 """
                 INSERT INTO media_playback_history (
                     source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
-                    episode, episode_url, position, opening, ending, speed, playlist_index,
+                    episode, episode_url, position, duration, opening, ending, speed, playlist_index,
                     source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                     drive_dir_id, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_kind, source_key, vod_id) DO UPDATE SET
                     source_name = excluded.source_name,
                     vod_name = excluded.vod_name,
@@ -216,6 +220,7 @@ class LocalPlaybackHistoryRepository:
                     episode = excluded.episode,
                     episode_url = excluded.episode_url,
                     position = excluded.position,
+                    duration = excluded.duration,
                     opening = excluded.opening,
                     ending = excluded.ending,
                     speed = excluded.speed,
@@ -238,6 +243,7 @@ class LocalPlaybackHistoryRepository:
                     int(payload.get("episode", 0)),
                     str(payload.get("episodeUrl", "")),
                     int(payload.get("position", 0)),
+                    int(payload.get("duration", 0)),
                     int(payload.get("opening", 0)),
                     int(payload.get("ending", 0)),
                     float(payload.get("speed", 1.0)),
@@ -256,7 +262,7 @@ class LocalPlaybackHistoryRepository:
             rows = conn.execute(
                 """
                 SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
-                       episode, episode_url, position, opening, ending, speed, playlist_index,
+                       episode, episode_url, position, duration, opening, ending, speed, playlist_index,
                        source_group_index, source_index, source_subgroup_index, source_subgroup_name,
                        drive_dir_id, updated_at
                 FROM media_playback_history
@@ -272,16 +278,17 @@ class LocalPlaybackHistoryRepository:
                 episode=int(row[7]),
                 episode_url=row[8],
                 position=int(row[9]),
-                opening=int(row[10]),
-                ending=int(row[11]),
-                speed=float(row[12]),
-                playlist_index=int(row[13]),
-                source_group_index=int(row[14]),
-                source_index=int(row[15]),
-                source_subgroup_index=int(row[16]),
-                source_subgroup_name=str(row[17]),
-                drive_dir_id=str(row[18]),
-                create_time=int(row[19]),
+                duration=int(row[10]),
+                opening=int(row[11]),
+                ending=int(row[12]),
+                speed=float(row[13]),
+                playlist_index=int(row[14]),
+                source_group_index=int(row[15]),
+                source_index=int(row[16]),
+                source_subgroup_index=int(row[17]),
+                source_subgroup_name=str(row[18]),
+                drive_dir_id=str(row[19]),
+                create_time=int(row[20]),
                 source_kind=str(row[0]),
                 source_key=str(row[1]),
                 source_name=str(row[2]),

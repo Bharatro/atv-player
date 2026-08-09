@@ -204,6 +204,7 @@ def test_selection_context_round_trips_through_sync_payloads() -> None:
     record.source_subgroup_index = 6
     record.source_subgroup_name = "07外海风云"
     record.drive_dir_id = "local-only-dir"
+    record.duration = 7_200_000
     stable_id = "02544b320a6d45de997bc0bd3975d0c060b8"
     api = FakeApi()
     service = PlaybackHistorySyncService(
@@ -217,6 +218,7 @@ def test_selection_context_round_trips_through_sync_payloads() -> None:
     payload = api.pushed[0][0]
     assert payload["vodId"] == "173"
     assert payload["episodeUrl"] == "1@185535@6@1"
+    assert payload["durationMs"] == 7_200_000
     assert payload["playlistIndex"] == 0
     assert payload["sourceSubgroupIndex"] == 6
     assert payload["sourceSubgroupName"] == "07外海风云"
@@ -230,6 +232,7 @@ def test_selection_context_round_trips_through_sync_payloads() -> None:
     service._pull()
 
     assert repository.saved_payloads[0]["episodeUrl"] == "1@185535@6@1"
+    assert repository.saved_payloads[0]["duration"] == 7_200_000
     assert repository.saved_payloads[0]["sourceSubgroupIndex"] == 6
     assert repository.saved_payloads[0]["sourceSubgroupName"] == "07外海风云"
 
