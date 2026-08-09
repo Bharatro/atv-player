@@ -218,6 +218,44 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.clicked_index == 0
 
 
+def test_browse_request_uses_alist_sync_history_callbacks() -> None:
+    loaded: list[str] = []
+    saved: list[tuple[str, dict]] = []
+    controller = BrowseController(
+        FakeApiClient(),
+        playback_history_loader=lambda _source_key, vod_id: loaded.append(vod_id),
+        playback_history_saver=lambda _source_key, vod_id, payload: saved.append((vod_id, payload)),
+    )
+
+    request = controller.build_request_from_detail("detail-1")
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 1000})
+
+    assert request.use_local_history is False
+    assert loaded == ["detail-1"]
+    assert saved == [("detail-1", {"position": 1000})]
+
+
+def test_browse_history_keeps_concrete_tvbox_source_key() -> None:
+    loaded: list[tuple[str, str]] = []
+    saved: list[tuple[str, str, dict]] = []
+    controller = BrowseController(
+        FakeApiClient(),
+        playback_history_loader=lambda source_key, vod_id: loaded.append((source_key, vod_id)),
+        playback_history_saver=lambda source_key, vod_id, payload: saved.append(
+            (source_key, vod_id, payload)
+        ),
+    )
+
+    request = controller.build_request_from_detail("detail-1", source_key="csp_TgWeb")
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 1000})
+
+    assert request.source_key == "csp_TgWeb"
+    assert loaded == [("csp_TgWeb", "detail-1")]
+    assert saved == [("csp_TgWeb", "detail-1", {"position": 1000})]
+
+
 def test_build_request_from_detail_preserves_original_filename_separately_from_rewritten_title() -> None:
     api = FakeApiClient()
     api.detail_payload = {

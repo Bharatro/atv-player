@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from time import time
+from time import monotonic
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
@@ -12,13 +12,14 @@ from PySide6.QtCore import QObject, QTimer
 logger = logging.getLogger(__name__)
 
 # 多端播放记录同步:周期性 PUSH 本地 Tier-B 记录 + PULL 服务端变更。
-# Tier-A(browse/douban/pansou)已由 /api/history 同步,本服务只覆盖 Tier-B
-# (spider_plugin/telegram/bilibili/youtube/emby/jellyfin/feiniu/direct_parse)。
+# 本服务覆盖本地播放历史；TvBox 站点 key 与 atv-player source_kind 在边界处互转。
 # 鉴权复用 ApiClient 的 session 令牌(Authorization),服务端 resolveUid 解析为 uid。
 INITIAL_DELAY_MS = 30_000
 PERIOD_MS = 30_000
+PULL_PERIOD_MS = 5 * 60_000
 SYNC_SOURCE_KINDS = frozenset(
     {
+        "browse",
         "telegram",
         "telegram_channel",
         "bilibili",
@@ -30,8 +31,28 @@ SYNC_SOURCE_KINDS = frozenset(
         "spider_plugin",
     }
 )
-SYNC_NAMESPACE_VERSION = "v4-playurl-selection-context"
+SYNC_NAMESPACE_VERSION = "v5-source-aliases"
 SYNC_LIMIT = 100
+TVBOX_SITE_TO_ATV_KIND = {
+    "csp_TgDouBan": "telegram",
+    "csp_TgChannel": "telegram_channel",
+    "csp_TgSearch": "browse",
+    "csp_TgWeb": "browse",
+    "csp_AList": "browse",
+    "csp_BiliBili": "bilibili",
+    "csp_FeiNiu": "feiniu",
+    "csp_Jellyfin": "jellyfin",
+}
+ATV_KIND_TO_TVBOX_SITE = {
+    "telegram": "csp_TgDouBan",
+    "telegram_channel": "csp_TgChannel",
+    "bilibili": "csp_BiliBili",
+    "feiniu": "csp_FeiNiu",
+    "jellyfin": "csp_Jellyfin",
+}
+BROWSE_SITE_KEYS = frozenset({"csp_TgSearch", "csp_TgWeb", "csp_AList"})
+SYNC_PULL_SOURCE_KINDS = tuple(sorted(SYNC_SOURCE_KINDS | {"site"}))
+SYNC_PULL_SITE_KEYS = tuple(sorted(TVBOX_SITE_TO_ATV_KIND))
 SourceKeyResolver = Callable[[str, str], str | None]
 
 
@@ -64,15 +85,17 @@ class PlaybackHistorySyncService(QObject):
         self._sync_lock = threading.Lock()
         self._sync_in_progress = False
         self._started = False
+        self._last_pull_at = 0.0
 
     def start(self) -> None:
         self._started = True
         QTimer.singleShot(INITIAL_DELAY_MS, self.sync)
         self._timer.start(PERIOD_MS)
         logger.info(
-            "playback sync started: initial_delay_ms=%d period_ms=%d cursor=%s snapshot=%d",
+            "playback sync started: initial_delay_ms=%d push_period_ms=%d pull_period_ms=%d cursor=%s snapshot=%d",
             INITIAL_DELAY_MS,
             PERIOD_MS,
+            PULL_PERIOD_MS,
             self._pull_cursor,
             len(self._pushed_versions),
         )
@@ -109,9 +132,13 @@ class PlaybackHistorySyncService(QObject):
             except Exception as exc:  # noqa: BLE001 - 后台同步不能让异常冒泡到 Qt
                 push_succeeded = False
                 logger.warning("playback sync push failed: %s", exc)
-            if self._started and push_succeeded:
+            pull_due = self._last_pull_at <= 0 or (
+                monotonic() - self._last_pull_at
+            ) * 1000 >= PULL_PERIOD_MS
+            if self._started and push_succeeded and pull_due:
                 try:
                     self._pull()
+                    self._last_pull_at = monotonic()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("playback sync pull failed: %s", exc)
         finally:
@@ -133,7 +160,7 @@ class PlaybackHistorySyncService(QObject):
         records = all_records[:SYNC_LIMIT]
         present_identities: set[tuple[str, str, str]] = set()
         for record in all_records:
-            record_key = self._resolved_identity(
+            record_key = self._resolved_sync_identity(
                 record.source_kind, record.source_key, record.key, self._sync_key_resolver
             )
             if record_key is not None:
@@ -141,18 +168,17 @@ class PlaybackHistorySyncService(QObject):
         current_versions: dict[tuple[str, str, str], int] = {}
         changed: list[tuple[tuple[str, str, str], int, dict[str, Any]]] = []
         for record in records:
-            record_key = self._resolved_identity(
+            record_key = self._resolved_sync_identity(
                 record.source_kind, record.source_key, record.key, self._sync_key_resolver
             )
             if record_key is None:
                 self._warn_unmapped_plugin("push", record.source_key)
                 continue
-            payload = self._to_payload(record, record_key[1])
+            payload = self._to_payload(record, record_key[0], record_key[1])
             updated_at = int(payload.get("updatedAt", 0) or 0)
             current_versions[record_key] = updated_at
             if updated_at > self._pushed_versions.get(record_key, -1):
                 changed.append((record_key, updated_at, payload))
-        deleted_at = int(time() * 1000)
         deleted = [
             {
                 "event": "playback.deleted",
@@ -160,9 +186,12 @@ class PlaybackHistorySyncService(QObject):
                 "sourceKind": source_kind,
                 "sourceKey": source_key,
                 "vodId": vod_id,
-                "deletedAt": deleted_at,
+                # 本地库没有删除时间；使用最后一次已知版本可删除同版本服务端记录，
+                # 又不会让一次延迟扫描覆盖其他设备后来写入的进度。
+                "deletedAt": max(1, int(updated_at)),
             }
-            for source_kind, source_key, vod_id in self._pushed_versions.keys() - present_identities
+            for (source_kind, source_key, vod_id), updated_at in self._pushed_versions.items()
+            if (source_kind, source_key, vod_id) not in present_identities
         ]
         logger.info(
             "playback sync scan: local=%d latest=%d snapshot=%d updates=%d deletes=%d",
@@ -190,9 +219,9 @@ class PlaybackHistorySyncService(QObject):
     def _record_key(source_kind: str, source_key: str, vod_id: str) -> tuple[str, str, str]:
         return source_kind, source_key, vod_id
 
-    def _to_payload(self, record, sync_source_key: str) -> dict[str, Any]:
+    def _to_payload(self, record, sync_source_kind: str, sync_source_key: str) -> dict[str, Any]:
         return {
-            "sourceKind": record.source_kind,
+            "sourceKind": sync_source_kind,
             "sourceKey": sync_source_key,
             "sourceName": record.source_name,
             "vodId": record.key,
@@ -217,7 +246,11 @@ class PlaybackHistorySyncService(QObject):
     # ── PULL:服务端 → 本地 Tier-B(LWW by updated_at) ──────────────────────
 
     def _pull(self) -> None:
-        page = self._api.pull_playback_records(self._pull_cursor)
+        page = self._api.pull_playback_records(
+            self._pull_cursor,
+            source_kinds=",".join(SYNC_PULL_SOURCE_KINDS),
+            site_keys=",".join(SYNC_PULL_SITE_KEYS),
+        )
         deleted = page.get("deleted") or []
         items = page.get("items") or []
         logger.info(
@@ -249,30 +282,31 @@ class PlaybackHistorySyncService(QObject):
                     if deleted_at <= 0 or updated_at <= deleted_at
                 )
             elif scope == "site":
-                source_kind = str(tombstone.get("sourceKind") or tombstone.get("source_kind") or "site")
+                sync_source_kind = str(tombstone.get("sourceKind") or tombstone.get("source_kind") or "site")
                 sync_source_key = str(tombstone.get("sourceKey") or tombstone.get("source_key") or "")
+                source_kind, raw_local_source_key = self._local_source(sync_source_kind, sync_source_key)
                 local_source_key = self._resolve_source_key(
-                    source_kind, sync_source_key, self._local_key_resolver
+                    source_kind, raw_local_source_key, self._local_key_resolver
                 )
                 if source_kind in SYNC_SOURCE_KINDS and local_source_key is not None:
                     removed = self._repo.delete_site_history(source_kind, local_source_key, deleted_at)
                     removed = [
-                        self._record_key(source_kind, sync_source_key, identity[2])
+                        self._record_key(sync_source_kind, sync_source_key, identity[2])
                         for identity in removed
                     ]
                     removed.extend(
                         identity
                         for identity, updated_at in self._pushed_versions.items()
-                        if identity[0] == source_kind
+                        if identity[0] == sync_source_kind
                         and identity[1] == sync_source_key
                         and (deleted_at <= 0 or updated_at <= deleted_at)
                     )
             else:
                 sync_identity = self._item_identity(tombstone)
-                if sync_identity is None or sync_identity[0] not in SYNC_SOURCE_KINDS:
+                if sync_identity is None:
                     continue
-                local_identity = self._resolved_identity(*sync_identity, self._local_key_resolver)
-                if local_identity is None:
+                local_identity = self._resolved_local_identity(*sync_identity, self._local_key_resolver)
+                if local_identity is None or local_identity[0] not in SYNC_SOURCE_KINDS:
                     self._warn_unmapped_plugin("pull delete", sync_identity[1])
                     continue
                 source_kind, source_key, vod_id = local_identity
@@ -287,10 +321,10 @@ class PlaybackHistorySyncService(QObject):
 
         for item in items:
             sync_identity = self._item_identity(item)
-            if sync_identity is None or sync_identity[0] not in SYNC_SOURCE_KINDS:
+            if sync_identity is None:
                 continue
-            local_identity = self._resolved_identity(*sync_identity, self._local_key_resolver)
-            if local_identity is None:
+            local_identity = self._resolved_local_identity(*sync_identity, self._local_key_resolver)
+            if local_identity is None or local_identity[0] not in SYNC_SOURCE_KINDS:
                 self._warn_unmapped_plugin("pull", sync_identity[1])
                 continue
             source_kind, source_key, vod_id = local_identity
@@ -306,6 +340,9 @@ class PlaybackHistorySyncService(QObject):
                 "episodeUrl": item.get("episodeUrl") or item.get("episode_url") or "",
                 "position": int(item.get("positionMs") or item.get("position") or 0),
                 "duration": int(item.get("durationMs") or item.get("duration") or 0),
+                # 服务端协议不包含片头片尾；远端进度更新不能清空本地标记。
+                "opening": existing.opening if existing is not None else 0,
+                "ending": existing.ending if existing is not None else 0,
                 "speed": float(item.get("speed") or 1.0),
                 "createTime": updated_at,
                 "playlistIndex": int(item.get("playlistIndex") or item.get("playlist_index") or 0),
@@ -360,18 +397,49 @@ class PlaybackHistorySyncService(QObject):
             return None
         return value
 
+    @staticmethod
+    def _sync_source(source_kind: str, source_key: str) -> tuple[str, str]:
+        if source_kind == "browse":
+            return "site", source_key if source_key in BROWSE_SITE_KEYS else "csp_AList"
+        site_key = ATV_KIND_TO_TVBOX_SITE.get(source_kind)
+        return ("site", site_key) if site_key else (source_kind, source_key)
+
+    @staticmethod
+    def _local_source(source_kind: str, source_key: str) -> tuple[str, str]:
+        if source_kind != "site":
+            return source_kind, source_key
+        local_kind = TVBOX_SITE_TO_ATV_KIND.get(source_key)
+        if local_kind is None:
+            return source_kind, source_key
+        return local_kind, source_key if local_kind == "browse" else ""
+
     @classmethod
-    def _resolved_identity(
+    def _resolved_sync_identity(
         cls,
         source_kind: str,
         source_key: str,
         vod_id: str,
         resolver: SourceKeyResolver,
     ) -> tuple[str, str, str] | None:
-        resolved = cls._resolve_source_key(source_kind, source_key, resolver)
+        sync_source_kind, raw_sync_source_key = cls._sync_source(source_kind, source_key)
+        resolved = cls._resolve_source_key(sync_source_kind, raw_sync_source_key, resolver)
         if resolved is None:
             return None
-        return cls._record_key(source_kind, resolved, vod_id)
+        return cls._record_key(sync_source_kind, resolved, vod_id)
+
+    @classmethod
+    def _resolved_local_identity(
+        cls,
+        source_kind: str,
+        source_key: str,
+        vod_id: str,
+        resolver: SourceKeyResolver,
+    ) -> tuple[str, str, str] | None:
+        local_source_kind, raw_local_source_key = cls._local_source(source_kind, source_key)
+        resolved = cls._resolve_source_key(local_source_kind, raw_local_source_key, resolver)
+        if resolved is None:
+            return None
+        return cls._record_key(local_source_kind, resolved, vod_id)
 
     def _warn_unmapped_plugin(self, direction: str, source_key: str) -> None:
         marker = direction, source_key

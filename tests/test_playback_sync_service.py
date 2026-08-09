@@ -6,6 +6,7 @@ from atv_player.models import HistoryRecord
 from atv_player.playback_sync_service import (
     INITIAL_DELAY_MS,
     PERIOD_MS,
+    PULL_PERIOD_MS,
     PlaybackHistorySyncService,
 )
 
@@ -133,19 +134,26 @@ class FakeApi:
     def __init__(self, page: dict | None = None) -> None:
         self.page = page or {}
         self.pushed: list[list[dict]] = []
+        self.pull_source_kinds = ""
+        self.pull_site_keys = ""
         self.playback_sync_identity = "test-user"
 
     def push_playback_events(self, records: list[dict]) -> None:
         self.pushed.append(records)
 
-    def pull_playback_records(self, since: int) -> dict:
+    def pull_playback_records(
+        self, since: int, *, source_kinds: str = "", site_keys: str = ""
+    ) -> dict:
         del since
+        self.pull_source_kinds = source_kinds
+        self.pull_site_keys = site_keys
         return self.page
 
 
 def test_playback_sync_runs_every_30_seconds() -> None:
     assert INITIAL_DELAY_MS == 30_000
     assert PERIOD_MS == 30_000
+    assert PULL_PERIOD_MS == 5 * 60_000
 
 
 def test_push_versions_are_tracked_per_record() -> None:
@@ -235,6 +243,67 @@ def test_selection_context_round_trips_through_sync_payloads() -> None:
     assert repository.saved_payloads[0]["duration"] == 7_200_000
     assert repository.saved_payloads[0]["sourceSubgroupIndex"] == 6
     assert repository.saved_payloads[0]["sourceSubgroupName"] == "07外海风云"
+
+
+def test_atv_source_alias_pushes_as_tvbox_site_identity() -> None:
+    record = _record(key="v1", source_kind="telegram", updated_at=100)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([record]))
+
+    service._push()
+
+    payload = api.pushed[0][0]
+    assert payload["sourceKind"] == "site"
+    assert payload["sourceKey"] == "csp_TgDouBan"
+
+
+def test_tvbox_alist_site_pulls_as_atv_browse_source() -> None:
+    repository = FakeRepository([])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "site",
+                    "sourceKey": "csp_AList",
+                    "sourceName": "AList",
+                    "vodId": "1$185535$1",
+                    "updatedAt": 100,
+                }
+            ],
+            "nextSince": 1,
+        }
+    )
+    service = PlaybackHistorySyncService(api, repository)
+
+    service._pull()
+
+    assert repository.saved == [("browse", "csp_AList", "1$185535$1")]
+    assert "site" in api.pull_source_kinds.split(",")
+    assert "csp_AList" in api.pull_site_keys.split(",")
+
+
+def test_pull_preserves_local_opening_and_ending_markers() -> None:
+    record = _record(key="v1", source_kind="emby", source_key="server", updated_at=100)
+    record.opening = 12_000
+    record.ending = 34_000
+    repository = FakeRepository([record])
+    api = FakeApi(
+        {
+            "items": [
+                {
+                    "sourceKind": "emby",
+                    "sourceKey": "server",
+                    "vodId": "v1",
+                    "updatedAt": 200,
+                }
+            ]
+        }
+    )
+
+    PlaybackHistorySyncService(api, repository)._pull()
+
+    assert repository.saved_payloads[0]["opening"] == 12_000
+    assert repository.saved_payloads[0]["ending"] == 34_000
 
 
 def test_pull_applies_tombstones_before_advancing_cursor() -> None:
@@ -344,6 +413,7 @@ def test_local_deletion_is_pushed_as_tombstone() -> None:
     event = api.pushed[-1][0]
     assert event["event"] == "playback.deleted"
     assert event["vodId"] == "gone"
+    assert event["deletedAt"] == 100
 
 
 def test_spider_plugin_push_uses_manifest_id_not_local_database_id() -> None:
@@ -440,9 +510,11 @@ def test_pull_is_skipped_when_push_fails() -> None:
             del records
             raise RuntimeError("offline")
 
-        def pull_playback_records(self, since: int) -> dict:
+        def pull_playback_records(
+            self, since: int, *, source_kinds: str = "", site_keys: str = ""
+        ) -> dict:
             nonlocal pulled
-            del since
+            del since, source_kinds, site_keys
             pulled = True
             return {}
 

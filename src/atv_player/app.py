@@ -2141,7 +2141,23 @@ class AppCoordinator(QObject):
                 source_name="飞牛影视",
             ),
         )
-        browse_controller = BrowseController(self._api_client)
+        browse_controller = BrowseController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda source_key, vod_id: self._playback_history_repository.get_history(
+                "browse", vod_id, source_key
+            ),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda source_key, vod_id, payload: self._playback_history_repository.save_history(
+                "browse",
+                vod_id,
+                payload,
+                source_key=source_key,
+                source_name="AList",
+            ),
+        )
         pansou_controller = PansouController(browse_controller) if bool(capabilities.get("pansou")) else None
         history_controller = HistoryController(self._api_client, self._playback_history_repository)
         favorites_controller = FavoritesController(

@@ -1296,11 +1296,12 @@ def test_main_window_favorites_tab_renders_new_context_menu_favorite(qtbot) -> N
 def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
     opened: list[OpenPlayerRequest] = []
     browse_controller = SimpleNamespace(
-        build_request_from_detail=lambda vod_id: OpenPlayerRequest(
+        build_request_from_detail=lambda vod_id, source_key="csp_AList": OpenPlayerRequest(
             vod=VodItem(vod_id=vod_id, vod_name="详情页"),
             playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
             clicked_index=0,
             source_kind="browse",
+            source_key=source_key,
             source_mode="detail",
             source_vod_id=vod_id,
         )
@@ -1317,7 +1318,7 @@ def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(window, "_start_open_request", lambda builder: opened.append(builder()) or 1)
     record = FavoriteRecord(
         source_kind="browse",
-        source_key="",
+        source_key="csp_TgWeb",
         source_name="文件浏览",
         vod_id="detail-1",
         vod_name_snapshot="庆余年",
@@ -1332,6 +1333,7 @@ def test_main_window_opens_browse_favorite_record(qtbot, monkeypatch) -> None:
     window.open_favorite_detail(record)
 
     assert opened[0].source_kind == "browse"
+    assert opened[0].source_key == "csp_TgWeb"
 
 
 def test_main_window_opens_live_favorite_record(qtbot, monkeypatch) -> None:

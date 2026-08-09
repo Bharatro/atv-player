@@ -461,8 +461,19 @@ class ApiClient:
             return
         self._request("POST", "/api/playback/events", json=records)
 
-    def pull_playback_records(self, since: int, limit: int = 100) -> dict[str, Any]:
+    def pull_playback_records(
+        self,
+        since: int,
+        limit: int = 100,
+        *,
+        source_kinds: str = "",
+        site_keys: str = "",
+    ) -> dict[str, Any]:
         headers = {"X-PlaySync-Since": str(since), "X-PlaySync-Limit": str(limit)}
+        if source_kinds:
+            headers["X-PlaySync-Source-Kind"] = source_kinds
+        if site_keys:
+            headers["X-PlaySync-Site-Key"] = site_keys
         if since <= 0:
             headers["X-PlaySync-Latest"] = "true"
         data = self._request(

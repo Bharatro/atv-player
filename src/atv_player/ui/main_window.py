@@ -6383,7 +6383,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "feiniu":
             self._start_open_request(lambda: self._apply_request_playback_history_title(self.feiniu_controller.build_request(record.key)))
             return
-        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
+        self._start_open_request(
+            lambda: self.browse_controller.build_request_from_detail(
+                record.key, source_key=record.source_key or "csp_AList"
+            )
+        )
 
     def open_favorite_detail(self, record: FavoriteRecord) -> None:
         if record.source_kind == "direct_parse":
@@ -6423,7 +6427,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "feiniu":
             self._start_open_request(lambda: self.feiniu_controller.build_request(record.vod_id))
             return
-        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.vod_id))
+        self._start_open_request(
+            lambda: self.browse_controller.build_request_from_detail(
+                record.vod_id, source_key=record.source_key or "csp_AList"
+            )
+        )
 
     def _open_favorite_placeholder(self, record: FavoriteRecord) -> None:
         source_kind = "plugin" if record.source_kind == "spider_plugin" else record.source_kind or "browse"
