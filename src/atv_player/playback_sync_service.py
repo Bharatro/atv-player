@@ -264,6 +264,8 @@ class PlaybackHistorySyncService(QObject):
             "episodeUrl": record.episode_url,
             "positionMs": record.position,
             "durationMs": record.duration,
+            "openingMs": record.opening,
+            "endingMs": record.ending,
             "updatedAt": record.create_time,
             "speed": record.speed,
             "clientKey": self._client_key,
