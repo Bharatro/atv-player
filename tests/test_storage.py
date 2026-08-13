@@ -2820,3 +2820,28 @@ def test_settings_repository_normalizes_ai_values(tmp_path: Path) -> None:
     assert saved.ai_api_key == "sk-test"
     assert saved.ai_chat_model == "gpt-4o-mini"
     assert saved.ai_request_timeout_seconds == 120
+
+
+def test_local_playback_history_pending_deletions_round_trip(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+
+    assert repo.list_pending_deletions() == []
+
+    repo.record_pending_deletion("emby", "server", "vod-1", 100)
+    repo.record_pending_deletion("telegram", "", "vod-2", 200)
+    # 相同 identity 再次记录应覆盖时间戳。
+    repo.record_pending_deletion("emby", "server", "vod-1", 150)
+
+    pending = sorted(repo.list_pending_deletions())
+    assert pending == [
+        ("emby", "server", "vod-1", 150),
+        ("telegram", "", "vod-2", 200),
+    ]
+
+    repo.clear_pending_deletions([("emby", "server", "vod-1")])
+    assert repo.list_pending_deletions() == [("telegram", "", "vod-2", 200)]
+
+    repo.clear_pending_deletions([("telegram", "", "vod-2")])
+    assert repo.list_pending_deletions() == []

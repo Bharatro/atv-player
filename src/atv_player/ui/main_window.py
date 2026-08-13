@@ -1489,6 +1489,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             danmaku_controller_factory=None,
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
+            episode_title_override_repository=None,
             danmaku_preference_store=None,
     ) -> None:
         super().__init__(title="alist-tvbox Desktop Player", resizable=True)
@@ -1508,6 +1509,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
+        self._episode_title_override_repository = episode_title_override_repository
         self._danmaku_preference_store = danmaku_preference_store
         self.config = config
         self._plugin_definitions = list(spider_plugins or [])
@@ -6627,6 +6629,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             metadata_hydrator=request.metadata_hydrator,
             metadata_scrape_service=request.metadata_scrape_service,
             metadata_binding_repository=request.metadata_binding_repository,
+            episode_title_override_repository=request.episode_title_override_repository,
             episode_title_enhancer=request.episode_title_enhancer,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
@@ -6707,6 +6710,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         if request.metadata_binding_repository is None:
             request.metadata_binding_repository = self._metadata_binding_repository
+        if request.episode_title_override_repository is None:
+            request.episode_title_override_repository = self._episode_title_override_repository
         if request.detail_field_runner is not None:
             return request
         if request.source_kind == "plugin" and request.source_key:

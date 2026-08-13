@@ -233,6 +233,7 @@ class PlayItem:
     danmaku_error: str = ""
     type_name: str = ""
     category_name: str = ""
+    metadata_provider_url: str = ""
 
 
 @dataclass(slots=True)
@@ -556,6 +557,7 @@ class OpenPlayerRequest:
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
     metadata_binding_repository: object | None = None
+    episode_title_override_repository: object | None = None
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None

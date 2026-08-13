@@ -1,5 +1,7 @@
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    _titles_by_index_for_tencent_variety,
+    _VARIETY_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
     is_high_confidence_iqiyi_episode_candidate,
     resolve_episode_title_source_priority,
@@ -549,6 +551,7 @@ def test_resolve_episode_title_source_priority_moves_iqiyi_ahead_of_tmdb_only_fo
     tmdb = MetadataMatch(provider="tmdb", provider_id="tv:42:season:1", title="临江仙", year="2025")
 
     assert resolve_episode_title_source_priority(vod, playlist, [iqiyi, tmdb]) == [
+        "manual",
         "plugin",
         "bangumi",
         "bilibili",
@@ -557,3 +560,102 @@ def test_resolve_episode_title_source_priority_moves_iqiyi_ahead_of_tmdb_only_fo
         "tencent",
     ]
     assert resolve_episode_title_source_priority(vod, playlist, [tmdb]) == METADATA_EPISODE_TITLE_SOURCE_PRIORITY
+
+
+def _variety_show() -> tuple[VodItem, list[PlayItem]]:
+    vod = VodItem(vod_id="v1", vod_name="心动的信号 第9季", vod_year="2026", type_name="综艺")
+    playlist = [
+        PlayItem(title="20260731.先导篇上 X.mp4", original_title="20260731.先导篇上 X.mp4", url="http://m/1.mp4"),
+        PlayItem(title="20260731.先导篇下 X.mp4", original_title="20260731.先导篇下 X.mp4", url="http://m/2.mp4"),
+        PlayItem(title="20260803.第1期上 X.mp4", original_title="20260803.第1期上 X.mp4", url="http://m/3.mp4"),
+        PlayItem(title="20260803.第1期中 X.mp4", original_title="20260803.第1期中 X.mp4", url="http://m/4.mp4"),
+        PlayItem(title="20260806.第1期加更上 X.mp4", original_title="20260806.第1期加更上 X.mp4", url="http://m/5.mp4"),
+        PlayItem(title="20260810.第2期上.mp4", original_title="20260810.第2期上.mp4", url="http://m/6.mp4"),
+    ]
+    return vod, playlist
+
+
+def _variety_raw() -> dict:
+    return {
+        "episode_list_source": "tencent_cover",
+        "episodes": [
+            {"title": "先导片上：丘比特集结", "publish_date": "2026-07-31 00:00:00"},
+            {"title": "先导片下：男女初见面", "publish_date": "2026-07-31 00:00:00"},
+            {"title": "第1期上：又争又抢", "publish_date": "2026-08-03 00:00:00"},
+            {"title": "第1期中：你忙着抢行李", "publish_date": "2026-08-03 00:00:00"},
+            {"title": "第1期加更上：小屋恋爱", "publish_date": "2026-08-06 00:00:00"},
+            {"title": "第2期上：偶像剧现场", "publish_date": "2026-08-10 00:00:00"},
+        ],
+    }
+
+
+def test_resolve_episode_title_source_priority_returns_variety_priority_for_variety_playlist() -> None:
+    vod, playlist = _variety_show()
+    assert resolve_episode_title_source_priority(vod, playlist, []) == _VARIETY_EPISODE_TITLE_SOURCE_PRIORITY
+
+
+def test_variety_matcher_aligns_files_to_official_episodes_by_date_and_part() -> None:
+    vod, playlist = _variety_show()
+    titles_by_index = _titles_by_index_for_tencent_variety(vod, playlist, _variety_raw())
+
+    # Part-keyed matches.
+    assert titles_by_index[2] == "08-03 第1期上：又争又抢"
+    assert titles_by_index[3] == "08-03 第1期中：你忙着抢行李"
+    assert titles_by_index[4] == "08-06 第1期加更上：小屋恋爱"
+    assert titles_by_index[5] == "08-10 第2期上：偶像剧现场"
+    # Order fallback for same-date items without a parseable part (先导片上/下).
+    assert titles_by_index[0] == "07-31 先导片上：丘比特集结"
+    assert titles_by_index[1] == "07-31 先导片下：男女初见面"
+    # No MM-DD-less prefix leak; no 第N集 prefix.
+    assert all(v[:5].endswith(("07-31", "08-03", "08-06", "08-10")) for v in titles_by_index.values())
+
+
+def test_variety_matcher_returns_empty_when_no_publish_dates() -> None:
+    vod, playlist = _variety_show()
+    # Cover episodes without publish dates (the section-tab case) must not match.
+    raw = {"episodes": [{"title": "第1季"}, {"title": "纯享"}]}
+    assert _titles_by_index_for_tencent_variety(vod, playlist, raw) == {}
+
+
+def test_build_provider_episode_playlist_variety_uses_official_titles() -> None:
+    vod, playlist = _variety_show()
+    match = MetadataMatch(
+        provider="tencent",
+        provider_id="https://v.qq.com/x/cover/mzc002003kpyd2m.html",
+        title="心动的信号 第九季",
+        year="2026",
+        raw=_variety_raw(),
+    )
+    updated = build_provider_episode_playlist(
+        vod,
+        playlist,
+        match,
+        source_priority=_VARIETY_EPISODE_TITLE_SOURCE_PRIORITY,
+    )
+    assert updated is not None
+    assert updated[2].episode_display_title == "08-03 第1期上：又争又抢"
+    assert updated[2].episode_title_source == "tencent"
+
+
+def test_build_provider_episode_playlist_variety_rejects_collapsed_number_providers() -> None:
+    # iQiyi/TMDB/bangumi map 第N期上/中/下 to a single episode number and would
+    # scramble 纯享/陪看 onto unrelated episodes. For a variety playlist they must
+    # produce nothing so files without an official date+part match stay unmapped
+    # (original filename) instead of getting garbage.
+    vod, playlist = _variety_show()
+    iqiyi = MetadataMatch(
+        provider="iqiyi",
+        provider_id="iqiyi:1",
+        title="心动的信号 第九季",
+        year="2026",
+        raw={"videos": [{"itemNumber": 1, "itemTitle": "第2期加更上：崔凯怡"}]},
+    )
+    assert (
+        build_provider_episode_playlist(
+            vod,
+            playlist,
+            iqiyi,
+            source_priority=_VARIETY_EPISODE_TITLE_SOURCE_PRIORITY,
+        )
+        is None
+    )

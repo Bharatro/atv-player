@@ -4,33 +4,18 @@ from atv_player.models import HistoryRecord
 
 
 class HistoryController:
-    def __init__(self, api_client, playback_history_repository=None) -> None:
+    """播放历史列表控制器。
+
+    后端已下线 ``/api/history``(GET/POST/DELETE 全部 404)。播放记录改由多端同步服务
+    维护:PUSH 本地记录到 ``/api/playback/events``,PULL ``/api/playback/changes`` 回灌
+    本地 ``media_playback_history``。因此历史列表只从本地仓库读取——它就是同步后的
+    本地视图,不再发任何网络请求,避免后端缺端点时整页加载失败。
+    """
+
+    def __init__(self, api_client=None, playback_history_repository=None) -> None:
+        # api_client 保留以兼容旧调用方签名,但历史读取/删除不再依赖它。
         self._api_client = api_client
         self._playback_history_repository = playback_history_repository
-
-    def _load_remote_records(self) -> list[HistoryRecord]:
-        payload = self._api_client.list_history(page=1, size=10000)
-        return [
-            HistoryRecord(
-                id=item.get("id", 0),
-                key=item.get("key", ""),
-                vod_name=item.get("vodName", ""),
-                vod_pic=item.get("vodPic", ""),
-                vod_remarks=item.get("vodRemarks", ""),
-                episode=item.get("episode", 0),
-                episode_url=item.get("episodeUrl", ""),
-                position=item.get("position", 0),
-                opening=item.get("opening", 0),
-                ending=item.get("ending", 0),
-                speed=item.get("speed", 1.0),
-                create_time=item.get("createTime", 0),
-                source_subgroup_index=item.get("sourceSubgroupIndex", 0),
-                source_subgroup_name=item.get("sourceSubgroupName", ""),
-                drive_dir_id=item.get("driveDirId", ""),
-                source_kind="remote",
-            )
-            for item in payload.get("content", [])
-        ]
 
     def load_page(
         self,
@@ -42,7 +27,7 @@ class HistoryController:
         time_range: str = "",
         continue_watching: bool = False,
     ) -> tuple[list[HistoryRecord], int]:
-        records = self._load_remote_records()
+        records: list[HistoryRecord] = []
         if self._playback_history_repository is not None:
             records.extend(self._playback_history_repository.list_histories())
         records.sort(key=lambda item: item.create_time, reverse=True)
@@ -65,9 +50,6 @@ class HistoryController:
         return records[start:end], total
 
     def delete_one(self, record: HistoryRecord) -> None:
-        if record.source_kind == "remote":
-            self._api_client.delete_history(record.id)
-            return
         if self._playback_history_repository is None:
             return
         self._playback_history_repository.delete_history(
@@ -75,20 +57,24 @@ class HistoryController:
             record.key,
             record.source_key,
         )
+        self._record_pending_deletion(record)
 
     def delete_many(self, records: list[HistoryRecord]) -> None:
-        remote_ids = [record.id for record in records if record.source_kind == "remote"]
-        if remote_ids:
-            self._api_client.delete_histories(remote_ids)
         if self._playback_history_repository is None:
             return
         for record in records:
-            if record.source_kind != "remote":
-                self._playback_history_repository.delete_history(
-                    record.source_kind,
-                    record.key,
-                    record.source_key,
-                )
+            self._playback_history_repository.delete_history(
+                record.source_kind,
+                record.key,
+                record.source_key,
+            )
+            self._record_pending_deletion(record)
+
+    def _record_pending_deletion(self, record: HistoryRecord) -> None:
+        # 记下显式删除,供 PlaybackHistorySyncService 下次 PUSH 转成 tombstone 多端同步。
+        recorder = getattr(self._playback_history_repository, "record_pending_deletion", None)
+        if callable(recorder):
+            recorder(record.source_kind, record.source_key, record.key, record.create_time)
 
     def clear_page(self, records: list[HistoryRecord]) -> None:
         self.delete_many(records)

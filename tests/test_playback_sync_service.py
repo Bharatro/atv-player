@@ -50,6 +50,7 @@ class FakeRepository:
         self.saved_payloads: list[dict] = []
         self.cursors: dict[str, int] = {}
         self.snapshots: dict[str, dict[tuple[str, str, str], int]] = {}
+        self.pending_deletions: dict[tuple[str, str, str], int] = {}
 
     def list_histories(self) -> list[HistoryRecord]:
         return list(self.records.values())
@@ -127,6 +128,21 @@ class FakeRepository:
         self, namespace: str, identity: tuple[str, str, str]
     ) -> None:
         self.snapshots.setdefault(namespace, {}).pop(identity, None)
+
+    def record_pending_deletion(
+        self, source_kind: str, source_key: str, vod_id: str, deleted_at: int
+    ) -> None:
+        self.pending_deletions[(source_kind, source_key, vod_id)] = int(deleted_at)
+
+    def list_pending_deletions(self) -> list[tuple[str, str, str, int]]:
+        return [
+            (source_kind, source_key, vod_id, deleted_at)
+            for (source_kind, source_key, vod_id), deleted_at in self.pending_deletions.items()
+        ]
+
+    def clear_pending_deletions(self, items: list[tuple[str, str, str]]) -> None:
+        for identity in items:
+            self.pending_deletions.pop(identity, None)
 
 
 class FakeApi:
@@ -491,7 +507,9 @@ def test_local_deletion_is_pushed_as_tombstone() -> None:
     api = FakeApi()
     service = PlaybackHistorySyncService(api, repository)
     service._push()
+    # 用户显式删除:本地删除 + 记入 pending 队列(由 HistoryController 触发)。
     repository.delete_history("emby", "gone", "server")
+    repository.record_pending_deletion("emby", "server", "gone", 100)
 
     service._push()
 
@@ -499,6 +517,25 @@ def test_local_deletion_is_pushed_as_tombstone() -> None:
     assert event["event"] == "playback.deleted"
     assert event["vodId"] == "gone"
     assert event["deletedAt"] == 100
+
+
+def test_record_vanishing_from_list_without_explicit_delete_is_not_tombstoned() -> None:
+    # 回归保护:账户/命名空间切换会让记录从 list_histories() 消失,但只要不是显式删除,
+    # 就绝不能上报 tombstone——否则会清空整库(2026-08-09 的 159→0 事故)。
+    record = _record(key="gone", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, repository)
+    service._push()
+
+    # 模拟命名空间切换:记录仍在库里,但下一次扫描看不到它。
+    repository.records.clear()
+
+    service._push()
+
+    # 没有显式删除就不应触发任何上报(尤其不能上报 tombstone)。
+    assert len(api.pushed) == 1
+    assert ("site", "csp_Emby", "gone") not in service._pushed_versions
 
 
 def test_spider_plugin_push_uses_manifest_id_not_local_database_id() -> None:
@@ -538,6 +575,7 @@ def test_spider_plugin_delete_keeps_stable_manifest_id_in_tombstone() -> None:
     )
     service._push()
     repository.delete_history("spider_plugin", "vod-1", "99")
+    repository.record_pending_deletion("spider_plugin", "99", "vod-1", 100)
 
     service._push()
 

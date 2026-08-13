@@ -50,6 +50,7 @@ class PlayerSession:
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
     metadata_binding_repository: object | None = None
+    episode_title_override_repository: object | None = None
     metadata_hydrated: bool = False
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     episode_titles_hydrated: bool = False
@@ -409,6 +410,7 @@ class PlayerController:
         metadata_hydrator: Callable[[object], VodItem | None] | None = None,
         metadata_scrape_service: object | None = None,
         metadata_binding_repository: object | None = None,
+        episode_title_override_repository: object | None = None,
         episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None,
         danmaku_controller: object | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
@@ -496,6 +498,7 @@ class PlayerController:
             metadata_hydrator=metadata_hydrator,
             metadata_scrape_service=metadata_scrape_service,
             metadata_binding_repository=metadata_binding_repository,
+            episode_title_override_repository=episode_title_override_repository,
             episode_title_enhancer=episode_title_enhancer,
             danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,
@@ -591,9 +594,8 @@ class PlayerController:
             and (duration_seconds - position_seconds) < 150
         ):
             self._schedule_next_episode_danmaku_prefetch(session, current_index)
-        if not session.use_local_history:
-            return
-        self._api_client.save_history(payload)
+        # 后端已下线 /api/history(POST 持久化)。本地 playback_history_saver 已写入
+        # media_playback_history,多端上报改由 PlaybackHistorySyncService PUSH 负责。
 
     @staticmethod
     def _history_drive_subgroup(session: PlayerSession) -> PlaybackSourceGroup | None:

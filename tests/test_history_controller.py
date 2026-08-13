@@ -2,413 +2,150 @@ from atv_player.controllers.history_controller import HistoryController
 from atv_player.models import HistoryRecord
 
 
-class FakeApiClient:
-    def __init__(self) -> None:
-        self.deleted_one: list[int] = []
-        self.deleted_many: list[list[int]] = []
-        self.cleared = False
-
-    def list_history(self, page: int, size: int) -> dict:
-        return {
-            "content": [
-                {
-                    "id": 9,
-                    "key": "movie-1",
-                    "vodName": "Movie",
-                    "vodPic": "pic",
-                    "vodRemarks": "Episode 2",
-                    "episode": 1,
-                    "episodeUrl": "2.m3u8",
-                    "position": 90000,
-                    "opening": 0,
-                    "ending": 0,
-                    "speed": 1.0,
-                    "createTime": 123456,
-                }
-            ],
-            "totalElements": 1,
-        }
-
-    def delete_history(self, history_id: int) -> None:
-        self.deleted_one.append(history_id)
-
-    def delete_histories(self, history_ids: list[int]) -> None:
-        self.deleted_many.append(history_ids)
-
-    def clear_history(self) -> None:
-        self.cleared = True
-
-
 class FakeRepository:
     def __init__(self, histories: list[HistoryRecord] | None = None) -> None:
         self.histories = list(histories or [])
         self.deleted: list[tuple[str, str, str]] = []
+        self.pending_deletions: list[tuple[str, str, str, int]] = []
 
     def list_histories(self) -> list[HistoryRecord]:
         return list(self.histories)
 
     def delete_history(self, source_kind: str, vod_id: str, source_key: str = "") -> None:
-        self.deleted.append((source_kind, source_key, vod_id))
+        self.deleted.append((source_kind, vod_id, source_key))
+
+    def record_pending_deletion(
+        self, source_kind: str, source_key: str, vod_id: str, deleted_at: int
+    ) -> None:
+        self.pending_deletions.append((source_kind, source_key, vod_id, deleted_at))
 
 
-def test_history_controller_maps_backend_payload() -> None:
-    controller = HistoryController(FakeApiClient())
-
-    records, total = controller.load_page(page=1, size=20)
-
-    assert total == 1
-    assert records[0].id == 9
-    assert records[0].vod_name == "Movie"
-    assert records[0].episode == 1
-    assert records[0].source_kind == "remote"
-    assert records[0].source_plugin_id == 0
-    assert records[0].source_plugin_name == ""
-
-
-def test_history_controller_deletes_one_or_many() -> None:
-    api = FakeApiClient()
-    controller = HistoryController(api)
-    record_one = HistoryRecord(
-        id=9,
-        key="movie-1",
-        vod_name="Movie",
+def _record(
+    *,
+    key: str,
+    name: str,
+    create_time: int,
+    source_kind: str = "telegram",
+    source_key: str = "",
+    position: int = 0,
+    episode: int = 0,
+) -> HistoryRecord:
+    return HistoryRecord(
+        id=0,
+        key=key,
+        vod_name=name,
         vod_pic="pic",
-        vod_remarks="Episode 2",
-        episode=1,
-        episode_url="2.m3u8",
-        position=90000,
+        vod_remarks=f"第{episode + 1}集",
+        episode=episode,
+        episode_url=f"{key}.m3u8",
+        position=position,
         opening=0,
         ending=0,
         speed=1.0,
-        create_time=123456,
-        source_kind="remote",
-    )
-    record_two = HistoryRecord(
-        id=10,
-        key="movie-2",
-        vod_name="Movie 2",
-        vod_pic="pic-2",
-        vod_remarks="Episode 1",
-        episode=0,
-        episode_url="1.m3u8",
-        position=3000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=123457,
-        source_kind="remote",
+        create_time=create_time,
+        source_kind=source_kind,
+        source_key=source_key,
+        source_name="",
     )
 
-    controller.delete_one(record_one)
-    controller.delete_many([record_one, record_two])
-    controller.clear_page([record_one, record_two])
 
-    assert api.deleted_one == [9]
-    assert api.deleted_many == [[9, 10], [9, 10]]
-
-
-def test_history_controller_tolerates_missing_optional_fields() -> None:
-    class MissingFieldApiClient(FakeApiClient):
-        def list_history(self, page: int, size: int) -> dict:
-            return {
-                "content": [
-                    {
-                        "id": 10,
-                        "key": "movie-2",
-                        "vodName": "Movie 2",
-                        "vodRemarks": "Episode 1",
-                        "episode": 0,
-                        "position": 3000,
-                        "createTime": 999,
-                    }
-                ],
-                "totalElements": 1,
-            }
-
-    controller = HistoryController(MissingFieldApiClient())
-
-    records, total = controller.load_page(page=1, size=20)
-
-    assert total == 1
-    assert records[0].id == 10
-    assert records[0].vod_pic == ""
-    assert records[0].episode_url == ""
-    assert records[0].speed == 1.0
-
-
-def test_history_controller_merges_remote_and_plugin_histories_in_descending_time_order() -> None:
-    api = FakeApiClient()
+def test_load_page_returns_local_records_in_descending_time_order() -> None:
     repository = FakeRepository(
         histories=[
-            HistoryRecord(
-                id=0,
-                key="plugin-1",
-                vod_name="Plugin Movie",
-                vod_pic="plugin-pic",
-                vod_remarks="第2集",
-                episode=1,
-                episode_url="plugin-2.m3u8",
-                position=45000,
-                opening=0,
-                ending=0,
-                speed=1.0,
-                create_time=200000,
-                source_kind="spider_plugin",
-                source_plugin_id=7,
-                source_plugin_name="红果短剧",
-            )
+            _record(key="a", name="A", create_time=100),
+            _record(key="b", name="B", create_time=300),
+            _record(key="c", name="C", create_time=200),
         ]
     )
-    controller = HistoryController(api, repository)
+    controller = HistoryController(None, repository)
 
     records, total = controller.load_page(page=1, size=20)
 
-    assert total == 2
-    assert [record.key for record in records] == ["plugin-1", "movie-1"]
-    assert [record.source_kind for record in records] == ["spider_plugin", "remote"]
+    assert total == 3
+    assert [record.key for record in records] == ["b", "c", "a"]
 
 
-def test_history_controller_merges_remote_and_emby_jellyfin_feiniu_local_histories() -> None:
-    api = FakeApiClient()
+def test_load_page_paginates_local_records() -> None:
     repository = FakeRepository(
-        histories=[
-            HistoryRecord(
-                id=0,
-                key="plugin-1",
-                vod_name="Plugin Movie",
-                vod_pic="plugin-pic",
-                vod_remarks="第2集",
-                episode=1,
-                episode_url="plugin-2.m3u8",
-                position=45000,
-                opening=0,
-                ending=0,
-                speed=1.0,
-                create_time=200000,
-                source_kind="spider_plugin",
-                source_plugin_id=7,
-                source_plugin_name="红果短剧",
-                source_key="7",
-                source_name="红果短剧",
-            ),
-            HistoryRecord(
-                id=0,
-                key="emby-1",
-                vod_name="Emby Movie",
-                vod_pic="emby-pic",
-                vod_remarks="Episode 3",
-                episode=2,
-                episode_url="emby-3.m3u8",
-                position=60000,
-                opening=0,
-                ending=0,
-                speed=1.25,
-                create_time=300000,
-                source_kind="emby",
-                source_name="Emby",
-            ),
-            HistoryRecord(
-                id=0,
-                key="jellyfin-1",
-                vod_name="Jellyfin Movie",
-                vod_pic="jf-pic",
-                vod_remarks="Episode 1",
-                episode=0,
-                episode_url="jf-1.m3u8",
-                position=15000,
-                opening=0,
-                ending=0,
-                speed=1.0,
-                create_time=250000,
-                source_kind="jellyfin",
-                source_name="Jellyfin",
-            ),
-            HistoryRecord(
-                id=0,
-                key="feiniu-1",
-                vod_name="Feiniu Movie",
-                vod_pic="fn-pic",
-                vod_remarks="Episode 2",
-                episode=1,
-                episode_url="fn-2.m3u8",
-                position=45000,
-                opening=0,
-                ending=0,
-                speed=1.0,
-                create_time=275000,
-                source_kind="feiniu",
-                source_name="飞牛影视",
-            ),
-        ]
+        histories=[_record(key=str(n), name=str(n), create_time=n) for n in range(5)]
     )
-    controller = HistoryController(api, repository)
+    controller = HistoryController(None, repository)
 
-    records, total = controller.load_page(page=1, size=20)
+    records, total = controller.load_page(page=2, size=2)
 
     assert total == 5
-    assert [record.key for record in records] == ["emby-1", "feiniu-1", "jellyfin-1", "plugin-1", "movie-1"]
-    assert [record.source_kind for record in records] == ["emby", "feiniu", "jellyfin", "spider_plugin", "remote"]
+    # create_time 4,3,2,1,0 desc → page 2 (offset 2) → 2,1
+    assert [record.key for record in records] == ["2", "1"]
 
 
-def test_history_controller_deletes_one_or_many_by_source() -> None:
-    api = FakeApiClient()
+def test_load_page_filters_by_keyword_source_kind_and_continue_watching() -> None:
+    repository = FakeRepository(
+        histories=[
+            _record(key="tg-1", name="心动信号", create_time=300, source_kind="telegram", position=0),
+            _record(key="tg-2", name="心动信号 续", create_time=200, source_kind="telegram", position=5000),
+            _record(key="bili-1", name="心动信号", create_time=100, source_kind="bilibili", position=3000),
+        ]
+    )
+    controller = HistoryController(None, repository)
+
+    # keyword + source_kind
+    records, _ = controller.load_page(page=1, size=20, keyword="续", source_kind="telegram")
+    assert [record.key for record in records] == ["tg-2"]
+
+    # continue_watching keeps only entries with progress
+    watching, _ = controller.load_page(page=1, size=20, continue_watching=True)
+    assert {record.key for record in watching} == {"tg-2", "bili-1"}
+
+
+def test_load_page_returns_empty_without_repository() -> None:
+    controller = HistoryController(None)
+
+    records, total = controller.load_page(page=1, size=20)
+
+    assert records == []
+    assert total == 0
+
+
+def test_delete_one_delegates_to_repository() -> None:
     repository = FakeRepository()
-    controller = HistoryController(api, repository)
-    remote = HistoryRecord(
-        id=9,
-        key="movie-1",
-        vod_name="Movie",
-        vod_pic="pic",
-        vod_remarks="Episode 2",
-        episode=1,
-        episode_url="2.m3u8",
-        position=90000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=123456,
-        source_kind="remote",
-    )
-    plugin = HistoryRecord(
-        id=0,
-        key="detail-1",
-        vod_name="Plugin Movie",
-        vod_pic="poster",
-        vod_remarks="第1集",
-        episode=0,
-        episode_url="1.m3u8",
-        position=15000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=123457,
-        source_kind="spider_plugin",
-        source_plugin_id=3,
-        source_plugin_name="红果短剧",
-        source_key="3",
-        source_name="红果短剧",
-    )
-    emby = HistoryRecord(
-        id=0,
-        key="emby-1",
-        vod_name="Emby Movie",
-        vod_pic="poster",
-        vod_remarks="Episode 1",
-        episode=0,
-        episode_url="1.m3u8",
-        position=3000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=123458,
-        source_kind="emby",
-        source_name="Emby",
-    )
-    feiniu = HistoryRecord(
-        id=0,
-        key="feiniu-1",
-        vod_name="Feiniu Movie",
-        vod_pic="poster",
-        vod_remarks="Episode 2",
-        episode=1,
-        episode_url="2.m3u8",
-        position=3500,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=123459,
-        source_kind="feiniu",
-        source_name="飞牛影视",
-    )
+    controller = HistoryController(None, repository)
+    record = _record(key="detail-1", name="x", create_time=1, source_kind="spider_plugin", source_key="7")
 
-    controller.delete_one(remote)
-    controller.delete_many([remote, plugin, emby, feiniu])
+    controller.delete_one(record)
 
-    assert api.deleted_one == [9]
-    assert api.deleted_many == [[9]]
+    assert repository.deleted == [("spider_plugin", "detail-1", "7")]
+    assert repository.pending_deletions == [("spider_plugin", "7", "detail-1", 1)]
+
+
+def test_delete_many_and_clear_page_delegate_to_repository() -> None:
+    repository = FakeRepository()
+    controller = HistoryController(None, repository)
+    records = [
+        _record(key="emby-1", name="x", create_time=1, source_kind="emby"),
+        _record(key="fn-1", name="y", create_time=2, source_kind="feiniu", source_key="fn"),
+    ]
+
+    controller.delete_many(records)
+    controller.clear_page(records)
+
     assert repository.deleted == [
-        ("spider_plugin", "3", "detail-1"),
-        ("emby", "", "emby-1"),
-        ("feiniu", "", "feiniu-1"),
+        ("emby", "emby-1", ""),
+        ("feiniu", "fn-1", "fn"),
+        ("emby", "emby-1", ""),
+        ("feiniu", "fn-1", "fn"),
+    ]
+    assert repository.pending_deletions == [
+        ("emby", "", "emby-1", 1),
+        ("feiniu", "fn", "fn-1", 2),
+        ("emby", "", "emby-1", 1),
+        ("feiniu", "fn", "fn-1", 2),
     ]
 
 
-def test_history_controller_clear_page_deletes_current_records_by_source() -> None:
-    api = FakeApiClient()
-    repository = FakeRepository()
-    controller = HistoryController(api, repository)
-    remote = HistoryRecord(
-        id=11,
-        key="movie-2",
-        vod_name="Movie 2",
-        vod_pic="",
-        vod_remarks="Episode 1",
-        episode=0,
-        episode_url="1.m3u8",
-        position=3000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=999,
-        source_kind="remote",
-    )
-    plugin = HistoryRecord(
-        id=0,
-        key="detail-2",
-        vod_name="Plugin Movie",
-        vod_pic="",
-        vod_remarks="第3集",
-        episode=2,
-        episode_url="3.m3u8",
-        position=6000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=1000,
-        source_kind="spider_plugin",
-        source_plugin_id=4,
-        source_plugin_name="插件二",
-        source_key="4",
-        source_name="插件二",
-    )
-    jellyfin = HistoryRecord(
-        id=0,
-        key="jf-1",
-        vod_name="Jellyfin Movie",
-        vod_pic="",
-        vod_remarks="Episode 4",
-        episode=3,
-        episode_url="4.m3u8",
-        position=12000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=1001,
-        source_kind="jellyfin",
-        source_name="Jellyfin",
-    )
-    feiniu = HistoryRecord(
-        id=0,
-        key="fn-1",
-        vod_name="Feiniu Movie",
-        vod_pic="",
-        vod_remarks="Episode 3",
-        episode=2,
-        episode_url="3.m3u8",
-        position=13000,
-        opening=0,
-        ending=0,
-        speed=1.0,
-        create_time=1002,
-        source_kind="feiniu",
-        source_name="飞牛影视",
-    )
+def test_delete_is_noop_without_repository() -> None:
+    controller = HistoryController(None)
 
-    controller.clear_page([remote, plugin, jellyfin, feiniu])
-
-    assert api.deleted_many == [[11]]
-    assert repository.deleted == [
-        ("spider_plugin", "4", "detail-2"),
-        ("jellyfin", "", "jf-1"),
-        ("feiniu", "", "fn-1"),
-    ]
+    controller.delete_one(_record(key="a", name="a", create_time=1))
+    controller.delete_many([_record(key="a", name="a", create_time=1)])
+    controller.clear_page([_record(key="a", name="a", create_time=1)])
+    # 无仓库时不抛异常即可。

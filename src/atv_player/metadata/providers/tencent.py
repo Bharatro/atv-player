@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
+import re
 import uuid
+from dataclasses import replace
 
 import httpx
 
 from atv_player.metadata.matching import score_match
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
+
+logger = logging.getLogger(__name__)
 
 
 class TencentMetadataProvider:
@@ -22,6 +27,18 @@ class TencentMetadataProvider:
         "trpc-trans-info": '{"trpc-env":""}',
         "user-agent": "Mozilla/5.0",
     }
+    # Official per-cover episode list (variety shows live here, keyed by publish date).
+    _EPISODE_LIST_URL = (
+        "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+    )
+    _EPISODE_LIST_PARAMS = {"video_appid": "3000010", "vplatform": "2", "vversion_name": "8.2.96"}
+    _EPISODE_LIST_HEADERS = {
+        "content-type": "application/json",
+        "origin": "https://v.qq.com",
+        "referer": "https://v.qq.com/",
+        "user-agent": "Mozilla/5.0",
+    }
+    _COVER_ID_RE = re.compile(r"/cover/([A-Za-z0-9]+)")
     _FEATURE_LIST = [
         "DEFAULT_FEFEATURE",
         "PC_SHORT_VIDEOS_WATERFALL",
@@ -91,6 +108,115 @@ class TencentMetadataProvider:
         if site_name and site_name != "腾讯视频":
             return max(0.0, float(match.score or 0.0) - self._NON_NATIVE_SITE_PENALTY)
         return float(match.score or 0.0)
+
+    def _hydrate_episode_candidate(self, candidate: MetadataMatch) -> MetadataMatch:
+        """Fetch the cover's full episode list (titles + publish dates).
+
+        Search results only carry a few preview episodes; the official per-cover
+        list is what variety-show rewriting needs to align files by air date.
+        Enriches ``candidate.raw`` with ``episodes=[{"title","publish_date"}, ...]``.
+        """
+        provider_id = str(getattr(candidate, "provider_id", "") or "")
+        cover_id = self._cover_id_from_provider_id(provider_id)
+        if not cover_id:
+            logger.info(
+                "Tencent cover episode list skipped: no cover id in provider_id=%s",
+                provider_id,
+                extra={"log_category": "metadata", "log_source": "app"},
+            )
+            return candidate
+        episodes = self._fetch_cover_episodes(cover_id)
+        if not episodes:
+            logger.info(
+                "Tencent cover episode list empty for cover_id=%s",
+                cover_id,
+                extra={"log_category": "metadata", "log_source": "app"},
+            )
+            return candidate
+        logger.info(
+            "Tencent cover episode list fetched cover_id=%s count=%s",
+            cover_id,
+            len(episodes),
+            extra={"log_category": "metadata", "log_source": "app"},
+        )
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        raw["episodes"] = episodes
+        raw["episode_list_source"] = "tencent_cover"
+        return replace(candidate, raw=raw)
+
+    def _cover_id_from_provider_id(self, provider_id: str) -> str:
+        match = self._COVER_ID_RE.search(str(provider_id or ""))
+        return match.group(1) if match else ""
+
+    def _fetch_cover_episodes(self, cover_id: str) -> list[dict]:
+        if not cover_id:
+            return []
+        payload = {
+            "page_params": {
+                "req_from": "web_vsite",
+                "page_id": "vsite_episode_list",
+                "page_type": "detail_operation",
+                "id_type": "1",
+                "page_size": "100",
+                "cid": cover_id,
+                "req_from_platform_id": "2",
+                "is_skp_style": "false",
+            },
+            "has_cache": 1,
+        }
+        try:
+            response = self._post(
+                self._EPISODE_LIST_URL,
+                params=dict(self._EPISODE_LIST_PARAMS),
+                headers=dict(self._EPISODE_LIST_HEADERS),
+                json=payload,
+                follow_redirects=True,
+                timeout=10.0,
+            )
+            data = response.json()
+        except Exception as exc:
+            logger.info(
+                "Tencent cover episode list fetch failed cover_id=%s error=%s",
+                cover_id,
+                exc,
+                extra={"log_category": "metadata", "log_source": "app"},
+            )
+            return []
+        return self._parse_cover_episodes(data)
+
+    def _parse_cover_episodes(self, payload: object) -> list[dict]:
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return []
+        module_list_datas = data.get("module_list_datas")
+        if not isinstance(module_list_datas, list):
+            return []
+        episodes: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for module in module_list_datas:
+            if not isinstance(module, dict):
+                continue
+            for module_data in module.get("module_datas") or []:
+                item_data_lists = module_data.get("item_data_lists") if isinstance(module_data, dict) else None
+                if not isinstance(item_data_lists, dict):
+                    continue
+                for item in item_data_lists.get("item_datas") or []:
+                    params = item.get("item_params") if isinstance(item, dict) else None
+                    if not isinstance(params, dict):
+                        continue
+                    title = str(
+                        params.get("union_title") or params.get("play_title") or params.get("title") or ""
+                    ).strip()
+                    publish_date = str(params.get("publish_date") or "").strip()
+                    # Skip section tabs (第1季/纯享/陪看/花絮…) which carry no publish date.
+                    if not title or not publish_date:
+                        continue
+                    key = (title, publish_date[:10])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    episodes.append({"title": title, "publish_date": publish_date})
+        return episodes
 
     def _build_search_payload(self, title: str) -> dict[str, object]:
         return {

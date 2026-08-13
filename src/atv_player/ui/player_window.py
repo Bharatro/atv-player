@@ -40,7 +40,7 @@ from PySide6.QtGui import (
     QShortcut,
     QWindow,
 )
-from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
+from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
@@ -71,7 +71,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.generic import normalize_danmaku_episode_url
-from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_episode_number
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
@@ -84,6 +84,10 @@ from atv_player.metadata.matching import normalize_match_title, strip_match_seas
 from atv_player.metadata.models import MetadataContext, MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
+from atv_player.metadata.episode_title_overrides import (
+    apply_episode_title_overrides,
+    episode_override_item_key,
+)
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
@@ -906,6 +910,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_hydration_override_category = ""
         self._restart_episode_title_after_next_metadata_hydration = False
         self._force_episode_title_restart_on_metadata_request_id = 0
+        self._danmaku_research_pending = False
+        self._danmaku_last_searched_query = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -5474,6 +5480,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self.session.vod = updated_vod
         self._sync_playlist_media_title_from_metadata(previous_vod, updated_vod)
+        research_item = self._current_play_item()
+        if (
+            research_item is not None
+            and not research_item.danmaku_xml
+            and not research_item.danmaku_pending
+        ):
+            self._danmaku_research_pending = True
         self._reset_metadata_poster_index()
         self._render_poster()
         self._render_metadata()
@@ -5485,10 +5498,60 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if force_restart_episode_titles:
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
+        else:
+            self._maybe_research_danmaku_after_metadata()
+
+    def _maybe_research_danmaku_after_metadata(self) -> None:
+        """Re-search danmaku once after metadata hydrates the current item.
+
+        Metadata can improve the query (corrected title, variety genre -> variety
+        issue label) and supply an official platform URL (provider pin). If the
+        first search (often issued before metadata arrived) left the current item
+        without danmaku, re-search now. The guard key combines query and provider
+        URL so a pin-only change still re-searches, while an unchanged signal does
+        not loop.
+        """
+        if not self._danmaku_research_pending:
+            return
+        self._danmaku_research_pending = False
+        if self.session is None:
+            return
+        controller = getattr(self.session, "danmaku_controller", None)
+        current_item = self._current_play_item()
+        if controller is None or current_item is None:
+            return
+        if current_item.danmaku_xml or current_item.danmaku_pending:
+            return
+        query = str(current_item.danmaku_search_query or "").strip()
+        if not query:
+            return
+        research_key = f"{query}\x1f{str(current_item.metadata_provider_url or '').strip()}"
+        if research_key == self._danmaku_last_searched_query:
+            return
+        self._danmaku_last_searched_query = research_key
+        auto_resolve = getattr(controller, "auto_resolve_danmaku", None)
+        if not callable(auto_resolve):
+            return
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="弹幕自动下载失败",
+            task=lambda: auto_resolve(
+                current_item,
+                playlist=self.session.playlist,
+                media_duration_seconds=self._current_media_duration_seconds(),
+            ),
+            configure_danmaku_on_success=True,
+            debug_label="元数据后重搜",
+        )
 
     def _sync_playlist_media_title_from_metadata(self, previous_vod: VodItem, updated_vod: VodItem) -> None:
         if self.session is None:
             return
+        metadata_provider_url = extract_official_link_url(updated_vod.detail_fields)
+        if metadata_provider_url:
+            for item in self.session.playlist:
+                if not str(item.metadata_provider_url or "").strip():
+                    item.metadata_provider_url = metadata_provider_url
         corrected_title = str(updated_vod.vod_name or "").strip()
         if not corrected_title:
             return
@@ -5620,6 +5683,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._playlist_sort_state.remember(merged_playlist)
         self.session.playlist = merged_playlist
         self._playlist_sort_state.apply(self.session.playlist)
+        self._apply_episode_title_overrides_to_session()
         self.current_index = find_playlist_item_index(
             self.session.playlist,
             current_item,
@@ -5639,6 +5703,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_playlist_items()
         self._refresh_window_title()
         self._log_episode_title_mapping()
+        self._maybe_research_danmaku_after_metadata()
 
     def _log_episode_title_mapping(self) -> None:
         if self.session is None:
@@ -8306,6 +8371,114 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not 0 <= self.current_index < len(self.session.playlist):
             return None
         return self.session.playlist[self.current_index]
+
+    def _show_playlist_context_menu(self, pos) -> None:
+        if self.session is None or not self.session.playlist:
+            return
+        item_at = self.playlist.itemAt(pos)
+        if item_at is None:
+            return
+        row = self.playlist.row(item_at)
+        if not 0 <= row < len(self.session.playlist):
+            return
+        play_item = self.session.playlist[row]
+        menu = QMenu(self)
+        menu.addAction("编辑分集标题", lambda: self._edit_playlist_item_title(row))
+        if self._playlist_item_has_override(play_item):
+            menu.addAction("恢复标题", lambda: self._reset_playlist_item_title(row))
+        menu.exec(self.playlist.mapToGlobal(pos))
+
+    def _episode_title_override_identity(self) -> tuple[str, str, str] | None:
+        if self.session is None:
+            return None
+        source_kind = str(getattr(self.session, "source_kind", "") or "")
+        source_key = str(getattr(self.session, "source_key", "") or "")
+        vod_id = str(getattr(self.session.vod, "vod_id", "") or "")
+        if not vod_id:
+            return None
+        return source_kind, source_key, vod_id
+
+    def _session_episode_title_overrides(self) -> dict[str, str]:
+        identity = self._episode_title_override_identity()
+        repo = getattr(self.session, "episode_title_override_repository", None) if self.session else None
+        if identity is None or repo is None:
+            return {}
+        source_kind, source_key, vod_id = identity
+        return repo.load_for_session(source_kind=source_kind, source_key=source_key, vod_id=vod_id)
+
+    def _playlist_item_has_override(self, play_item: PlayItem) -> bool:
+        return episode_override_item_key(play_item) in self._session_episode_title_overrides()
+
+    def _apply_episode_title_overrides_to_session(self) -> None:
+        """Stamp manual overrides onto the current session playlist (idempotent).
+
+        Used after paths that set episode titles without going through the app
+        enhancer (e.g. manual metadata scrape), so a saved override always wins.
+        """
+        if self.session is None:
+            return
+        overrides = self._session_episode_title_overrides()
+        if overrides:
+            apply_episode_title_overrides(self.session.playlist, overrides)
+
+    def _edit_playlist_item_title(self, row: int) -> None:
+        if self.session is None or not 0 <= row < len(self.session.playlist):
+            return
+        repo = getattr(self.session, "episode_title_override_repository", None)
+        identity = self._episode_title_override_identity()
+        play_item = self.session.playlist[row]
+        if identity is None or repo is None:
+            self._append_log("当前来源不支持分集标题手动修正")
+            return
+        current_display = playlist_item_display_title(play_item, "episode").strip()
+        original = play_item.original_title.strip() or play_item.title.strip()
+        edited, ok = QInputDialog.getText(
+            self,
+            "编辑分集标题",
+            f"原始文件名:\n{original}" if original else "编辑分集标题",
+            text=current_display or original,
+        )
+        if not ok:
+            return
+        edited = edited.strip()
+        if not edited or edited == current_display:
+            return
+        source_kind, source_key, vod_id = identity
+        repo.upsert(
+            source_kind=source_kind,
+            source_key=source_key,
+            vod_id=vod_id,
+            item_key=episode_override_item_key(play_item),
+            display_title=edited,
+        )
+        play_item.episode_display_title = edited
+        play_item.episode_title_source = "manual"
+        self.playlist_title_mode = "episode"
+        self._render_playlist_items()
+
+    def _reset_playlist_item_title(self, row: int) -> None:
+        if self.session is None or not 0 <= row < len(self.session.playlist):
+            return
+        repo = getattr(self.session, "episode_title_override_repository", None)
+        identity = self._episode_title_override_identity()
+        play_item = self.session.playlist[row]
+        if identity is None or repo is None:
+            return
+        source_kind, source_key, vod_id = identity
+        repo.delete(
+            source_kind=source_kind,
+            source_key=source_key,
+            vod_id=vod_id,
+            item_key=episode_override_item_key(play_item),
+        )
+        if self.session.episode_title_enhancer is not None:
+            # Re-derive titles; the deleted item falls back to its auto/original title.
+            self.session.episode_titles_hydrated = False
+            self._start_episode_title_enhancement()
+        else:
+            play_item.episode_display_title = ""
+            play_item.episode_title_source = ""
+            self._render_playlist_items()
 
     def _refresh_danmaku_source_entry_points(self) -> None:
         self.danmaku_source_button.setEnabled(True)

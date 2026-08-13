@@ -1107,6 +1107,42 @@ def test_search_danmu_variety_without_matching_issue_falls_back_to_title_similar
     ]
 
 
+def test_search_danmu_prefers_variety_candidate_matching_date_and_part() -> None:
+    # Variety episodes split a single issue into 上/中/下 halves that may share
+    # the same air date; the date+part key must select the exact half. Candidate
+    # names are date-led (no show name), so this also covers the date-led
+    # should_filter_name exemption. (Regression: 《心动的信号 第9季》0 候选.)
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent", name="2026-08-10 第2期中：首次约会 你侬我侬", url="https://tencent/2zhong"
+            ),
+            DanmakuSearchItem(
+                provider="tencent", name="2026-08-10 第2期上：偶像剧现场 情歌对唱", url="https://tencent/2shang"
+            ),
+            DanmakuSearchItem(
+                provider="tencent", name="2026-08-11 第2期下：勇敢者约会", url="https://tencent/2xia"
+            ),
+            DanmakuSearchItem(
+                provider="tencent", name="2026-08-03 第1期上：又争又抢", url="https://tencent/1shang"
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("心动的信号 第9季 20260810 第2期上")
+
+    assert results[0].url == "https://tencent/2shang"
+    assert {item.url for item in results} == {
+        "https://tencent/2shang",
+        "https://tencent/2zhong",
+        "https://tencent/2xia",
+        "https://tencent/1shang",
+    }
+
+
 def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
     tencent = FakeProvider(
         "tencent",

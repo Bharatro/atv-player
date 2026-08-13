@@ -449,16 +449,6 @@ class ApiClient:
             drive_dir_id=str(data.get("driveDirId") or ""),
         )
 
-    def list_history(self, page: int, size: int) -> dict[str, Any]:
-        return self._request(
-            "GET",
-            "/api/history",
-            params={"sort": "createTime,desc", "page": page - 1, "size": size},
-        )
-
-    def save_history(self, payload: dict[str, Any]) -> None:
-        self._request("POST", "/api/history", params={"log": "false"}, json=payload)
-
     def push_playback_events(self, records: list[dict[str, Any]]) -> None:
         # 多端播放记录同步:PUSH 本地 Tier-B 记录。Authorization(session)由客户端自动携带,
         # 服务端 resolveUid 经 session 路径解析为 uid。
@@ -487,15 +477,6 @@ class ApiClient:
             headers=headers,
         )
         return data or {}
-
-    def delete_history(self, history_id: int) -> None:
-        self._request("DELETE", f"/api/history/{history_id}")
-
-    def delete_histories(self, history_ids: list[int]) -> None:
-        self._request("POST", "/api/history/-/delete", json=history_ids)
-
-    def clear_history(self) -> None:
-        self._request("DELETE", f"/history/{self._vod_token}")
 
     def fetch_vod_token(self) -> str:
         data = self._request("GET", "/api/token")

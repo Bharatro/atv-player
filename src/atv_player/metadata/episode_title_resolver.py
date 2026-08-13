@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 
-from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.danmaku.utils import (
+    _extract_variety_date_key,
+    extract_variety_part,
+    infer_playlist_episode_number,
+    is_likely_variety_title,
+    is_variety_collection,
+)
 from atv_player.episode_titles import (
     apply_episode_title_index_map,
     episode_version_slots_by_index,
@@ -16,12 +22,17 @@ from atv_player.metadata.query import infer_metadata_category_name_from_title, n
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.models import PlayItem, VodItem
 
-METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
-_IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY = ["plugin", "bangumi", "bilibili", "iqiyi", "tmdb", "tencent"]
+METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["manual", "plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
+_IQIYI_PRIORITIZED_EPISODE_TITLE_SOURCE_PRIORITY = ["manual", "plugin", "bangumi", "bilibili", "iqiyi", "tmdb", "tencent"]
+# Variety shows: the official native source (Tencent/iQiyi) carries the real,
+# date-ordered episode list that TMDB's flat season/episode model cannot represent,
+# so it must outrank TMDB.
+_VARIETY_EPISODE_TITLE_SOURCE_PRIORITY = ["manual", "plugin", "tencent", "iqiyi", "bilibili", "bangumi", "tmdb"]
 _MOVIE_MARKERS = ("电影", "影片", "movie")
 _ANIME_MARKERS = ("动漫", "动画", "番剧", "anime", "animation", "国创")
 _LIVE_ACTION_MARKERS = ("电视剧", "剧集", "连续剧", "剧版", "真人版", "真人", "短剧")
 _EPISODE_SORT_SENTINEL = 10**9
+_VARIETY_PUBLISH_DATE_RE = re.compile(r"(\d{4})\D(\d{1,2})\D(\d{1,2})")
 
 
 def is_high_confidence_iqiyi_episode_candidate(
@@ -59,6 +70,8 @@ def resolve_episode_title_source_priority(
     *,
     preferred_provider: str = "",
 ) -> list[str]:
+    if _playlist_is_variety(vod, playlist):
+        return list(_VARIETY_EPISODE_TITLE_SOURCE_PRIORITY)
     for candidate in candidates:
         if is_high_confidence_iqiyi_episode_candidate(
             vod,
@@ -215,6 +228,15 @@ def _titles_by_index_for_provider(
     provider: str,
     raw: dict[str, object],
 ) -> dict[int, str]:
+    if _playlist_is_variety(vod, playlist):
+        # Variety episodes are keyed by air date + 期段, not sequential episode
+        # numbers. The collapsed-number path (tmdb/bangumi/bilibili/iqiyi) maps
+        # 期上/中/下/加更 to a single episode and would scramble 纯享/陪看/花絮
+        # onto unrelated episodes (e.g. 第1期上纯享 -> iqiyi ep1). Only the
+        # official date-keyed matcher may emit; everything else stays unmapped.
+        if provider == "tencent" and _is_tencent_variety_candidate(vod, playlist, raw):
+            return _titles_by_index_for_tencent_variety(vod, playlist, raw)
+        return {}
     if provider == "bangumi":
         return _titles_by_index_for_bangumi(vod, playlist, raw)
     if provider == "tencent":
@@ -226,6 +248,110 @@ def _titles_by_index_for_provider(
     if provider == "tmdb":
         return _titles_by_index_for_tmdb(vod, playlist, raw)
     return {}
+
+
+def _playlist_is_variety(vod: VodItem, playlist: list[PlayItem]) -> bool:
+    if is_variety_collection(
+        getattr(vod, "type_name", ""),
+        getattr(vod, "category_name", ""),
+        getattr(vod, "vod_tag", ""),
+        getattr(vod, "vod_content", ""),
+    ):
+        return True
+    if not playlist:
+        return False
+    variety_items = sum(
+        is_likely_variety_title(item.original_title or item.title or "") for item in playlist
+    )
+    return variety_items >= 2 and variety_items * 2 >= len(playlist)
+
+
+def _variety_date_key_from_publish_date(publish_date: object) -> str:
+    match = _VARIETY_PUBLISH_DATE_RE.search(str(publish_date or ""))
+    if match is None:
+        return ""
+    year, month, day = match.groups()
+    return f"{year}{int(month):02d}{int(day):02d}"
+
+
+def _is_tencent_variety_candidate(
+    vod: VodItem,
+    playlist: list[PlayItem],
+    raw: dict[str, object],
+) -> bool:
+    """A Tencent candidate whose hydrated cover list can be matched by air date."""
+    if not _playlist_is_variety(vod, playlist):
+        return False
+    episodes = raw.get("episodes")
+    if not isinstance(episodes, list):
+        return False
+    return any(
+        isinstance(episode, dict) and str(episode.get("publish_date") or "").strip()
+        for episode in episodes
+    )
+
+
+def _titles_by_index_for_tencent_variety(
+    vod: VodItem,
+    playlist: list[PlayItem],
+    raw: dict[str, object],
+) -> dict[int, str]:
+    """Match variety files to the official Tencent episode list by (air date, part).
+
+    Air date is the strongest signal (filenames carry a YYYYMMDD prefix); the
+    期上/中/下/加更 part disambiguates same-date halves. Same-date files/episodes
+    without a parseable part (e.g. 先导片上/下) are paired in broadcast order.
+    Output is formatted ``MM-DD {官方标题}`` (no meaningless 第N集 prefix).
+    """
+    official_by_date: dict[str, list[dict[str, object]]] = {}
+    for episode in raw.get("episodes") or []:
+        if not isinstance(episode, dict):
+            continue
+        title = str(episode.get("title") or "").strip()
+        date_key = _variety_date_key_from_publish_date(episode.get("publish_date"))
+        if not title or not date_key:
+            continue
+        official_by_date.setdefault(date_key, []).append(
+            {
+                "title": title,
+                "part": extract_variety_part(title),
+                "mmdd": f"{int(date_key[4:6]):02d}-{int(date_key[6:8]):02d}",
+            }
+        )
+    if not official_by_date:
+        return {}
+
+    files_by_date: dict[str, list[tuple[int, str | None]]] = {}
+    for index, item in enumerate(playlist):
+        name = str(item.original_title or item.title or item.path or "")
+        date_key = _extract_variety_date_key(name)
+        if not date_key:
+            continue
+        files_by_date.setdefault(date_key, []).append((index, extract_variety_part(name)))
+
+    titles_by_index: dict[int, str] = {}
+    for date_key, files in files_by_date.items():
+        officials = official_by_date.get(date_key)
+        if not officials:
+            continue
+        used: set[int] = set()
+        # 1) exact (date, part) match — handles 第N期上/中/下/加更.
+        for index, file_part in files:
+            if file_part is None:
+                continue
+            for position, official in enumerate(officials):
+                if position in used:
+                    continue
+                if official["part"] is not None and official["part"] == file_part:
+                    titles_by_index[index] = f'{official["mmdd"]} {official["title"]}'
+                    used.add(position)
+                    break
+        # 2) order fallback for same-date items without a part (e.g. 先导片上/下).
+        remaining_officials = [official for position, official in enumerate(officials) if position not in used]
+        remaining_indices = [index for index, _part in files if index not in titles_by_index]
+        for index, official in zip(remaining_indices, remaining_officials):
+            titles_by_index[index] = f'{official["mmdd"]} {official["title"]}'
+    return titles_by_index
 
 
 def _titles_by_index_for_tencent(vod: VodItem, playlist: list[PlayItem], raw: dict[str, object]) -> dict[int, str]:

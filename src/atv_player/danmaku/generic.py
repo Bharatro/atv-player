@@ -24,8 +24,11 @@ from atv_player.danmaku.preferences import (
     save_item_danmaku_offset,
 )
 from atv_player.danmaku.utils import (
+    extract_variety_episode_label,
     has_explicit_episode_marker,
+    has_variety_issue_marker,
     infer_playlist_episode_number,
+    is_variety_collection,
 )
 from atv_player.models import PlayItem
 
@@ -59,12 +62,15 @@ def _looks_like_title_only_item(item: PlayItem) -> bool:
 def _default_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     if _looks_like_title_only_item(item):
         return ""
-    if not str(item.title or "").strip():
+    title = str(item.title or "").strip()
+    if not title:
         return ""
+    if has_variety_issue_marker(title) or is_variety_collection(item.type_name, item.category_name):
+        return extract_variety_episode_label(title)
     episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
-    if str(item.title or "").strip().isdigit():
+    if title.isdigit():
         return str(episode_number)
     return f"{episode_number}集" if has_explicit_episode_marker(item.title) or len(playlist or []) != 1 else ""
 

@@ -80,6 +80,8 @@ def test_player_controller_builds_history_payload() -> None:
     playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
     session = controller.create_session(vod, playlist, clicked_index=1)
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=1,
@@ -90,7 +92,7 @@ def test_player_controller_builds_history_payload() -> None:
         paused=False,
     )
 
-    payload = api.saved_payloads[0]
+    payload = saved[0]
     assert payload["key"] == "movie-1"
     assert payload["vodName"] == "Movie"
     assert payload["episode"] == 1
@@ -119,6 +121,8 @@ def test_player_controller_preserves_ytdlp_collection_title_in_history_payload()
     session.playlist[0].media_title = "Resolved YouTube Video"
     session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=0,
@@ -129,7 +133,7 @@ def test_player_controller_preserves_ytdlp_collection_title_in_history_payload()
         paused=False,
     )
 
-    payload = api.saved_payloads[0]
+    payload = saved[0]
     assert payload["vodName"] == "OpenAI"
     assert payload["vodRemarks"] == "Resolved YouTube Video"
 
@@ -153,6 +157,8 @@ def test_player_controller_uses_ytdlp_channel_name_when_initial_title_is_channel
     session.playlist[0].media_title = "Resolved YouTube Video"
     session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=0,
@@ -163,7 +169,7 @@ def test_player_controller_uses_ytdlp_channel_name_when_initial_title_is_channel
         paused=False,
     )
 
-    payload = api.saved_payloads[0]
+    payload = saved[0]
     assert payload["vodName"] == "OpenAI"
     assert payload["vodRemarks"] == "Resolved YouTube Video"
 
@@ -180,6 +186,8 @@ def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_url_p
     session.playlist[0].media_title = "Resolved YouTube Video"
     session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=0,
@@ -190,7 +198,7 @@ def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_url_p
         paused=False,
     )
 
-    payload = api.saved_payloads[0]
+    payload = saved[0]
     assert payload["vodName"] == "Resolved YouTube Video"
     assert payload["vodRemarks"] == "Resolved YouTube Video"
 
@@ -207,6 +215,8 @@ def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_bare_
     session.playlist[0].media_title = "Resolved YouTube Video"
     session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=0,
@@ -217,7 +227,7 @@ def test_player_controller_uses_resolved_ytdlp_title_when_initial_title_is_bare_
         paused=False,
     )
 
-    payload = api.saved_payloads[0]
+    payload = saved[0]
     assert payload["vodName"] == "Resolved YouTube Video"
     assert payload["vodRemarks"] == "Resolved YouTube Video"
 
@@ -287,6 +297,8 @@ def test_player_controller_binds_session_aware_playback_loader_without_changing_
     assert session.playback_loader is not None
     session.playback_loader(session.playlist[0])
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(
         session,
         current_index=0,
@@ -300,7 +312,7 @@ def test_player_controller_binds_session_aware_playback_loader_without_changing_
 
     assert session.video_cover_override == "https://img.example/video-cover.jpg"
     assert session.vod.vod_pic == "poster-detail"
-    assert api.saved_payloads[0]["vodPic"] == "poster-detail"
+    assert saved[0]["vodPic"] == "poster-detail"
 
 
 def test_player_controller_create_session_preserves_detail_resolver_and_seed_cache() -> None:
@@ -597,9 +609,11 @@ def test_player_controller_saves_original_youtube_url_instead_of_video_only_reso
         use_local_history=True,
     )
 
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
     controller.report_progress(session, 0, 12, 1.0, 0, 0, paused=False)
 
-    assert api.saved_payloads[0]["episodeUrl"] == "https://www.youtube.com/watch?v=abc123xyz89"
+    assert saved[0]["episodeUrl"] == "https://www.youtube.com/watch?v=abc123xyz89"
 
 
 def test_player_controller_prefers_plugin_local_history_loader() -> None:

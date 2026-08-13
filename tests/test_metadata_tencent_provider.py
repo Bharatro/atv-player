@@ -571,3 +571,87 @@ def test_tencent_metadata_provider_search_prefers_category_matched_result_for_sa
         ("仙剑奇侠传三", "https://v.qq.com/x/cover/drama/ep1.html"),
     ]
     assert matches[0].score > matches[1].score
+
+
+def _cover_episode_payload() -> dict:
+    # Shape mirrors the real GetPageData vsite_episode_list response.
+    return {
+        "data": {
+            "module_list_datas": [
+                {
+                    "module_datas": [
+                        {
+                            "item_data_lists": {
+                                "item_datas": [
+                                    {
+                                        "item_params": {
+                                            "union_title": "先导片上：丘比特集结",
+                                            "publish_date": "2026-07-31 00:00:00",
+                                        }
+                                    },
+                                    {
+                                        "item_params": {
+                                            "union_title": "第1期上：又争又抢",
+                                            "publish_date": "2026-08-03 00:00:00",
+                                        }
+                                    },
+                                    # Section tabs carry no publish date -> must be skipped.
+                                    {"item_params": {"union_title": "纯享"}},
+                                    {"item_params": {}},
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+
+def test_tencent_parse_cover_episodes_keeps_dated_episodes_and_drops_section_tabs() -> None:
+    provider = TencentMetadataProvider()
+    episodes = provider._parse_cover_episodes(_cover_episode_payload())
+
+    assert episodes == [
+        {"title": "先导片上：丘比特集结", "publish_date": "2026-07-31 00:00:00"},
+        {"title": "第1期上：又争又抢", "publish_date": "2026-08-03 00:00:00"},
+    ]
+
+
+def test_tencent_hydrate_episode_candidate_fetches_cover_list_into_raw() -> None:
+    requested = {}
+
+    def fake_post(url: str, **kwargs):
+        requested["url"] = url
+        requested["json"] = kwargs.get("json")
+        return JsonResponse(_cover_episode_payload())
+
+    provider = TencentMetadataProvider(post=fake_post)
+    candidate = MetadataMatch(
+        provider="tencent",
+        provider_id="https://v.qq.com/x/cover/mzc002003kpyd2m.html",
+        title="心动的信号 第九季",
+        year="2026",
+        raw={},
+    )
+
+    hydrated = provider._hydrate_episode_candidate(candidate)
+
+    assert requested["url"] == (
+        "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+    )
+    assert requested["json"]["page_params"]["cid"] == "mzc002003kpyd2m"
+    assert hydrated.raw["episode_list_source"] == "tencent_cover"
+    assert hydrated.raw["episodes"][0] == {
+        "title": "先导片上：丘比特集结",
+        "publish_date": "2026-07-31 00:00:00",
+    }
+
+
+def test_tencent_hydrate_episode_candidate_returns_candidate_unchanged_without_cover_id() -> None:
+    provider = TencentMetadataProvider()
+    candidate = MetadataMatch(provider="tencent", provider_id="not-a-cover-url", title="x", year="2026", raw={})
+
+    hydrated = provider._hydrate_episode_candidate(candidate)
+    assert hydrated is candidate
+    assert hydrated.raw == {}

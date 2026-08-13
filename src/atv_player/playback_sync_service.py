@@ -190,13 +190,6 @@ class PlaybackHistorySyncService(QObject):
             reverse=True,
         )
         records = all_records[:SYNC_LIMIT]
-        present_identities: set[tuple[str, str, str]] = set()
-        for record in all_records:
-            record_key = self._resolved_sync_identity(
-                record.source_kind, record.source_key, record.key, self._sync_key_resolver
-            )
-            if record_key is not None:
-                present_identities.add(record_key)
         current_versions: dict[tuple[str, str, str], int] = {}
         changed: list[tuple[tuple[str, str, str], int, dict[str, Any]]] = []
         for record in records:
@@ -211,41 +204,67 @@ class PlaybackHistorySyncService(QObject):
             current_versions[record_key] = updated_at
             if updated_at > self._pushed_versions.get(record_key, -1):
                 changed.append((record_key, updated_at, payload))
-        deleted = [
-            {
-                "event": "playback.deleted",
-                "scope": "item",
-                "sourceKind": source_kind,
-                "sourceKey": source_key,
-                "vodId": vod_id,
-                # 本地库没有删除时间；使用最后一次已知版本可删除同版本服务端记录，
-                # 又不会让一次延迟扫描覆盖其他设备后来写入的进度。
-                "deletedAt": max(1, int(updated_at)),
-            }
-            for (source_kind, source_key, vod_id), updated_at in self._pushed_versions.items()
-            if (source_kind, source_key, vod_id) not in present_identities
-        ]
+        # 删除只走显式通道:用户删除时写入 pending 队列,这里转成 tombstone 上报。
+        # 不再用 list 差集推断删除——那会在账户/命名空间切换时把"不可见"的全量记录
+        # 误判为已删除并上报,配合服务端墓碑回灌清空整库(2026-08-09 实测 159→0)。
+        tombstones, consumed_deletes = self._build_pending_tombstones()
         logger.info(
             "playback sync scan: local=%d latest=%d snapshot=%d updates=%d deletes=%d",
             len(all_records),
             len(records),
             len(self._pushed_versions),
             len(changed),
-            len(deleted),
+            len(tombstones),
         )
-        if not changed and not deleted:
+        if not changed and not tombstones:
             if current_versions != self._pushed_versions:
                 self._repo.replace_sync_snapshot(self._namespace, current_versions)
                 self._pushed_versions = current_versions
             return
-        self._api.push_playback_events([payload for _, _, payload in changed] + deleted)
+        self._api.push_playback_events([payload for _, _, payload in changed] + tombstones)
         logger.info(
             "playback sync push succeeded: updates=%d deletes=%d",
             len(changed),
-            len(deleted),
+            len(tombstones),
         )
+        # 仅在上报成功后清掉已消费的 pending 删除;失败则留待下个 tick 重试。
+        if consumed_deletes:
+            self._repo.clear_pending_deletions(consumed_deletes)
         self._repo.replace_sync_snapshot(self._namespace, current_versions)
         self._pushed_versions = current_versions
+
+    def _build_pending_tombstones(self) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
+        """把本地 pending 删除队列转成服务端 tombstone。
+
+        返回 ``(tombstones, consumed)``:``tombstones`` 用于上报;``consumed`` 是上报成功后
+        需要从 pending 表清掉的原始 (source_kind, source_key, vod_id)。无法解析同步身份的
+        记录(如缺稳定 manifest id 的 spider_plugin)无法上报,直接丢弃并告警。
+        """
+        tombstones: list[dict[str, Any]] = []
+        consumed: list[tuple[str, str, str]] = []
+        undeliverable: list[tuple[str, str, str]] = []
+        for source_kind, source_key, vod_id, deleted_at in self._repo.list_pending_deletions():
+            sync_identity = self._resolved_sync_identity(
+                source_kind, source_key, vod_id, self._sync_key_resolver
+            )
+            if sync_identity is None:
+                self._warn_unmapped_plugin("delete", source_key)
+                undeliverable.append((source_kind, source_key, vod_id))
+                continue
+            tombstones.append(
+                {
+                    "event": "playback.deleted",
+                    "scope": "item",
+                    "sourceKind": sync_identity[0],
+                    "sourceKey": sync_identity[1],
+                    "vodId": sync_identity[2],
+                    "deletedAt": max(1, int(deleted_at or 1)),
+                }
+            )
+            consumed.append((source_kind, source_key, vod_id))
+        if undeliverable:
+            self._repo.clear_pending_deletions(undeliverable)
+        return tombstones, consumed
 
     @staticmethod
     def _record_key(source_kind: str, source_key: str, vod_id: str) -> tuple[str, str, str]:

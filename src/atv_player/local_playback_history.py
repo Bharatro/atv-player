@@ -93,6 +93,18 @@ class LocalPlaybackHistoryRepository:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playback_sync_pending_deletions (
+                    account_namespace TEXT NOT NULL DEFAULT '',
+                    source_kind TEXT NOT NULL,
+                    source_key TEXT NOT NULL DEFAULT '',
+                    vod_id TEXT NOT NULL,
+                    deleted_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (account_namespace, source_kind, source_key, vod_id)
+                )
+                """
+            )
 
     def _migrate_account_namespace(self, conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -482,4 +494,46 @@ class LocalPlaybackHistoryRepository:
                 WHERE namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?
                 """,
                 (namespace, *identity),
+            )
+
+    def record_pending_deletion(
+        self, source_kind: str, source_key: str, vod_id: str, deleted_at: int
+    ) -> None:
+        """记录一条用户显式删除,待下次同步 PUSH 转成服务端 tombstone(替代旧的 list 差集推断)。"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO playback_sync_pending_deletions
+                    (account_namespace, source_kind, source_key, vod_id, deleted_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(account_namespace, source_kind, source_key, vod_id)
+                DO UPDATE SET deleted_at = excluded.deleted_at
+                """,
+                (self._account_namespace, source_kind, source_key, vod_id, int(deleted_at)),
+            )
+
+    def list_pending_deletions(self) -> list[tuple[str, str, str, int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_kind, source_key, vod_id, deleted_at
+                FROM playback_sync_pending_deletions WHERE account_namespace = ?
+                """,
+                (self._account_namespace,),
+            ).fetchall()
+        return [(str(row[0]), str(row[1]), str(row[2]), int(row[3])) for row in rows]
+
+    def clear_pending_deletions(self, items: list[tuple[str, str, str]]) -> None:
+        if not items:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                DELETE FROM playback_sync_pending_deletions
+                WHERE account_namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?
+                """,
+                [
+                    (self._account_namespace, source_kind, source_key, vod_id)
+                    for source_kind, source_key, vod_id in items
+                ],
             )

@@ -52,6 +52,7 @@ from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import (
     infer_playlist_episode_number,
     is_likely_variety_title,
+    is_variety_collection,
 )
 from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
@@ -73,10 +74,12 @@ from atv_player.playback_sync_service import PlaybackHistorySyncService
 from atv_player.heat import HeatController, HeatService
 from atv_player.metadata import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    EpisodeTitleOverrideRepository,
     MetadataBindingRepository,
     MetadataCache,
     MetadataContext,
     MetadataHydrator,
+    apply_episode_title_overrides,
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
@@ -526,6 +529,11 @@ class AppCoordinator(QObject):
             self._plugin_manager = _NullPluginManager()
         self._metadata_binding_repository = (
             MetadataBindingRepository(repo.database_path)
+            if hasattr(repo, "database_path")
+            else None
+        )
+        self._episode_title_override_repository = (
+            EpisodeTitleOverrideRepository(repo.database_path)
             if hasattr(repo, "database_path")
             else None
         )
@@ -1228,18 +1236,12 @@ class AppCoordinator(QObject):
             )
 
         def _is_variety_playlist(session_vod: VodItem, playlist: list[PlayItem]) -> bool:
-            metadata_text = " ".join(
-                str(value or "").strip().casefold()
-                for value in (
-                    session_vod.type_name,
-                    session_vod.category_name,
-                    session_vod.vod_tag,
-                    session_vod.vod_content,
-                )
-                if str(value or "").strip()
-            )
-            variety_markers = ("综艺", "真人秀", "脱口秀", "variety")
-            if any(marker in metadata_text for marker in variety_markers):
+            if is_variety_collection(
+                session_vod.type_name,
+                session_vod.category_name,
+                session_vod.vod_tag,
+                session_vod.vod_content,
+            ):
                 return True
             variety_items = sum(
                 is_likely_variety_title(item.original_title or item.title or item.path)
@@ -1689,7 +1691,10 @@ class AppCoordinator(QObject):
                     requested_seasons.add(pair[0])
                 if not requested_seasons:
                     requested_seasons.add(default_season)
-                if search_results:
+                # TMDB's flat season/episode model cannot represent variety shows
+                # (期上/中/下 + 加更 + 陪看 + 纯享), and its direct title assignment would
+                # shadow the official-source match below. Skip it for variety playlists.
+                if search_results and not preserve_playlist_order:
                     preferred_title = playlist_search_title or search_title
                     matched = _select_tmdb_search_match(
                         search_results,
@@ -1874,7 +1879,26 @@ class AppCoordinator(QObject):
                     str(session_vod.vod_year or "").strip(),
                 )
                 return playlist if playlist_has_title_variants(playlist) else None
-            return enhance
+
+            override_repo = self._episode_title_override_repository
+
+            def enhance_with_overrides(session) -> list | None:
+                # Manual per-episode overrides win over every auto-derived source
+                # (manual is rank 0 in the source priority). Applied to the returned
+                # playlist so the player-window merge carries the manual titles through.
+                updated = enhance(session)
+                if updated is None or override_repo is None:
+                    return updated
+                overrides = override_repo.load_for_session(
+                    source_kind=source_kind,
+                    source_key=str(getattr(session, "source_key", "") or ""),
+                    vod_id=str(getattr(getattr(session, "vod", None), "vod_id", "") or ""),
+                )
+                if overrides:
+                    apply_episode_title_overrides(updated, overrides)
+                return updated
+
+            return enhance_with_overrides
 
         return factory
 
@@ -2297,6 +2321,7 @@ class AppCoordinator(QObject):
             danmaku_controller_factory=danmaku_controller_factory,
             episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,
+            episode_title_override_repository=self._episode_title_override_repository,
             danmaku_preference_store=self._danmaku_preference_store,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
