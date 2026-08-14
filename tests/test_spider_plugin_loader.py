@@ -48,6 +48,20 @@ def test_loader_loads_local_plugin_and_installs_base_spider_alias(tmp_path: Path
     assert loaded.search_enabled is False
 
 
+def test_loader_exposes_stable_id_from_plain_python_metadata(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "木偶.py"
+    plugin_path.write_text(
+        'PLUGIN_ID = "02544b320a6d45de997bc0bd3975d0c060b8"\n' + PLUGIN_SOURCE,
+        encoding="utf-8",
+    )
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache")
+    config = SpiderPluginConfig(id=99, source_type="local", source_value=str(plugin_path))
+
+    loaded = loader.load(config)
+
+    assert loaded.config.manifest_id == "02544b320a6d45de997bc0bd3975d0c060b8"
+
+
 def test_loader_can_defer_plugin_init_until_explicit_initialization(tmp_path: Path) -> None:
     plugin_path = tmp_path / "懒加载插件.py"
     plugin_path.write_text(

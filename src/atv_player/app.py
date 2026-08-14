@@ -28,6 +28,7 @@ from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import create_default_danmaku_service
+from atv_player.subtitles.service import create_default_subtitle_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.favorites_controller import FavoritesController
@@ -52,6 +53,7 @@ from atv_player.crash_diagnostics import install_crash_diagnostics
 from atv_player.danmaku.utils import (
     infer_playlist_episode_number,
     is_likely_variety_title,
+    is_variety_collection,
 )
 from atv_player.diagnostics import resolve_app_version
 from atv_player.episode_titles import (
@@ -69,13 +71,16 @@ from atv_player.favorites_repository import FavoritesRepository
 from atv_player.following_metadata import FollowingMetadataGateway
 from atv_player.following_repository import FollowingRepository
 from atv_player.following_update_service import FollowingUpdateService
+from atv_player.playback_sync_service import PlaybackHistorySyncService
 from atv_player.heat import HeatController, HeatService
 from atv_player.metadata import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
+    EpisodeTitleOverrideRepository,
     MetadataBindingRepository,
     MetadataCache,
     MetadataContext,
     MetadataHydrator,
+    apply_episode_title_overrides,
     build_provider_episode_playlist,
     resolve_episode_title_source_priority,
 )
@@ -455,6 +460,7 @@ class AppCoordinator(QObject):
         self._app_log_service = app_log_service
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
+        self._playback_sync_service: PlaybackHistorySyncService | None = None
         self._api_client: ApiClient | None = None
         initial_config = self.repo.load_config()
         set_proxy_decider_loader(self._build_proxy_decider)
@@ -482,6 +488,12 @@ class AppCoordinator(QObject):
             config_loader=self.repo.load_config,
         )
         self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
+        self._subtitle_search_service = create_default_subtitle_service(
+            get=self._proxy_http_get(),
+            post=self._proxy_http_post(),
+            config_loader=self.repo.load_config,
+            disabled_provider_ids_loader=lambda: self.repo.load_config().disabled_subtitle_provider_ids,
+        )
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -498,6 +510,7 @@ class AppCoordinator(QObject):
                 self._playback_history_repository,
                 danmaku_preference_store=self._danmaku_preference_store,
             )
+            self._plugin_manager.backfill_source_metadata()
             setattr(self._plugin_manager, "_playback_parser_service", self._playback_parser_service)
             setattr(self._plugin_manager, "_yt_dlp_service", self._yt_dlp_service)
             setattr(self._plugin_manager, "_danmaku_service", self._danmaku_service)
@@ -523,6 +536,11 @@ class AppCoordinator(QObject):
             self._plugin_manager = _NullPluginManager()
         self._metadata_binding_repository = (
             MetadataBindingRepository(repo.database_path)
+            if hasattr(repo, "database_path")
+            else None
+        )
+        self._episode_title_override_repository = (
+            EpisodeTitleOverrideRepository(repo.database_path)
             if hasattr(repo, "database_path")
             else None
         )
@@ -670,6 +688,7 @@ class AppCoordinator(QObject):
                 token=config.token,
                 vod_token=config.vod_token,
                 proxy_decider=self._build_proxy_decider(),
+                username=config.username,
             )
         except TypeError as exc:
             if "proxy_decider" not in str(exc):
@@ -1224,18 +1243,12 @@ class AppCoordinator(QObject):
             )
 
         def _is_variety_playlist(session_vod: VodItem, playlist: list[PlayItem]) -> bool:
-            metadata_text = " ".join(
-                str(value or "").strip().casefold()
-                for value in (
-                    session_vod.type_name,
-                    session_vod.category_name,
-                    session_vod.vod_tag,
-                    session_vod.vod_content,
-                )
-                if str(value or "").strip()
-            )
-            variety_markers = ("综艺", "真人秀", "脱口秀", "variety")
-            if any(marker in metadata_text for marker in variety_markers):
+            if is_variety_collection(
+                session_vod.type_name,
+                session_vod.category_name,
+                session_vod.vod_tag,
+                session_vod.vod_content,
+            ):
                 return True
             variety_items = sum(
                 is_likely_variety_title(item.original_title or item.title or item.path)
@@ -1685,7 +1698,10 @@ class AppCoordinator(QObject):
                     requested_seasons.add(pair[0])
                 if not requested_seasons:
                     requested_seasons.add(default_season)
-                if search_results:
+                # TMDB's flat season/episode model cannot represent variety shows
+                # (期上/中/下 + 加更 + 陪看 + 纯享), and its direct title assignment would
+                # shadow the official-source match below. Skip it for variety playlists.
+                if search_results and not preserve_playlist_order:
                     preferred_title = playlist_search_title or search_title
                     matched = _select_tmdb_search_match(
                         search_results,
@@ -1870,12 +1886,32 @@ class AppCoordinator(QObject):
                     str(session_vod.vod_year or "").strip(),
                 )
                 return playlist if playlist_has_title_variants(playlist) else None
-            return enhance
+
+            override_repo = self._episode_title_override_repository
+
+            def enhance_with_overrides(session) -> list | None:
+                # Manual per-episode overrides win over every auto-derived source
+                # (manual is rank 0 in the source priority). Applied to the returned
+                # playlist so the player-window merge carries the manual titles through.
+                updated = enhance(session)
+                if updated is None or override_repo is None:
+                    return updated
+                overrides = override_repo.load_for_session(
+                    source_kind=source_kind,
+                    source_key=str(getattr(session, "source_key", "") or ""),
+                    vod_id=str(getattr(getattr(session, "vod", None), "vod_id", "") or ""),
+                )
+                if overrides:
+                    apply_episode_title_overrides(updated, overrides)
+                return updated
+
+            return enhance_with_overrides
 
         return factory
 
     def _show_login(self, error_message: str = "") -> LoginWindow:
         logger.info("Show login window has_error=%s", bool(error_message))
+        self._stop_playback_sync_service()
         self._close_api_client()
         login_controller = LoginController(
             self.repo,
@@ -1955,6 +1991,11 @@ class AppCoordinator(QObject):
     def _show_main(self):
         self._close_api_client()
         self._api_client = self._build_api_client()
+        identity = str(
+            getattr(self._api_client, "playback_sync_identity", "") or ""
+        ).strip()
+        if self._playback_history_repository is not None and identity:
+            self._playback_history_repository.set_active_account(identity)
         metadata_hydrator_factory = self._build_metadata_hydrator_factory(self._api_client)
         metadata_scrape_service_factory = self._build_metadata_scrape_service_factory(self._api_client)
         danmaku_controller_factory = self._build_danmaku_controller_factory()
@@ -2137,7 +2178,23 @@ class AppCoordinator(QObject):
                 source_name="飞牛影视",
             ),
         )
-        browse_controller = BrowseController(self._api_client)
+        browse_controller = BrowseController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda source_key, vod_id: self._playback_history_repository.get_history(
+                "browse", vod_id, source_key
+            ),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda source_key, vod_id, payload: self._playback_history_repository.save_history(
+                "browse",
+                vod_id,
+                payload,
+                source_key=source_key,
+                source_name="AList",
+            ),
+        )
         pansou_controller = PansouController(browse_controller) if bool(capabilities.get("pansou")) else None
         history_controller = HistoryController(self._api_client, self._playback_history_repository)
         favorites_controller = FavoritesController(
@@ -2183,6 +2240,17 @@ class AppCoordinator(QObject):
             HeatService(),
             installation_id=app_identity.installation_id,
         )
+        self._stop_playback_sync_service()
+        if self._playback_history_repository is not None:
+            self._playback_sync_service = PlaybackHistorySyncService(
+                self._api_client,
+                self._playback_history_repository,
+                installation_id=app_identity.installation_id,
+                to_sync_source_key=self._to_playback_sync_source_key,
+                to_local_source_key=self._to_local_playback_source_key,
+                playback_source_keys_loader=self._playback_sync_source_keys,
+                parent=self,
+            )
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
@@ -2257,14 +2325,18 @@ class AppCoordinator(QObject):
             youtube_category_text_loader=getattr(self._api_client, "get_text", None),
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
+            subtitle_search_service=self._subtitle_search_service,
             danmaku_controller_factory=danmaku_controller_factory,
             episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,
+            episode_title_override_repository=self._episode_title_override_repository,
             danmaku_preference_store=self._danmaku_preference_store,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if following_update_service is not None:
             following_update_service.start()
+        if self._playback_sync_service is not None:
+            self._playback_sync_service.start()
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
@@ -2282,6 +2354,42 @@ class AppCoordinator(QObject):
                 if restored is not None:
                     return restored
         return self.main_window
+
+    def _stop_playback_sync_service(self) -> None:
+        if self._playback_sync_service is None:
+            return
+        # 关闭/登出/重建前 flush 最后一次 PUSH,避免 <30s tick 窗口内的进度丢失。
+        self._playback_sync_service.flush()
+        self._playback_sync_service.deleteLater()
+        self._playback_sync_service = None
+
+    def _to_playback_sync_source_key(self, source_kind: str, source_key: str) -> str | None:
+        if source_kind != "spider_plugin":
+            return source_key
+        if self._plugin_repository is None:
+            return None
+        try:
+            plugin = self._plugin_repository.get_plugin(int(source_key))
+        except (AssertionError, TypeError, ValueError):
+            return None
+        return plugin.manifest_id.strip() or None
+
+    def _to_local_playback_source_key(self, source_kind: str, source_key: str) -> str | None:
+        if source_kind != "spider_plugin":
+            return source_key
+        if self._plugin_repository is None:
+            return None
+        plugin = self._plugin_repository.find_plugin_by_manifest_id(source_key)
+        return str(plugin.id) if plugin is not None else None
+
+    def _playback_sync_source_keys(self) -> list[str]:
+        if self._plugin_repository is None:
+            return []
+        return [
+            plugin.manifest_id.strip()
+            for plugin in self._plugin_repository.list_plugins()
+            if plugin.enabled and plugin.manifest_id.strip()
+        ]
 
     def _start_live_background_refresh(self, live_source_manager, live_epg_service) -> None:
         def refresh_epg() -> None:
@@ -2367,6 +2475,7 @@ class AppCoordinator(QObject):
         widget.show()
 
     def close(self) -> None:
+        self._stop_playback_sync_service()
         close_filter = getattr(self._m3u8_ad_filter, "close", None)
         if callable(close_filter):
             close_filter()

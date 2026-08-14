@@ -101,6 +101,36 @@ def test_build_mpv_script_auto_installs_liblua52_dev_when_missing(tmp_path: Path
     assert "+ sudo apt-get install -y liblua5.2-dev" in result.stdout
 
 
+def test_build_mpv_script_auto_installs_libxml2_dev_when_missing(tmp_path: Path) -> None:
+    workdir = tmp_path / "mpv-build"
+    _write_fake_mpv_build_repo(workdir)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    for tool in ("git", "meson", "ninja", "sudo", "nasm", "apt-get", "dirname"):
+        _write_fake_tool(fake_bin, tool)
+    (fake_bin / "pkg-config").write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *libxml-2.0*) exit 1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    os.chmod(fake_bin / "pkg-config", 0o755)
+
+    result = _run_script(
+        tmp_path,
+        "--workdir",
+        str(workdir),
+        "--dry-run",
+        "--no-install",
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0
+    assert "+ sudo apt-get install -y libxml2-dev" in result.stdout
+
+
 def test_build_mpv_script_fails_when_lua_dev_runtime_missing_and_apt_get_unavailable(tmp_path: Path) -> None:
     workdir = tmp_path / "mpv-build"
     _write_fake_mpv_build_repo(workdir)
@@ -340,7 +370,9 @@ def test_build_mpv_script_writes_disable_x86asm_option_and_uses_release_track_by
     )
 
     assert result.returncode == 0
-    assert (workdir / "ffmpeg_options").read_text(encoding="utf-8") == "--disable-x86asm\n"
+    assert (workdir / "ffmpeg_options").read_text(encoding="utf-8") == (
+        "--enable-libxml2\n--disable-x86asm\n"
+    )
     assert "+ ./use-mpv-release" in result.stdout
     assert "+ ./use-ffmpeg-release" in result.stdout
     assert "+ ./rebuild -j8" in result.stdout

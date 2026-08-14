@@ -2181,6 +2181,63 @@ def test_controller_populates_grouped_danmaku_candidates_on_successful_search() 
     assert len(item.danmaku_candidates) == 1
 
 
+def test_controller_auto_resolve_danmaku_searches_and_downloads_default_source() -> None:
+    """auto_resolve_danmaku is the player window's generic auto-load fallback for
+    plugin sources (the path taken when opening from playback history, where the
+    loader-based _maybe_resolve_danmaku does not run for the resumed episode). It
+    must search sources and download the default, mirroring the generic controller."""
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="bilibili",
+                                name="凡人修仙传 第127话",
+                                url="https://www.bilibili.com/bangumi/127",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://www.bilibili.com/bangumi/127",
+                default_provider="bilibili",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="网盘资源",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(
+        title="第127集 外海风云3",
+        url="https://stream.example/play/127.m3u8",
+        media_title="凡人修仙传",
+        vod_id="/play/127",
+    )
+
+    resolved = controller.auto_resolve_danmaku(item)
+
+    assert resolved is True
+    assert item.selected_danmaku_url == "https://www.bilibili.com/bangumi/127"
+    assert item.danmaku_xml != ""
+    assert item.danmaku_search_query == "凡人修仙传 127集"
+
+
 def test_controller_research_danmaku_uses_temporary_query_only_for_current_item() -> None:
     calls: list[str] = []
 
@@ -7078,3 +7135,68 @@ def test_plugin_metadata_provider_maps_custom_metadata_payload() -> None:
     assert record.overview == "插件简介"
     assert record.rating == "9.3"
     assert record.imdb_id == "tt1234567"
+
+
+def test_extract_episode_label_uses_variety_issue_for_plugin_variety_item() -> None:
+    # Plugin sources compose the danmaku query from _extract_episode_label; a
+    # variety filename must yield a date+issue+part label (not "N集"), otherwise
+    # the service's variety branch has no issue key to match on.
+    item = PlayItem(
+        title="2026.08.10-第2期上.mp4",
+        url="http://host/1",
+        media_title="心动的信号 第9季",
+        type_name="真人秀",
+    )
+
+    assert controller_module._extract_episode_label(item, [item]) == "20260810 第2期上"
+
+
+def test_extract_episode_label_uses_metadata_type_when_filename_is_generic() -> None:
+    # Filename carries no 第N期 marker; the 综艺 genre from metadata is what
+    # routes it onto the variety path.
+    item = PlayItem(title="2026.08.10.mp4", url="http://host/1", media_title="节目", type_name="综艺")
+
+    assert controller_module._extract_episode_label(item, [item]) == "20260810"
+
+
+def test_extract_episode_label_keeps_episode_numbering_for_dated_drama_files() -> None:
+    # A bare air date in an ordinary episode filename must NOT trigger the
+    # variety path (regression guard for dated anime/drama filenames).
+    item = PlayItem(
+        title="04-第4话 啥！啥！这是啥啊！-1080P 高码率-HEVC-2026-03-03",
+        url="http://host/1",
+        media_title="盗妖行",
+    )
+
+    assert controller_module._extract_episode_label(item, [item]) == "4集"
+
+
+def test_metadata_danmaku_preference_pins_provider_from_official_link() -> None:
+    controller = SpiderPluginController(DanmakuEnabledFakeSpider(), plugin_name="p", search_enabled=True)
+    item = PlayItem(
+        title="第1集",
+        url="http://host/1",
+        media_title="心动的信号 第9季",
+        metadata_provider_url="https://v.qq.com/x/cover/mzc002003kpyd2m/w4102gzejm3.html",
+    )
+
+    preference = controller._metadata_danmaku_preference(item, "series-key")
+
+    assert preference is not None
+    assert preference.provider == "tencent"
+    assert preference.page_url == "https://v.qq.com/x/cover/mzc002003kpyd2m/w4102gzejm3.html"
+    assert preference.search_title == ""
+
+
+def test_metadata_danmaku_preference_returns_none_without_usable_url() -> None:
+    controller = SpiderPluginController(DanmakuEnabledFakeSpider(), plugin_name="p", search_enabled=True)
+    bare = PlayItem(title="第1集", url="http://host/1", media_title="剧")
+    unknown = PlayItem(
+        title="第1集",
+        url="http://host/1",
+        media_title="剧",
+        metadata_provider_url="https://example.com/watch/1",
+    )
+
+    assert controller._metadata_danmaku_preference(bare, "k") is None
+    assert controller._metadata_danmaku_preference(unknown, "k") is None

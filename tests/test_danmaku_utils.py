@@ -3,15 +3,25 @@ from atv_player.danmaku.utils import (
     build_xml,
     episode_matches_request,
     extract_episode_number,
+    extract_official_link_url,
+    extract_variety_episode_label,
     extract_variety_issue_key,
+    extract_variety_part,
+    has_variety_issue_marker,
     infer_playlist_episode_number,
     is_likely_variety_title,
+    is_variety_collection,
     match_provider,
     normalize_name,
     should_filter_name,
     strip_variety_issue_suffix,
 )
-from atv_player.models import PlayItem
+from atv_player.models import (
+    PlaybackDetailField,
+    PlaybackDetailFieldAction,
+    PlaybackDetailValuePart,
+    PlayItem,
+)
 
 
 def test_normalize_name_strips_noise_tokens() -> None:
@@ -50,6 +60,14 @@ def test_should_filter_name_keeps_marker_led_episode_subtitle() -> None:
     assert should_filter_name(target, "第十三集 朱字当众揭穿我藏在凤椅下，皇后一句谁先取她的命") is False
 
 
+def test_should_filter_name_keeps_date_led_variety_episode_subtitle() -> None:
+    # Tencent names variety episodes by air date + 第N期 + subtitle, with no show
+    # name (e.g. "2026-08-10 第2期上：<subtitle>"); such candidates must not be
+    # dropped by name-similarity (regression: 《心动的信号 第9季》综艺 0 候选).
+    target = normalize_name("心动的信号 第9季 20260810 第2期上")
+    assert should_filter_name(target, "2026-08-10 第2期上：偶像剧现场 情歌对唱甜蜜升温") is False
+
+
 def test_episode_matches_request_rejects_different_show_with_same_episode_number() -> None:
     # A candidate carrying a different show-name prefix must still be rejected even
     # when its episode number equals the request (guard against over-relaxation).
@@ -84,6 +102,106 @@ def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
 
 def test_extract_variety_issue_key_supports_calendar_issue_titles() -> None:
     assert extract_variety_issue_key("你好星期六 20250104期") == "20250104"
+
+
+def test_extract_variety_part_finds_half_marker_after_issue() -> None:
+    assert extract_variety_part("2026-08-10 第2期上：偶像剧现场") == "上"
+    assert extract_variety_part("哈哈哈哈哈第6季 第1期下 邓超陈赫斗舞") == "下"
+    assert extract_variety_part("第1期加更上 小屋荡秋千") == "加更上"
+    assert extract_variety_part("第1期加更") == "加更"
+
+
+def test_extract_variety_part_returns_none_without_marker() -> None:
+    assert extract_variety_part("你好星期六 20250104期") is None
+    assert extract_variety_part("歌手2026 第12期") is None
+    # 完整版 must NOT be read as part 完 (followed by CJK 整).
+    assert extract_variety_part("《哈哈哈哈哈第六季》 第七期 完整版") is None
+
+
+def test_extract_variety_issue_key_appends_part_for_disambiguation() -> None:
+    assert extract_variety_issue_key("2026-08-10 第2期上：偶像剧现场") == "20260810上"
+    assert extract_variety_issue_key("2026-08-10 第2期中：首次约会") == "20260810中"
+    assert extract_variety_issue_key("2026-08-11 第2期下：勇敢者约会") == "20260811下"
+    # No part -> bare key (back-compat with calendar issue titles).
+    assert extract_variety_issue_key("你好星期六 20250104期") == "20250104"
+
+
+def test_extract_variety_episode_label_builds_from_filename() -> None:
+    assert extract_variety_episode_label("2026.08.10-第2期上.mp4") == "20260810 第2期上"
+    assert extract_variety_episode_label("第2期上.mp4") == "第2期上"
+    assert extract_variety_episode_label("第1期加更上.mp4") == "第1期加更上"
+    assert extract_variety_episode_label("纯享版.mp4") == ""
+
+
+def test_is_variety_collection_reads_metadata_genres() -> None:
+    assert is_variety_collection("真人秀") is True
+    assert is_variety_collection("综艺") is True
+    assert is_variety_collection("", "脱口秀") is True
+    assert is_variety_collection("Variety") is True
+    assert is_variety_collection("电视剧") is False
+    assert is_variety_collection("", "") is False
+    # tag/content are also consulted (parity with app-level playlist detection).
+    assert is_variety_collection("", "", "", "国内综艺first") is True
+
+
+def test_has_variety_issue_marker_ignores_bare_dates() -> None:
+    # 第N期/N期 and hint tokens qualify...
+    assert has_variety_issue_marker("2026-08-10 第2期上") is True
+    assert has_variety_issue_marker("20250104期") is True
+    assert has_variety_issue_marker("第1期加更") is True
+    # ...but a bare air date must NOT, or ordinary episode files with dates
+    # (e.g. anime "04-第4话…-2026-03-03") would be misread as variety issues.
+    assert has_variety_issue_marker("04-第4话 啥！啥！-1080P-2026-03-03") is False
+    assert has_variety_issue_marker("2026.08.10.mp4") is False
+
+
+def test_match_provider_maps_sohu_and_migu() -> None:
+    assert match_provider("https://tv.sohu.com/v/abc.html") == "sohu"
+    assert match_provider("https://www.miguvideo.com/p/detail/abc") == "migu"
+
+
+def test_extract_official_link_url_returns_first_known_platform_link() -> None:
+    fields = [
+        PlaybackDetailField(label="别名", value="Heart Signal"),
+        PlaybackDetailField(
+            label="官方链接",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="腾讯视频",
+                    action=PlaybackDetailFieldAction(
+                        type="link", value="https://v.qq.com/x/cover/mzc002003kpyd2m/w4102gzejm3.html"
+                    ),
+                ),
+                PlaybackDetailValuePart(
+                    label="爱奇艺",
+                    action=PlaybackDetailFieldAction(type="link", value="https://www.iqiyi.com/v_demo.html"),
+                ),
+            ],
+        ),
+    ]
+
+    assert extract_official_link_url(fields) == "https://v.qq.com/x/cover/mzc002003kpyd2m/w4102gzejm3.html"
+
+
+def test_extract_official_link_url_skips_unknown_and_missing_links() -> None:
+    assert extract_official_link_url([]) == ""
+    assert extract_official_link_url(None) == ""
+    # A 官方链接 pointing at an unrecognized host yields nothing to pin.
+    unknown = [
+        PlaybackDetailField(
+            label="官方链接",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="其他",
+                    action=PlaybackDetailFieldAction(type="link", value="https://example.com/watch/1"),
+                )
+            ],
+        )
+    ]
+    assert extract_official_link_url(unknown) == ""
+    # Plain-text 官方链接 (no action) yields nothing.
+    text_only = [PlaybackDetailField(label="官方链接", value="腾讯视频")]
+    assert extract_official_link_url(text_only) == ""
 
 
 def test_is_likely_variety_title_distinguishes_issue_from_episode_titles() -> None:

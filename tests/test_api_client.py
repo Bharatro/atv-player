@@ -82,6 +82,29 @@ def test_api_client_attaches_authorization_header() -> None:
     assert seen_headers["authorization"] == "token-123"
 
 
+def test_pull_playback_records_sends_source_filters() -> None:
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(request.headers)
+        return httpx.Response(200, json={"items": [], "deleted": [], "nextSince": "1"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.pull_playback_records(
+        1,
+        source_kinds="site,spider_plugin",
+        site_keys="csp_AList,csp_TgWeb",
+    )
+
+    assert seen_headers["x-playsync-source-kind"] == "site,spider_plugin"
+    assert seen_headers["x-playsync-site-key"] == "csp_AList,csp_TgWeb"
+
+
 def test_api_client_uses_vod_token_for_vod_requests() -> None:
     seen_path = {"value": ""}
 
@@ -192,6 +215,7 @@ def test_api_client_maps_history_record() -> None:
                 "speed": 1.25,
                 "createTime": 123456,
                 "sourceSubgroupIndex": 2,
+                "sourceSubgroupName": "第三季",
                 "driveDirId": "season-3",
             },
         )
@@ -208,6 +232,7 @@ def test_api_client_maps_history_record() -> None:
     assert history.key == "movie-1"
     assert history.speed == 1.25
     assert history.source_subgroup_index == 2
+    assert history.source_subgroup_name == "第三季"
     assert history.drive_dir_id == "season-3"
 
 
@@ -404,9 +429,8 @@ def test_api_client_get_video_cover_returns_empty_string_for_missing_value() -> 
     assert client.get_video_cover() == ""
 
 
-def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
+def test_api_client_returns_none_for_successful_empty_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "DELETE"
         return httpx.Response(204, content=b"")
 
     client = ApiClient(
@@ -416,7 +440,7 @@ def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    assert client.delete_history(9) is None
+    assert client.logout() is None
 
 
 def test_api_client_returns_plain_text_for_successful_text_response() -> None:

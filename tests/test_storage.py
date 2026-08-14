@@ -287,6 +287,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
             "episode": 1,
             "episodeUrl": "https://b2/2.m3u8",
             "position": 90000,
+            "duration": 120000,
             "opening": 5000,
             "ending": 10000,
             "speed": 1.25,
@@ -294,6 +295,7 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
             "sourceGroupIndex": 1,
             "sourceIndex": 1,
             "sourceSubgroupIndex": 2,
+            "sourceSubgroupName": "第三季",
             "driveDirId": "season-3",
             "createTime": 42,
         },
@@ -304,10 +306,12 @@ def test_local_playback_history_round_trip_persists_grouped_source_indexes(tmp_p
     history = repo.get_history("spider_plugin", "detail-1", source_key="7")
 
     assert history is not None
+    assert history.duration == 120000
     assert history.playlist_index == 3
     assert history.source_group_index == 1
     assert history.source_index == 1
     assert history.source_subgroup_index == 2
+    assert history.source_subgroup_name == "第三季"
     assert history.drive_dir_id == "season-3"
 
 
@@ -426,6 +430,67 @@ def test_local_playback_history_repository_reads_legacy_spider_plugin_rows_witho
     assert history.key == "detail-1"
     assert history.source_key == ""
     assert history.episode == 1
+    assert history.duration == 0
+
+
+def test_local_playback_sync_state_survives_repository_restart(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    db_path = tmp_path / "app.db"
+    identity = ("emby", "server", "movie-1")
+    repo = LocalPlaybackHistoryRepository(db_path)
+    repo.set_sync_cursor("account-a", 42)
+    repo.replace_sync_snapshot("account-a", {identity: 100})
+
+    reloaded = LocalPlaybackHistoryRepository(db_path)
+
+    assert reloaded.get_sync_cursor("account-a") == 42
+    assert reloaded.load_sync_snapshot("account-a") == {identity: 100}
+    assert reloaded.get_sync_cursor("account-b") == 0
+    assert reloaded.load_sync_snapshot("account-b") == {}
+
+
+def test_local_playback_history_is_partitioned_by_account(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.set_active_account("account-a")
+    repo.save_history("emby", "movie", {"vodName": "A", "position": 100, "createTime": 1})
+
+    repo.set_active_account("account-b")
+    assert repo.get_history("emby", "movie") is None
+    repo.save_history("emby", "movie", {"vodName": "B", "position": 200, "createTime": 2})
+
+    repo.set_active_account("account-a")
+    assert repo.get_history("emby", "movie").position == 100
+    repo.set_active_account("account-b")
+    assert repo.get_history("emby", "movie").position == 200
+
+
+def test_local_playback_scope_delete_preserves_newer_rows(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    for vod_id, updated_at in (("old", 100), ("new", 300)):
+        repo.save_history(
+            "emby",
+            vod_id,
+            {"vodName": vod_id, "createTime": updated_at},
+            source_key="server",
+        )
+    repo.save_history(
+        "jellyfin",
+        "other",
+        {"vodName": "other", "createTime": 100},
+        source_key="server",
+    )
+
+    removed = repo.delete_site_history("emby", "server", 200)
+
+    assert removed == [("emby", "server", "old")]
+    assert repo.get_history("emby", "old", "server") is None
+    assert repo.get_history("emby", "new", "server") is not None
+    assert repo.get_history("jellyfin", "other", "server") is not None
 
 
 def test_settings_repository_round_trip(tmp_path: Path) -> None:
@@ -2755,3 +2820,28 @@ def test_settings_repository_normalizes_ai_values(tmp_path: Path) -> None:
     assert saved.ai_api_key == "sk-test"
     assert saved.ai_chat_model == "gpt-4o-mini"
     assert saved.ai_request_timeout_seconds == 120
+
+
+def test_local_playback_history_pending_deletions_round_trip(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+
+    assert repo.list_pending_deletions() == []
+
+    repo.record_pending_deletion("emby", "server", "vod-1", 100)
+    repo.record_pending_deletion("telegram", "", "vod-2", 200)
+    # 相同 identity 再次记录应覆盖时间戳。
+    repo.record_pending_deletion("emby", "server", "vod-1", 150)
+
+    pending = sorted(repo.list_pending_deletions())
+    assert pending == [
+        ("emby", "server", "vod-1", 150),
+        ("telegram", "", "vod-2", 200),
+    ]
+
+    repo.clear_pending_deletions([("emby", "server", "vod-1")])
+    assert repo.list_pending_deletions() == [("telegram", "", "vod-2", 200)]
+
+    repo.clear_pending_deletions([("telegram", "", "vod-2")])
+    assert repo.list_pending_deletions() == []

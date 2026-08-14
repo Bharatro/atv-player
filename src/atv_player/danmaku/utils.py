@@ -56,13 +56,16 @@ _EXPLICIT_EPISODE_PATTERNS = (
 # prefix), e.g. "第十三集 <剧情>" / "13集 ..." / "EP13 ...". Platforms such as
 # Tencent name episodes this way, so the show name is absent and name-similarity
 # against the query cannot judge relevance — such candidates must be kept and
-# matched by episode number instead.
+# matched by episode number instead. Variety episodes often lead with their
+# air date, e.g. "2026-08-10 第2期上：<subtitle>", so a full date is also
+# accepted as a leading marker.
 _LEADING_EPISODE_MARKER = re.compile(
     r"^\s*(?:第\s*[0-9零一二两三四五六七八九十百]+\s*[集话期部回]"
     r"|0*[0-9]+\s*[集话期]"
     r"|S\d+\s*E\s*0*[0-9]+"
     r"|EP\s*0*[0-9]+"
     r"|E\s*0*[0-9]+"
+    r"|(?:19|20)\d{2}[\s._/-]?(?:0[1-9]|1[0-2])[\s._/-]?(?:0[1-9]|[12]\d|3[01])\b"
     r"|[0-9]+\s*$)",
     re.IGNORECASE,
 )
@@ -420,14 +423,59 @@ def _extract_variety_issue_number(name: str) -> int | None:
     return None
 
 
+_VARIETY_PART_PATTERN = re.compile(
+    r"期\s*(加更(?:[上下中终完])?|[上下中终完])(?![一-鿿])",
+)
+
+
+def extract_variety_part(name: str) -> str | None:
+    """Variety sub-part token following 第N期, e.g. 上/中/下/加更上.
+
+    Lets ``extract_variety_issue_key`` distinguish same-date/same-issue halves
+    (第2期上 vs 第2期中 vs 第2期下) so danmaku matching picks the exact part.
+    The negative CJK lookahead avoids false positives on words like 完整版/完结.
+    Returns None when no part marker is present.
+    """
+    match = _VARIETY_PART_PATTERN.search(normalize_name(name))
+    if match is None:
+        return None
+    return match.group(1)
+
+
 def extract_variety_issue_key(name: str) -> str | None:
     date_key = _extract_variety_date_key(name)
+    base: str | None = date_key
+    if base is None:
+        issue_number = _extract_variety_issue_number(name)
+        if issue_number is not None:
+            base = str(issue_number)
+    if base is None:
+        return None
+    part = extract_variety_part(name)
+    return f"{base}{part}" if part else base
+
+
+def extract_variety_episode_label(title: str) -> str:
+    """Build a danmaku search episode label for a variety filename/title.
+
+    Reconstructs a compact ``[date] 第N期[part]`` suffix (e.g. ``20260810 第2期上``)
+    from a filename like ``2026.08.10-第2期上.mp4`` so the composed danmaku query
+    carries the variety signal. The date is included when present so both the
+    query and provider candidates resolve to a date-based ``extract_variety_issue_key``
+    and match. Returns "" when no date/issue/part can be recovered.
+    """
+    date_key = _extract_variety_date_key(title)
+    issue = _extract_variety_issue_number(title)
+    part = extract_variety_part(title)
+    segments: list[str] = []
     if date_key is not None:
-        return date_key
-    issue_number = _extract_variety_issue_number(name)
-    if issue_number is not None:
-        return str(issue_number)
-    return None
+        segments.append(date_key)
+    if issue is not None:
+        segments.append(f"第{issue}期")
+    label = " ".join(segments)
+    if part:
+        label = f"{label}{part}" if label else part
+    return label
 
 
 def is_likely_variety_title(name: str) -> bool:
@@ -437,6 +485,46 @@ def is_likely_variety_title(name: str) -> bool:
     if re.search(r"(?<!\d)0*[0-9]{1,4}\s*期", value, re.IGNORECASE) is not None:
         return True
     if _extract_variety_date_key(value) is not None:
+        return True
+    lowered = value.casefold()
+    return any(token in lowered for token in _VARIETY_HINT_TOKENS)
+
+
+_VARIETY_COLLECTION_MARKERS = ("综艺", "真人秀", "脱口秀", "variety")
+
+
+def is_variety_collection(
+    type_name: str = "",
+    category_name: str = "",
+    vod_tag: str = "",
+    vod_content: str = "",
+) -> bool:
+    """Whether collection metadata marks this title as variety/reality/show.
+
+    Complements filename-based :func:`is_likely_variety_title`: metadata genres
+    (e.g. ``真人秀`` after hydration) are a more reliable variety signal when the
+    per-episode filename is generic. Any marker in type/category/tag/content wins.
+    """
+    metadata_text = " ".join(
+        str(value or "").strip().casefold()
+        for value in (type_name, category_name, vod_tag, vod_content)
+        if str(value or "").strip()
+    )
+    return any(marker in metadata_text for marker in _VARIETY_COLLECTION_MARKERS)
+
+
+def has_variety_issue_marker(name: str) -> bool:
+    """Strong variety marker in a title: 第N期/N期 or a variety hint token.
+
+    Stricter than :func:`is_likely_variety_title`: a bare date does NOT qualify,
+    because ordinary episode filenames often carry air dates (e.g.
+    ``04-第4话…-2026-03-03``). Used to decide whether to rewrite an episode label
+    as a variety issue label — date-only titles stay on the regular episode path.
+    """
+    value = normalize_name(name)
+    if re.search(r"第\s*[0-9零一二两三四五六七八九十百]+\s*期", value, re.IGNORECASE) is not None:
+        return True
+    if re.search(r"(?<!\d)0*[0-9]{1,4}\s*期", value, re.IGNORECASE) is not None:
         return True
     lowered = value.casefold()
     return any(token in lowered for token in _VARIETY_HINT_TOKENS)
@@ -480,7 +568,33 @@ def match_provider(reg_src: str) -> str | None:
         return "iqiyi"
     if "mgtv.com" in host:
         return "mgtv"
+    if "sohu.com" in host:
+        return "sohu"
+    if "miguvideo.com" in host:
+        return "migu"
     return None
+
+
+def extract_official_link_url(detail_fields: object) -> str:
+    """First ``官方链接`` action URL that maps to a known danmaku provider.
+
+    Metadata hydration records official platform links as a ``官方链接``
+    ``PlaybackDetailField`` whose value parts carry ``link`` actions with concrete
+    URLs (e.g. ``https://v.qq.com/x/cover/…``). Returns the first such URL whose
+    host :func:`match_provider` recognizes, else ``""``. Duck-typed over the
+    detail-field objects to avoid coupling this helper to the models dataclasses.
+    """
+    for field in getattr(detail_fields, "__iter__", lambda: [])() or []:
+        if str(getattr(field, "label", "") or "").strip() != "官方链接":
+            continue
+        for part in getattr(field, "value_parts", []) or []:
+            action = getattr(part, "action", None)
+            if action is None or str(getattr(action, "type", "") or "") != "link":
+                continue
+            url = str(getattr(action, "value", "") or "").strip()
+            if url and match_provider(url) is not None:
+                return url
+    return ""
 
 
 def extract_cover_id(url: str) -> str:

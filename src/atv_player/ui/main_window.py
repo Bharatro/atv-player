@@ -1486,9 +1486,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             media_detail_controller=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
+            subtitle_search_service=None,
             danmaku_controller_factory=None,
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
+            episode_title_override_repository=None,
             danmaku_preference_store=None,
     ) -> None:
         super().__init__(title="alist-tvbox Desktop Player", resizable=True)
@@ -1505,9 +1507,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._media_detail_controller = media_detail_controller
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
+        self._subtitle_search_service = subtitle_search_service
         self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
+        self._episode_title_override_repository = episode_title_override_repository
         self._danmaku_preference_store = danmaku_preference_store
         self.config = config
         self._plugin_definitions = list(spider_plugins or [])
@@ -6383,7 +6387,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "feiniu":
             self._start_open_request(lambda: self._apply_request_playback_history_title(self.feiniu_controller.build_request(record.key)))
             return
-        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
+        self._start_open_request(
+            lambda: self.browse_controller.build_request_from_detail(
+                record.key, source_key=record.source_key or "csp_AList"
+            )
+        )
 
     def open_favorite_detail(self, record: FavoriteRecord) -> None:
         if record.source_kind == "direct_parse":
@@ -6423,7 +6431,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "feiniu":
             self._start_open_request(lambda: self.feiniu_controller.build_request(record.vod_id))
             return
-        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.vod_id))
+        self._start_open_request(
+            lambda: self.browse_controller.build_request_from_detail(
+                record.vod_id, source_key=record.source_key or "csp_AList"
+            )
+        )
 
     def _open_favorite_placeholder(self, record: FavoriteRecord) -> None:
         source_kind = "plugin" if record.source_kind == "spider_plugin" else record.source_kind or "browse"
@@ -6618,7 +6630,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             detail_field_runner=request.detail_field_runner,
             metadata_hydrator=request.metadata_hydrator,
             metadata_scrape_service=request.metadata_scrape_service,
+            subtitle_search_service=self._subtitle_search_service,
             metadata_binding_repository=request.metadata_binding_repository,
+            episode_title_override_repository=request.episode_title_override_repository,
             episode_title_enhancer=request.episode_title_enhancer,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
@@ -6699,6 +6713,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         if request.metadata_binding_repository is None:
             request.metadata_binding_repository = self._metadata_binding_repository
+        if request.episode_title_override_repository is None:
+            request.episode_title_override_repository = self._episode_title_override_repository
         if request.detail_field_runner is not None:
             return request
         if request.source_kind == "plugin" and request.source_key:

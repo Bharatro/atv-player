@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import platform
 from collections.abc import Callable
@@ -31,7 +32,13 @@ class ApiClient:
         transport: httpx.BaseTransport | None = None,
         proxy_decider: ProxyDecider | None = None,
         client_factory: Callable[..., httpx.Client] = httpx.Client,
+        username: str = "",
     ) -> None:
+        self._base_url = base_url
+        # 令牌随每次登录轮换,而用户名稳定。身份按用户名派生,使同步游标/快照跨会话保留,
+        # 避免每次登录全量重拉重推;用户名为空时退化回令牌派生(旧行为)。
+        self._username = username or ""
+        self._playback_sync_identity = self._build_playback_sync_identity(token)
         headers = {"Authorization": token} if token else {}
         headers.setdefault("User-Agent", platform.platform() + " ATV-Player")
         self._vod_token = vod_token
@@ -45,10 +52,20 @@ class ApiClient:
         self._client = client_factory(**client_kwargs)
 
     def set_token(self, token: str) -> None:
+        self._playback_sync_identity = self._build_playback_sync_identity(token)
         if token:
             self._client.headers["Authorization"] = token
         else:
             self._client.headers.pop("Authorization", None)
+
+    @property
+    def playback_sync_identity(self) -> str:
+        return self._playback_sync_identity
+
+    def _build_playback_sync_identity(self, token: str) -> str:
+        stable = self._username or token
+        value = f"{self._base_url}\n{stable}".encode()
+        return hashlib.sha256(value).hexdigest()[:32]
 
     def set_vod_token(self, vod_token: str) -> None:
         self._vod_token = vod_token
@@ -419,6 +436,7 @@ class ApiClient:
             episode=int(data.get("episode", 0)),
             episode_url=str(data.get("episodeUrl") or ""),
             position=int(data.get("position", 0)),
+            duration=int(data.get("duration", 0)),
             opening=int(data.get("opening", 0)),
             ending=int(data.get("ending", 0)),
             speed=float(data.get("speed", 1.0)),
@@ -427,27 +445,38 @@ class ApiClient:
             source_group_index=int(data.get("sourceGroupIndex", 0)),
             source_index=int(data.get("sourceIndex", 0)),
             source_subgroup_index=int(data.get("sourceSubgroupIndex", 0)),
+            source_subgroup_name=str(data.get("sourceSubgroupName") or ""),
             drive_dir_id=str(data.get("driveDirId") or ""),
         )
 
-    def list_history(self, page: int, size: int) -> dict[str, Any]:
-        return self._request(
+    def push_playback_events(self, records: list[dict[str, Any]]) -> None:
+        # 多端播放记录同步:PUSH 本地 Tier-B 记录。Authorization(session)由客户端自动携带,
+        # 服务端 resolveUid 经 session 路径解析为 uid。
+        if not records:
+            return
+        self._request("POST", "/api/playback/events", json=records)
+
+    def pull_playback_records(
+        self,
+        since: int,
+        limit: int = 100,
+        *,
+        source_kinds: str = "",
+        site_keys: str = "",
+    ) -> dict[str, Any]:
+        headers = {"X-PlaySync-Since": str(since), "X-PlaySync-Limit": str(limit)}
+        if source_kinds:
+            headers["X-PlaySync-Source-Kind"] = source_kinds
+        if site_keys:
+            headers["X-PlaySync-Site-Key"] = site_keys
+        if since <= 0:
+            headers["X-PlaySync-Latest"] = "true"
+        data = self._request(
             "GET",
-            "/api/history",
-            params={"sort": "createTime,desc", "page": page - 1, "size": size},
+            "/api/playback/changes",
+            headers=headers,
         )
-
-    def save_history(self, payload: dict[str, Any]) -> None:
-        self._request("POST", "/api/history", params={"log": "false"}, json=payload)
-
-    def delete_history(self, history_id: int) -> None:
-        self._request("DELETE", f"/api/history/{history_id}")
-
-    def delete_histories(self, history_ids: list[int]) -> None:
-        self._request("POST", "/api/history/-/delete", json=history_ids)
-
-    def clear_history(self) -> None:
-        self._request("DELETE", f"/history/{self._vod_token}")
+        return data or {}
 
     def fetch_vod_token(self) -> str:
         data = self._request("GET", "/api/token")

@@ -40,7 +40,7 @@ from PySide6.QtGui import (
     QShortcut,
     QWindow,
 )
-from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
+from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
@@ -62,6 +62,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedLayout,
     QTabBar,
+    QTableWidget,
+    QTableWidgetItem,
     QTextBrowser,
     QTextEdit,
     QToolButton,
@@ -71,7 +73,9 @@ from PySide6.QtWidgets import (
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.generic import normalize_danmaku_episode_url
-from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_episode_number
+from atv_player.subtitles.cache import save_subtitle_file
+from atv_player.subtitles.service import build_subtitle_query
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
 from atv_player.metadata.bindings import bilibili_season_binding_title
 from atv_player.metadata.cache import MetadataCache
@@ -84,6 +88,10 @@ from atv_player.metadata.matching import normalize_match_title, strip_match_seas
 from atv_player.metadata.models import MetadataContext, MetadataQuery
 from atv_player.metadata.query import normalize_metadata_query_inputs
 from atv_player.metadata.scrape import normalize_metadata_scrape_title
+from atv_player.metadata.episode_title_overrides import (
+    apply_episode_title_overrides,
+    episode_override_item_key,
+)
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
@@ -121,6 +129,7 @@ from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dia
 from atv_player.ui.icon_cache import load_icon, tint_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.table_utils import configure_table_columns
 from atv_player.ui.theme import (
     FlatComboBox,
     build_combobox_qss,
@@ -610,6 +619,27 @@ class _HeatSummarySignals(QObject):
     loaded = Signal(int, object)
 
 
+class _SubtitleSearchSignals(QObject):
+    search_succeeded = Signal(int, object)
+    download_succeeded = Signal(int, object, object)
+    failed = Signal(int, str)
+
+
+# 结果表列序：来源 / 名称 / 语言 / 格式 / 匹配度
+_SUBTITLE_SEARCH_COLUMNS = ("来源", "字幕", "语言", "格式", "匹配度")
+_SUBTITLE_SEARCH_NAME_COLUMN = 1
+
+# 语言筛选下拉项。默认不限制语言，仅靠匹配打分把简英双语排在最前，
+# 用户想只看某种语言时再手动收窄。
+_SUBTITLE_LANGUAGE_FILTERS = (
+    ("", "全部（简英双语优先）"),
+    ("chs_eng", "简英双语"),
+    ("chs", "简体中文"),
+    ("cht", "繁体中文"),
+    ("eng", "English"),
+)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -845,6 +875,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._playback_loader_request_id = 0
         self._metadata_request_id = 0
         self._metadata_scrape_request_id = 0
+        self._subtitle_search_request_id = 0
         self._episode_title_request_id = 0
         self._playback_prepare_request_id = 0
         self._detail_action_request_id = 0
@@ -866,6 +897,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_source_dialog: QDialog | None = None
         self._danmaku_settings_dialog: QDialog | None = None
         self._metadata_scrape_dialog: QDialog | None = None
+        self._subtitle_search_dialog: QDialog | None = None
+        self._subtitle_search_context_label: QLabel | None = None
+        self._subtitle_search_title_edit: QLineEdit | None = None
+        self._subtitle_search_language_combo: QComboBox | None = None
+        self._subtitle_search_provider_combo: QComboBox | None = None
+        self._subtitle_search_tmdb_id_edit: QLineEdit | None = None
+        self._subtitle_search_imdb_id_edit: QLineEdit | None = None
+        self._subtitle_search_table: QTableWidget | None = None
+        self._subtitle_search_status_label: QLabel | None = None
+        self._subtitle_search_button: QPushButton | None = None
+        self._subtitle_search_apply_button: QPushButton | None = None
+        self._subtitle_search_secondary_button: QPushButton | None = None
+        self._subtitle_search_items: list[object] = []
+        self._subtitle_search_result: object | None = None
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_url_edit: QLineEdit | None = None
@@ -906,6 +951,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_hydration_override_category = ""
         self._restart_episode_title_after_next_metadata_hydration = False
         self._force_episode_title_restart_on_metadata_request_id = 0
+        self._danmaku_research_pending = False
+        self._danmaku_last_searched_query = ""
         self._danmaku_render_mode_combo: QComboBox | None = None
         self._danmaku_color_mode_combo: QComboBox | None = None
         self._danmaku_uniform_color_edit: QLineEdit | None = None
@@ -962,6 +1009,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._connect_async_signal(self._metadata_hydration_signals.succeeded, self._handle_metadata_hydration_succeeded)
         self._connect_async_signal(self._metadata_hydration_signals.failed, self._handle_metadata_hydration_failed)
         self._metadata_scrape_signals = _MetadataScrapeSignals()
+        self._subtitle_search_signals = _SubtitleSearchSignals()
+        self._subtitle_search_signals.search_succeeded.connect(
+            self._handle_subtitle_search_succeeded
+        )
+        self._subtitle_search_signals.download_succeeded.connect(
+            self._handle_subtitle_download_succeeded
+        )
+        self._subtitle_search_signals.failed.connect(self._handle_subtitle_search_failed)
         self._connect_async_signal(
             self._metadata_scrape_signals.search_succeeded,
             self._handle_metadata_scrape_search_succeeded,
@@ -3792,7 +3847,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if not subgroup.sources:
                 return False
             playlist = subgroup.sources[0].playlist
+            target_play_id = target_url
+            parts = target_play_id.split("@")
+            if len(parts) >= 4:
+                target_play_id = "@".join(parts[:2])
             for index, item in enumerate(playlist):
+                if item.play_id and item.play_id == target_play_id:
+                    return self._select_nested_drive_history_item(
+                        parent_source, subgroup_index, playlist, index
+                    )
                 if item.url.strip() == target_url:
                     return self._select_nested_drive_history_item(
                         parent_source, subgroup_index, playlist, index
@@ -3803,15 +3866,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 )
             return False
 
+        if history.source_subgroup_name:
+            for subgroup_index, subgroup in enumerate(parent_source.subgroups):
+                if (
+                    subgroup.label == history.source_subgroup_name
+                    and restore_subgroup(subgroup_index)
+                ):
+                    return True
+            if restore_subgroup(history.source_subgroup_index):
+                return True
+
         if history.drive_dir_id:
             for subgroup_index, subgroup in enumerate(parent_source.subgroups):
                 if subgroup.drive_dir_id == history.drive_dir_id:
                     return restore_subgroup(subgroup_index)
-            # Directory IDs can disappear when a share is regenerated.  New records
-            # also keep the selected index as a best-effort fallback.
-            if restore_subgroup(history.source_subgroup_index):
-                return True
-
         # Records created before directory IDs were persisted fall back to URL
         # matching, which also preserves compatibility with existing histories.
         if not target_name:
@@ -5461,6 +5529,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self.session.vod = updated_vod
         self._sync_playlist_media_title_from_metadata(previous_vod, updated_vod)
+        research_item = self._current_play_item()
+        if (
+            research_item is not None
+            and not research_item.danmaku_xml
+            and not research_item.danmaku_pending
+        ):
+            self._danmaku_research_pending = True
         self._reset_metadata_poster_index()
         self._render_poster()
         self._render_metadata()
@@ -5472,10 +5547,60 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if force_restart_episode_titles:
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
+        else:
+            self._maybe_research_danmaku_after_metadata()
+
+    def _maybe_research_danmaku_after_metadata(self) -> None:
+        """Re-search danmaku once after metadata hydrates the current item.
+
+        Metadata can improve the query (corrected title, variety genre -> variety
+        issue label) and supply an official platform URL (provider pin). If the
+        first search (often issued before metadata arrived) left the current item
+        without danmaku, re-search now. The guard key combines query and provider
+        URL so a pin-only change still re-searches, while an unchanged signal does
+        not loop.
+        """
+        if not self._danmaku_research_pending:
+            return
+        self._danmaku_research_pending = False
+        if self.session is None:
+            return
+        controller = getattr(self.session, "danmaku_controller", None)
+        current_item = self._current_play_item()
+        if controller is None or current_item is None:
+            return
+        if current_item.danmaku_xml or current_item.danmaku_pending:
+            return
+        query = str(current_item.danmaku_search_query or "").strip()
+        if not query:
+            return
+        research_key = f"{query}\x1f{str(current_item.metadata_provider_url or '').strip()}"
+        if research_key == self._danmaku_last_searched_query:
+            return
+        self._danmaku_last_searched_query = research_key
+        auto_resolve = getattr(controller, "auto_resolve_danmaku", None)
+        if not callable(auto_resolve):
+            return
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="弹幕自动下载失败",
+            task=lambda: auto_resolve(
+                current_item,
+                playlist=self.session.playlist,
+                media_duration_seconds=self._current_media_duration_seconds(),
+            ),
+            configure_danmaku_on_success=True,
+            debug_label="元数据后重搜",
+        )
 
     def _sync_playlist_media_title_from_metadata(self, previous_vod: VodItem, updated_vod: VodItem) -> None:
         if self.session is None:
             return
+        metadata_provider_url = extract_official_link_url(updated_vod.detail_fields)
+        if metadata_provider_url:
+            for item in self.session.playlist:
+                if not str(item.metadata_provider_url or "").strip():
+                    item.metadata_provider_url = metadata_provider_url
         corrected_title = str(updated_vod.vod_name or "").strip()
         if not corrected_title:
             return
@@ -5607,6 +5732,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._playlist_sort_state.remember(merged_playlist)
         self.session.playlist = merged_playlist
         self._playlist_sort_state.apply(self.session.playlist)
+        self._apply_episode_title_overrides_to_session()
         self.current_index = find_playlist_item_index(
             self.session.playlist,
             current_item,
@@ -5626,6 +5752,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._render_playlist_items()
         self._refresh_window_title()
         self._log_episode_title_mapping()
+        self._maybe_research_danmaku_after_metadata()
 
     def _log_episode_title_mapping(self) -> None:
         if self.session is None:
@@ -8255,6 +8382,441 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._video_context_menu = None
         return False
 
+    # ---- 外部字幕站搜索 ----
+
+    def _subtitle_search_service(self):
+        if self.session is None:
+            return None
+        return getattr(self.session, "subtitle_search_service", None)
+
+    def _open_subtitle_search_dialog(self) -> None:
+        if self._subtitle_search_service() is None:
+            self._append_log("字幕搜索不可用")
+            return
+        dialog = self._ensure_subtitle_search_dialog()
+        self._refresh_subtitle_search_context()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        # 首次打开自动按当前播放项搜一次，省掉一次手动点击
+        if not self._subtitle_search_items:
+            self._start_subtitle_search()
+
+    def _ensure_subtitle_search_dialog(self) -> QDialog:
+        if self._subtitle_search_dialog is not None:
+            return self._subtitle_search_dialog
+        dialog = _PlayerToolDialog(title="外部字幕", parent=self, size=(820, 520))
+        host = dialog.content_widget()
+        layout = dialog.content_layout()
+
+        self._subtitle_search_context_label = QLabel("", host)
+        self._subtitle_search_context_label.setWordWrap(True)
+        layout.addWidget(self._subtitle_search_context_label)
+
+        search_row = QGridLayout()
+        search_row.setHorizontalSpacing(6)
+        search_row.setVerticalSpacing(6)
+        search_row.addWidget(QLabel("片名", host), 0, 0)
+        self._subtitle_search_title_edit = QLineEdit(host)
+        self._subtitle_search_title_edit.returnPressed.connect(
+            self._start_subtitle_search
+        )
+        search_row.addWidget(self._subtitle_search_title_edit, 1, 0)
+        search_row.addWidget(QLabel("语言", host), 0, 1)
+        self._subtitle_search_language_combo = FlatComboBox(host)
+        for code, label in _SUBTITLE_LANGUAGE_FILTERS:
+            self._subtitle_search_language_combo.addItem(label, code)
+        self._subtitle_search_language_combo.currentIndexChanged.connect(
+            lambda _index: self._populate_subtitle_search_table()
+        )
+        search_row.addWidget(self._subtitle_search_language_combo, 1, 1)
+        search_row.addWidget(QLabel("字幕站", host), 0, 2)
+        self._subtitle_search_provider_combo = FlatComboBox(host)
+        self._subtitle_search_provider_combo.addItem("全部", "")
+        service = self._subtitle_search_service()
+        if service is not None:
+            for provider_id in service.provider_order:
+                self._subtitle_search_provider_combo.addItem(
+                    service.provider_label(provider_id), provider_id
+                )
+        search_row.addWidget(self._subtitle_search_provider_combo, 1, 2)
+        self._subtitle_search_button = QPushButton("搜索字幕", host)
+        self._subtitle_search_button.clicked.connect(self._start_subtitle_search)
+        search_row.addWidget(self._subtitle_search_button, 1, 3)
+        search_row.setColumnStretch(0, 3)
+        search_row.setColumnStretch(1, 1)
+        search_row.setColumnStretch(2, 1)
+        layout.addLayout(search_row)
+
+        # 媒体 ID 行：填了之后 SubDL / OpenSubtitles 会优先按 ID 搜，命中率远高于片名，
+        # 尤其是中文片名在英文站搜不到时（如"方舟一号"在 SubDL 搜不到，但用 TMDB ID 能搜到）
+        id_row = QHBoxLayout()
+        id_row.setSpacing(6)
+        id_row.addWidget(QLabel("TMDB ID", host))
+        self._subtitle_search_tmdb_id_edit = QLineEdit(host)
+        self._subtitle_search_tmdb_id_edit.setPlaceholderText("可选，如 105923")
+        self._subtitle_search_tmdb_id_edit.setFixedWidth(160)
+        id_row.addWidget(self._subtitle_search_tmdb_id_edit)
+        id_row.addWidget(QLabel("IMDb ID", host))
+        self._subtitle_search_imdb_id_edit = QLineEdit(host)
+        self._subtitle_search_imdb_id_edit.setPlaceholderText("可选，如 tt1234567")
+        self._subtitle_search_imdb_id_edit.setFixedWidth(180)
+        id_row.addWidget(self._subtitle_search_imdb_id_edit)
+        id_row.addStretch(1)
+        layout.addLayout(id_row)
+
+        table = QTableWidget(0, len(_SUBTITLE_SEARCH_COLUMNS), host)
+        table.setHorizontalHeaderLabels(list(_SUBTITLE_SEARCH_COLUMNS))
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.itemDoubleClicked.connect(lambda _item: self._download_selected_subtitle())
+        configure_table_columns(table, _SUBTITLE_SEARCH_NAME_COLUMN)
+        self._subtitle_search_table = table
+        layout.addWidget(table, 1)
+
+        self._subtitle_search_status_label = QLabel("", host)
+        self._subtitle_search_status_label.setWordWrap(True)
+        layout.addWidget(self._subtitle_search_status_label)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self._subtitle_search_secondary_button = QPushButton("设为次字幕", host)
+        self._subtitle_search_secondary_button.clicked.connect(
+            lambda: self._download_selected_subtitle(secondary=True)
+        )
+        actions.addWidget(self._subtitle_search_secondary_button)
+        self._subtitle_search_apply_button = QPushButton("下载并加载", host)
+        self._subtitle_search_apply_button.clicked.connect(
+            self._download_selected_subtitle
+        )
+        actions.addWidget(self._subtitle_search_apply_button)
+        close_button = QPushButton("关闭", host)
+        close_button.clicked.connect(dialog.close)
+        actions.addWidget(close_button)
+        layout.addLayout(actions)
+
+        self._subtitle_search_dialog = dialog
+        self._apply_theme()
+        return dialog
+
+    def _subtitle_search_query_context(self) -> tuple[str, str, int | None]:
+        """返回 (片名, 发布文件名, 集数)。"""
+        item = self._current_play_item()
+        vod_name = str(self.session.vod.vod_name or "").strip() if self.session else ""
+        item_title = str(getattr(item, "title", "") or "").strip() if item else ""
+        # original_title 通常是原始文件名，最适合拿去解析画质/压制组
+        file_name = str(getattr(item, "original_title", "") or "").strip() if item else ""
+        if not file_name and item is not None:
+            path = str(getattr(item, "path", "") or "").strip()
+            file_name = path.replace("\\", "/").rsplit("/", 1)[-1]
+        title = vod_name or item_title
+        episode = None
+        if item is not None:
+            playlist = self.session.playlist if self.session is not None else None
+            episode = infer_playlist_episode_number(item, playlist)
+        return title, file_name, episode
+
+    def _build_subtitle_search_query(self):
+        title, file_name, episode = self._subtitle_search_query_context()
+        if self._subtitle_search_title_edit is not None:
+            typed = self._subtitle_search_title_edit.text().strip()
+            if typed:
+                title = typed
+        imdb_id = self._subtitle_edit_value(self._subtitle_search_imdb_id_edit)
+        tmdb_id = self._subtitle_edit_value(self._subtitle_search_tmdb_id_edit)
+        vod = self.session.vod if self.session is not None else None
+        try:
+            year = int(str(getattr(vod, "vod_year", "") or "").strip()[:4])
+        except (TypeError, ValueError):
+            year = 0
+        return build_subtitle_query(
+            title=title,
+            file_name=file_name,
+            episode=episode,
+            year=year,
+            imdb_id=imdb_id,
+            tmdb_id=tmdb_id,
+        )
+
+    @staticmethod
+    def _subtitle_edit_value(edit: QLineEdit | None) -> str:
+        if edit is None:
+            return ""
+        return edit.text().strip()
+
+    def _resolve_subtitle_search_media_ids(self) -> tuple[str, str]:
+        """从已刮削绑定的元数据里取 TMDB / IMDb id，用于自动填充。
+
+        刮削来源通常是 TMDB（provider == "tmdb"）或豆瓣（provider == "douban"）。
+        IMDb id 一般拿不到，这里主要补 TMDB id。
+        """
+        if self.session is None:
+            return "", ""
+        bindings = getattr(self.session, "metadata_binding_repository", None)
+        vod = self.session.vod
+        title = str(getattr(vod, "vod_name", "") or "").strip()
+        if bindings is None or not title or not hasattr(bindings, "load_by_title"):
+            return "", ""
+        try:
+            binding = bindings.load_by_title(title)
+        except Exception:
+            return "", ""
+        if binding is None:
+            return "", ""
+        provider = str(getattr(binding, "provider", "") or "").strip().lower()
+        provider_id = str(getattr(binding, "provider_id", "") or "").strip()
+        if provider == "tmdb" and provider_id:
+            return provider_id, ""
+        return "", ""
+
+    def _refresh_subtitle_search_context(self) -> None:
+        query = self._build_subtitle_search_query()
+        title_edit = self._subtitle_search_title_edit
+        if title_edit is not None and not title_edit.text().strip():
+            title_edit.setText(query.title)
+        # 自动填充刮削绑定到的 TMDB id（用户没手填时才覆盖）
+        tmdb_id, _imdb_id = self._resolve_subtitle_search_media_ids()
+        if tmdb_id and self._subtitle_search_tmdb_id_edit is not None:
+            if not self._subtitle_search_tmdb_id_edit.text().strip():
+                self._subtitle_search_tmdb_id_edit.setText(tmdb_id)
+        if self._subtitle_search_context_label is not None:
+            parts = [f"影片：{query.title or '未知'}"]
+            if query.season is not None and query.episode is not None:
+                parts.append(f"S{query.season:02d}E{query.episode:02d}")
+            elif query.episode is not None:
+                parts.append(f"第 {query.episode} 集")
+            extras = [
+                value
+                for value in (
+                    query.resolution,
+                    query.source,
+                    query.codec,
+                    query.release_group,
+                )
+                if value
+            ]
+            if extras:
+                parts.append(" / ".join(extras))
+            self._subtitle_search_context_label.setText("　".join(parts))
+
+    def _set_subtitle_search_busy(self, busy: bool) -> None:
+        for button in (
+            self._subtitle_search_button,
+            self._subtitle_search_apply_button,
+            self._subtitle_search_secondary_button,
+        ):
+            if button is not None:
+                button.setEnabled(not busy)
+
+    def _start_subtitle_search(self) -> None:
+        service = self._subtitle_search_service()
+        if service is None:
+            return
+        query = self._build_subtitle_search_query()
+        if not query.title and not query.file_name:
+            self._set_subtitle_search_status("没有可用于搜索的片名")
+            return
+        provider_filter = ""
+        if self._subtitle_search_provider_combo is not None:
+            provider_filter = str(
+                self._subtitle_search_provider_combo.currentData() or ""
+            )
+        self._subtitle_search_request_id += 1
+        request_id = self._subtitle_search_request_id
+        self._set_subtitle_search_status("正在搜索字幕…")
+        self._set_subtitle_search_busy(True)
+
+        def run() -> None:
+            try:
+                result = service.search(query, provider_filter=provider_filter)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._subtitle_search_signals.failed.emit(
+                        request_id, f"字幕搜索失败: {exc}"
+                    )
+                return
+            if self._is_window_alive():
+                self._subtitle_search_signals.search_succeeded.emit(request_id, result)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_subtitle_search_succeeded(self, request_id: int, result: object) -> None:
+        if request_id != self._subtitle_search_request_id:
+            return
+        self._set_subtitle_search_busy(False)
+        self._subtitle_search_result = result
+        self._subtitle_search_items = [
+            item for group in getattr(result, "groups", []) for item in group.items
+        ]
+        self._populate_subtitle_search_table()
+
+    def _handle_subtitle_search_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._subtitle_search_request_id:
+            return
+        self._set_subtitle_search_busy(False)
+        self._set_subtitle_search_status(message)
+        self._append_log(message)
+
+    def _subtitle_search_language_filter(self) -> str:
+        if self._subtitle_search_language_combo is None:
+            return ""
+        return str(self._subtitle_search_language_combo.currentData() or "")
+
+    def _populate_subtitle_search_table(self) -> None:
+        table = self._subtitle_search_table
+        if table is None:
+            return
+        language_filter = self._subtitle_search_language_filter()
+        rows = [
+            item
+            for item in self._subtitle_search_items
+            if not language_filter or item.language == language_filter
+        ]
+        table.setRowCount(len(rows))
+        for row, item in enumerate(rows):
+            values = (
+                item.provider_label,
+                item.name,
+                item.language_label or item.language,
+                (item.format or "").upper(),
+                f"{item.match_percent}%",
+            )
+            for column, text in enumerate(values):
+                cell = QTableWidgetItem(str(text))
+                if column == 0:
+                    cell.setData(Qt.ItemDataRole.UserRole, item)
+                table.setItem(row, column, cell)
+        if rows:
+            table.selectRow(0)
+        configure_table_columns(table, _SUBTITLE_SEARCH_NAME_COLUMN)
+        self._set_subtitle_search_status(self._describe_subtitle_search_result(len(rows)))
+
+    def _describe_subtitle_search_result(self, shown: int) -> str:
+        result = self._subtitle_search_result
+        service = self._subtitle_search_service()
+        errors = getattr(result, "errors", {}) or {} if result else {}
+        skipped = getattr(result, "skipped", []) or [] if result else []
+        # 没有任何结果时，给出可操作的根因提示，而不是干巴巴的"共 0 条"
+        if shown == 0:
+            if skipped:
+                labels = "、".join(
+                    service.provider_label(key) if service else key for key in skipped
+                )
+                return (
+                    f"没有找到字幕。以下站点未配置 Token 已跳过：{labels}。"
+                    "免 Token 站中字幕库当前已不可用（SubHD 仍可用）。"
+                    "推荐在「高级设置 → 字幕」配置射手网(ASSRT)的免费 Token "
+                    "（assrt.net 注册即得），它的中文字幕最全；"
+                    "也可配置 SubSource（subsource.net）的免费 API Key。"
+                )
+            if errors:
+                details = "；".join(
+                    f"{service.provider_label(key) if service else key}: {message}"
+                    for key, message in errors.items()
+                )
+                return f"没有找到字幕，所有站点均失败（{details}）。可尝试改用英文片名或填写 TMDB/IMDb ID 后重搜。"
+            return "没有找到字幕。可尝试改用英文片名，或填写 TMDB/IMDb ID 后重搜。"
+        parts = [f"共 {shown} 条"]
+        if result is None:
+            return parts[0]
+        notices = [
+            group.notice
+            for group in getattr(result, "groups", [])
+            if getattr(group, "notice", "")
+        ]
+        if errors:
+            details = "；".join(
+                f"{service.provider_label(key) if service else key}: {message}"
+                for key, message in errors.items()
+            )
+            parts.append(f"部分站点失败（{details}）")
+        if skipped:
+            labels = "、".join(
+                service.provider_label(key) if service else key for key in skipped
+            )
+            parts.append(f"未配置 Token 已跳过：{labels}")
+        parts.extend(notices)
+        return "　|　".join(parts)
+
+    def _set_subtitle_search_status(self, text: str) -> None:
+        if self._subtitle_search_status_label is not None:
+            self._subtitle_search_status_label.setText(text)
+
+    def _selected_subtitle_search_item(self):
+        table = self._subtitle_search_table
+        if table is None:
+            return None
+        row = table.currentRow()
+        if row < 0:
+            return None
+        cell = table.item(row, 0)
+        return cell.data(Qt.ItemDataRole.UserRole) if cell is not None else None
+
+    def _download_selected_subtitle(self, *, secondary: bool = False) -> None:
+        service = self._subtitle_search_service()
+        item = self._selected_subtitle_search_item()
+        if service is None or item is None:
+            self._set_subtitle_search_status("请先选择一条字幕")
+            return
+        self._subtitle_search_request_id += 1
+        request_id = self._subtitle_search_request_id
+        self._set_subtitle_search_status(f"正在下载：{item.name}")
+        self._set_subtitle_search_busy(True)
+        title = self._build_subtitle_search_query().title
+
+        def run() -> None:
+            try:
+                content = service.download(item)
+                path = save_subtitle_file(content, title=title or item.name)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._subtitle_search_signals.failed.emit(
+                        request_id, f"字幕下载失败: {exc}"
+                    )
+                return
+            if self._is_window_alive():
+                self._subtitle_search_signals.download_succeeded.emit(
+                    request_id, item, (str(path), secondary)
+                )
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_subtitle_download_succeeded(
+        self,
+        request_id: int,
+        item: object,
+        payload: object,
+    ) -> None:
+        if request_id != self._subtitle_search_request_id:
+            return
+        self._set_subtitle_search_busy(False)
+        path, secondary = payload
+        current_item = self._current_play_item()
+        if current_item is None:
+            self._set_subtitle_search_status("当前没有播放项，无法加载字幕")
+            return
+        label = f"{item.provider_label} {item.language_label or item.language}".strip()
+        option = ExternalSubtitleOption(
+            name=f"{label} · {item.name}".strip(" ·"),
+            lang=item.language,
+            url=path,
+            format=(item.format or "").lstrip("."),
+            source="subtitle-site",
+        )
+        existing = self._find_current_item_external_subtitle(path)
+        if existing is None:
+            current_item.external_subtitles = [*current_item.external_subtitles, option]
+        # 复用既有的外挂字幕通道：下拉框与右键菜单会自动出现这一条
+        self._refresh_subtitle_state()
+        if secondary:
+            self._set_secondary_subtitle_from_menu("external", path)
+        else:
+            self._set_primary_subtitle_from_menu("external", path)
+        self._set_subtitle_search_status(f"已加载：{option.name}")
+        self._append_log(f"已加载外部字幕: {option.name}")
+
     def _build_video_context_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.addMenu(self._build_primary_subtitle_menu(menu))
@@ -8271,6 +8833,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
         menu.addAction("刮削", self._open_metadata_scrape_dialog)
+        menu.addAction("搜索字幕", self._open_subtitle_search_dialog)
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
@@ -8293,6 +8856,114 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not 0 <= self.current_index < len(self.session.playlist):
             return None
         return self.session.playlist[self.current_index]
+
+    def _show_playlist_context_menu(self, pos) -> None:
+        if self.session is None or not self.session.playlist:
+            return
+        item_at = self.playlist.itemAt(pos)
+        if item_at is None:
+            return
+        row = self.playlist.row(item_at)
+        if not 0 <= row < len(self.session.playlist):
+            return
+        play_item = self.session.playlist[row]
+        menu = QMenu(self)
+        menu.addAction("编辑分集标题", lambda: self._edit_playlist_item_title(row))
+        if self._playlist_item_has_override(play_item):
+            menu.addAction("恢复标题", lambda: self._reset_playlist_item_title(row))
+        menu.exec(self.playlist.mapToGlobal(pos))
+
+    def _episode_title_override_identity(self) -> tuple[str, str, str] | None:
+        if self.session is None:
+            return None
+        source_kind = str(getattr(self.session, "source_kind", "") or "")
+        source_key = str(getattr(self.session, "source_key", "") or "")
+        vod_id = str(getattr(self.session.vod, "vod_id", "") or "")
+        if not vod_id:
+            return None
+        return source_kind, source_key, vod_id
+
+    def _session_episode_title_overrides(self) -> dict[str, str]:
+        identity = self._episode_title_override_identity()
+        repo = getattr(self.session, "episode_title_override_repository", None) if self.session else None
+        if identity is None or repo is None:
+            return {}
+        source_kind, source_key, vod_id = identity
+        return repo.load_for_session(source_kind=source_kind, source_key=source_key, vod_id=vod_id)
+
+    def _playlist_item_has_override(self, play_item: PlayItem) -> bool:
+        return episode_override_item_key(play_item) in self._session_episode_title_overrides()
+
+    def _apply_episode_title_overrides_to_session(self) -> None:
+        """Stamp manual overrides onto the current session playlist (idempotent).
+
+        Used after paths that set episode titles without going through the app
+        enhancer (e.g. manual metadata scrape), so a saved override always wins.
+        """
+        if self.session is None:
+            return
+        overrides = self._session_episode_title_overrides()
+        if overrides:
+            apply_episode_title_overrides(self.session.playlist, overrides)
+
+    def _edit_playlist_item_title(self, row: int) -> None:
+        if self.session is None or not 0 <= row < len(self.session.playlist):
+            return
+        repo = getattr(self.session, "episode_title_override_repository", None)
+        identity = self._episode_title_override_identity()
+        play_item = self.session.playlist[row]
+        if identity is None or repo is None:
+            self._append_log("当前来源不支持分集标题手动修正")
+            return
+        current_display = playlist_item_display_title(play_item, "episode").strip()
+        original = play_item.original_title.strip() or play_item.title.strip()
+        edited, ok = QInputDialog.getText(
+            self,
+            "编辑分集标题",
+            f"原始文件名:\n{original}" if original else "编辑分集标题",
+            text=current_display or original,
+        )
+        if not ok:
+            return
+        edited = edited.strip()
+        if not edited or edited == current_display:
+            return
+        source_kind, source_key, vod_id = identity
+        repo.upsert(
+            source_kind=source_kind,
+            source_key=source_key,
+            vod_id=vod_id,
+            item_key=episode_override_item_key(play_item),
+            display_title=edited,
+        )
+        play_item.episode_display_title = edited
+        play_item.episode_title_source = "manual"
+        self.playlist_title_mode = "episode"
+        self._render_playlist_items()
+
+    def _reset_playlist_item_title(self, row: int) -> None:
+        if self.session is None or not 0 <= row < len(self.session.playlist):
+            return
+        repo = getattr(self.session, "episode_title_override_repository", None)
+        identity = self._episode_title_override_identity()
+        play_item = self.session.playlist[row]
+        if identity is None or repo is None:
+            return
+        source_kind, source_key, vod_id = identity
+        repo.delete(
+            source_kind=source_kind,
+            source_key=source_key,
+            vod_id=vod_id,
+            item_key=episode_override_item_key(play_item),
+        )
+        if self.session.episode_title_enhancer is not None:
+            # Re-derive titles; the deleted item falls back to its auto/original title.
+            self.session.episode_titles_hydrated = False
+            self._start_episode_title_enhancement()
+        else:
+            play_item.episode_display_title = ""
+            play_item.episode_title_source = ""
+            self._render_playlist_items()
 
     def _refresh_danmaku_source_entry_points(self) -> None:
         self.danmaku_source_button.setEnabled(True)
@@ -10335,6 +11006,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             (QKeySequence("W"), self.wide_button.click),
             (QKeySequence("D"), self._open_danmaku_source_dialog),
             (QKeySequence("S"), self._open_metadata_scrape_dialog),
+            (QKeySequence("C"), self._open_subtitle_search_dialog),
             (QKeySequence("Ctrl+D"), self._open_danmaku_settings_dialog),
             (QKeySequence("I"), self._toggle_video_info_from_menu),
             (QKeySequence("M"), self._toggle_mute),

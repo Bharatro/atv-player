@@ -65,6 +65,11 @@ class AppConfig:
     danmaku_convert_top_bottom_to_scroll: bool = False
     dandan_base_url: str = ""
     bangumi_data_danmaku_enabled: bool = False
+    subtitle_subdl_api_key: str = ""
+    subtitle_assrt_token: str = ""
+    subtitle_opensubtitles_api_key: str = ""
+    subtitle_subsource_api_key: str = ""
+    disabled_subtitle_provider_ids: list[str] = field(default_factory=list)
     disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"
@@ -200,6 +205,7 @@ class PlayItem:
     time: str = ""
     duration_seconds: int = 0
     vod_id: str = ""
+    play_id: str = ""
     detail_actions: list[PlaybackDetailAction] = field(default_factory=list)
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)
@@ -232,6 +238,7 @@ class PlayItem:
     danmaku_error: str = ""
     type_name: str = ""
     category_name: str = ""
+    metadata_provider_url: str = ""
 
 
 @dataclass(slots=True)
@@ -401,10 +408,12 @@ class HistoryRecord:
     ending: int
     speed: float
     create_time: int
+    duration: int = 0
     playlist_index: int = 0
     source_group_index: int = 0
     source_index: int = 0
     source_subgroup_index: int = 0
+    source_subgroup_name: str = ""
     drive_dir_id: str = ""
     source_kind: str = "remote"
     source_plugin_id: int = 0
@@ -553,6 +562,7 @@ class OpenPlayerRequest:
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
     metadata_binding_repository: object | None = None
+    episode_title_override_repository: object | None = None
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None

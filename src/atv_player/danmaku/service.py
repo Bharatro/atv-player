@@ -32,6 +32,7 @@ from atv_player.danmaku.utils import (
     extract_cover_id,
     extract_episode_number,
     extract_variety_issue_key,
+    extract_variety_part,
     has_explicit_episode_marker,
     is_likely_variety_title,
     match_provider,
@@ -294,14 +295,18 @@ def _is_likely_variety_search(query_name: str, items: list[DanmakuSearchItem]) -
 def _variety_issue_key_for_item(item: DanmakuSearchItem) -> str | None:
     metadata_year = item.resolve_context.get("variety_year")
     if metadata_year not in ("", None, 0):
-        return str(metadata_year)
+        base = str(metadata_year)
+        part = extract_variety_part(item.name)
+        return f"{base}{part}" if part else base
     return extract_variety_issue_key(item.name)
 
 
 def _variety_issue_key_for_option(option: DanmakuSourceOption) -> str | None:
     metadata_year = option.resolve_context.get("variety_year")
     if metadata_year not in ("", None, 0):
-        return str(metadata_year)
+        base = str(metadata_year)
+        part = extract_variety_part(option.name)
+        return f"{base}{part}" if part else base
     return extract_variety_issue_key(option.name)
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 
 from atv_player.models import OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
 from atv_player.playlist_sorting import parse_size_bytes
@@ -66,6 +67,7 @@ def map_drive_video_to_play_item(
         media_title=media_title,
         play_source=play_source,
         vod_id=str(payload.get("path") or payload.get("url") or ""),
+        play_id=str(payload.get("playId") or payload.get("play_id") or ""),
     )
 
 
@@ -193,8 +195,28 @@ def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodIt
 
 
 class BrowseController:
-    def __init__(self, api_client) -> None:
+    def __init__(
+        self,
+        api_client,
+        playback_history_loader: Callable[[str, str], object | None] | None = None,
+        playback_history_saver: Callable[[str, str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._api_client = api_client
+        self._playback_history_loader = playback_history_loader
+        self._playback_history_saver = playback_history_saver
+
+    def _history_callbacks(self, vod_id: str, source_key: str = "csp_AList"):
+        loader = None
+        saver = None
+        if self._playback_history_loader is not None:
+            loader = lambda vod_id=vod_id, source_key=source_key: self._playback_history_loader(
+                source_key, vod_id
+            )
+        if self._playback_history_saver is not None:
+            saver = lambda payload, vod_id=vod_id, source_key=source_key: self._playback_history_saver(
+                source_key, vod_id, payload
+            )
+        return loader, saver
 
     def _merge_vod_metadata(self, resolved_vod: VodItem | None, fallback_vod: VodItem) -> VodItem:
         if resolved_vod is None:
@@ -297,18 +319,24 @@ class BrowseController:
     def delete_file(self, item: VodItem) -> None:
         self._api_client.delete_video(_video_id_from_vod_id(item.vod_id))
 
-    def build_request_from_detail(self, vod_id: str) -> OpenPlayerRequest:
+    def build_request_from_detail(self, vod_id: str, source_key: str = "csp_AList") -> OpenPlayerRequest:
         payload = self._api_client.get_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
         if not detail.items:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        source_vod_id = str(detail.vod_id or vod_id)
+        history_loader, history_saver = self._history_callbacks(source_vod_id, source_key)
         return OpenPlayerRequest(
             vod=detail,
             playlist=detail.items,
             clicked_index=0,
             source_kind="browse",
+            source_key=source_key,
             source_mode="detail",
             source_vod_id=vod_id,
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )
 
     def build_request_from_folder_item(
@@ -325,15 +353,20 @@ class BrowseController:
         clicked_playlist_item.url = self._first_play_url(resolved_vod)
         if not clicked_playlist_item.url:
             raise ValueError(f"没有可用的播放地址: {clicked_item.vod_name}")
+        history_loader, history_saver = self._history_callbacks(clicked_item.vod_id)
         return OpenPlayerRequest(
             vod=resolved_vod,
             playlist=playlist,
             clicked_index=clicked_index,
             source_kind="browse",
+            source_key="csp_AList",
             source_mode="folder",
             source_path=clicked_item.path.rsplit("/", 1)[0] or "/",
             source_vod_id=clicked_item.vod_id,
             source_clicked_vod_id=clicked_item.vod_id,
             detail_resolver=self.resolve_folder_play_item,
             resolved_vod_by_id={resolved_vod.vod_id: resolved_vod},
+            use_local_history=False,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )

@@ -93,6 +93,28 @@ install_lua_dev_package() {
   run sudo apt-get install -y liblua5.2-dev
 }
 
+install_libxml2_dev_package() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "Missing required libxml2 development package for FFmpeg DASH support. Install libxml2-dev, then rebuild."
+  fi
+  log "Installing missing libxml2 development package: libxml2-dev"
+  run sudo apt-get install -y libxml2-dev
+}
+
+require_libxml2_dev_package() {
+  if has_pkg_config_dep "libxml-2.0"; then
+    return 0
+  fi
+  install_libxml2_dev_package
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    return 0
+  fi
+  if has_pkg_config_dep "libxml-2.0"; then
+    return 0
+  fi
+  die "Missing required libxml2 development package after install. Verify libxml2-dev is available to pkg-config, then rebuild."
+}
+
 has_active_x11_session() {
   [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]
 }
@@ -234,6 +256,7 @@ check_dependencies() {
   require_cmd meson
   require_cmd ninja
   require_cmd pkg-config
+  require_libxml2_dev_package
   require_lua_dev_package
   require_hwdec_support_dependencies
   require_nvcodec_support_dependencies
@@ -268,9 +291,9 @@ ensure_repo_layout() {
 }
 
 write_option_files() {
-  : > "${WORKDIR}/ffmpeg_options"
+  printf '%s\n' "--enable-libxml2" > "${WORKDIR}/ffmpeg_options"
   if [[ "${DISABLE_X86ASM}" == "1" ]]; then
-    printf '%s\n' "--disable-x86asm" > "${WORKDIR}/ffmpeg_options"
+    printf '%s\n' "--disable-x86asm" >> "${WORKDIR}/ffmpeg_options"
   fi
 }
 

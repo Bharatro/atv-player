@@ -6669,6 +6669,92 @@ def test_player_window_restores_nested_drive_subdirectory_from_history_url(qtbot
     assert load_calls == ["dir-2"]
 
 
+def test_player_window_restores_cross_device_drive_history_by_route_and_play_id(qtbot) -> None:
+    drive_entry = [PlayItem(title="百度", url="", vod_id="https://pan.baidu.com/s/demo")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="173", vod_name="凡人修仙传"),
+        playlist=drive_entry,
+        playlists=[drive_entry],
+        source_groups=[
+            PlaybackSourceGroup(
+                label="百度",
+                sources=[PlaybackSource(label="百度资源", playlist=drive_entry)],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=45,
+        speed=1.0,
+        resume_history=HistoryRecord(
+            id=0,
+            key="173",
+            vod_name="凡人修仙传",
+            vod_pic="",
+            vod_remarks="S01E126",
+            episode=1,
+            episode_url="1@185535@6@1",
+            position=45000,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=0,
+            source_subgroup_index=6,
+            source_subgroup_name="07外海风云",
+            drive_dir_id="base64-from-another-device",
+        ),
+    )
+    first_route = [
+        PlayItem(
+            title="S01E01.mp4",
+            url="http://atb/p/token/1@185401",
+            play_id="1@185401",
+        )
+    ]
+    groups = [
+        PlaybackSourceGroup(
+            label=f"{index + 1:02d}线路",
+            sources=[
+                PlaybackSource(
+                    label=f"{index + 1:02d}线路",
+                    playlist=first_route if index == 0 else [],
+                )
+            ],
+            drive_dir_id=f"local-dir-{index}",
+        )
+        for index in range(10)
+    ]
+    load_result = PlaybackLoadResult(
+        replacement_playlist=first_route,
+        source_groups=groups,
+        playlists=[first_route] + [[] for _ in groups[1:]],
+        drive_resource_id="resource-1",
+        drive_files_loader=lambda resource_id, dir_id: [
+            {
+                "name": "S01E125.mp4",
+                "url": "http://atb/p/token/1@185534",
+                "playId": "1@185534",
+            },
+            {
+                "name": "S01E126.mp4",
+                "url": "http://atb/p/token/1@185535",
+                "playId": "1@185535",
+            },
+        ] if dir_id == "local-dir-6" else [],
+    )
+    groups[6].label = "07外海风云"
+    groups[6].sources[0].label = "07外海风云"
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._apply_playback_loader_result(load_result)
+
+    assert window.session is not None
+    assert window.session.source_groups[0].sources[0].subgroup_index == 6
+    assert window.current_index == 1
+    assert window.session.playlist[1].play_id == "1@185535"
+
+
 def test_player_window_auto_advance_loads_next_drive_subdirectory(qtbot) -> None:
     first_dir = [PlayItem(title="01.mp4", url="http://baidu/1.mp4", play_source="第一季")]
     second_dir: list[PlayItem] = []
@@ -12657,6 +12743,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "画面调节",
         "弹幕配置",
         "刮削",
+        "搜索字幕",
         "弹幕源",
         "弹幕设置",
         "视频信息",
@@ -13538,6 +13625,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "画面调节",
         "弹幕配置",
         "刮削",
+        "搜索字幕",
         "弹幕源",
         "弹幕设置",
         "视频信息",

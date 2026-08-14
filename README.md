@@ -37,6 +37,7 @@
 - 支持多来源分组、多线路播放列表、自动连播和播放恢复
 - 播放列表根据可用字段支持原始顺序、名称、大小、评分和时间排序，并在排序后保持当前播放项
 - 支持主字幕、次字幕、外挂字幕、音轨选择、DASH 清晰度切换
+- 支持从外部字幕站搜索并加载字幕：内置 `SubDL`、`SubHD`、`字幕库`、`射手网(伪)`、`SubSource`、`OpenSubtitles` 六个来源，按发布文件名解析出片名/季集/画质/片源/编码后并发搜索，并按匹配度排序（简英双语优先）
 - YouTube / `yt-dlp` 播放支持默认画质上限、清晰度切换、多音轨切换、外部字幕加载、详情字段回填和短时解析缓存
 - 支持弹幕搜索、弹幕来源切换、弹幕渲染设置和缓存
 - 支持媒体刮削，可手动搜索并补充影片元数据（海报、简介、评分、演员等），也可自动增强
@@ -101,6 +102,7 @@ scripts/build_mpv.sh --master
 
 - 默认使用 `mpv-build` 的 release 轨道构建 `mpv/libmpv`
 - 默认执行 `sudo ./install`
+- 默认启用 FFmpeg 的 `libxml2`，确保 DASH/MPD 解复用可用；缺少开发包时会自动安装 `libxml2-dev`
 - 如果缺少 Lua 开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y liblua5.2-dev`
 - 如果缺少硬件解码相关开发包，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libva-dev libvdpau-dev`
 - 如果缺少 NVIDIA codec headers，脚本会在 `apt-get` 可用时自动执行 `sudo apt-get install -y libffmpeg-nvenc-dev`
@@ -160,6 +162,7 @@ uv run atv-player
 | `W` | 切换宽屏 |
 | `D` | 打开弹幕源 |
 | `S` | 打开刮削 |
+| `C` | 搜索外部字幕 |
 | `Ctrl+D` | 打开弹幕设置 |
 | `I` | 显示视频信息 |
 | `Ctrl+P` | 返回主窗口 |
@@ -194,6 +197,7 @@ uv run atv-player
 - 插件缓存：`~/.cache/atv-player/plugins`
 - 海报缓存：`~/.cache/atv-player/posters`
 - 弹幕搜索缓存：`~/.local/share/atv-player/danmaku-search-cache.json`
+- 外部字幕缓存：`~/.cache/atv-player/subtitles`
 - 弹幕系列偏好：`~/.local/share/atv-player/danmaku-series-preferences.json`
 - 元数据缓存：`~/.cache/atv-player/metadata`
 - 元数据手动绑定：保存在 `~/.local/share/atv-player/app.db` 的 `metadata_bindings` 表中
@@ -208,6 +212,7 @@ uv run atv-player
 - 插件配置、缓存路径和加载日志
 - 弹幕偏好（启用、行数、显示模式、颜色、位置、速率、字号）
 - 元数据增强配置（启用状态、TMDB API Key、TMDB 代理地址、Bangumi Token、豆瓣 Cookie、剧集标题增强；代理已隐藏 Key 时可不填 TMDB API Key）
+- 字幕站配置（启用的字幕站、SubDL API Key、射手网 Token、OpenSubtitles API Key）
 - 元数据手动绑定记录
 - YouTube 偏好（Cookie 浏览器、默认画质、默认字幕、默认音轨、元数据语言、地区、分类配置源和分类缓存）
 

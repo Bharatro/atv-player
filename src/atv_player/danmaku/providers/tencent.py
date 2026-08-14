@@ -49,6 +49,16 @@ class TencentDanmakuProvider:
         "反应",
         "reaction",
     )
+    # Episode-level preview/noise detection: same vocabulary as
+    # ``_NON_MAIN_CONTENT_KEYWORDS`` but WITHOUT structural punctuation
+    # (``：`` ``#`` ``"``). Variety episode titles on QQ are routinely
+    # formatted as ``2026-08-10 第2期上：<subtitle>``; the fullwidth colon is a
+    # structural separator there, not a non-main-content marker, so filtering on
+    # it drops every real episode. Show-level filtering (``_is_main_content_title``)
+    # still uses the full keyword set.
+    _EPISODE_PREVIEW_KEYWORDS = tuple(
+        keyword for keyword in _NON_MAIN_CONTENT_KEYWORDS if keyword not in {"：", "#", '"'}
+    )
     _UA_PC = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
@@ -304,7 +314,10 @@ class TencentDanmakuProvider:
         if any(keyword in marker_text for keyword in ("预告", '"text":"预"', "预告片")):
             return True
         title = self._clean_text(str(episode.get("title") or ""))
-        return not self._is_main_content_title(title)
+        if not title or "<em>" in title or "</em>" in title:
+            return True
+        lowered = title.casefold()
+        return any(keyword.casefold() in lowered for keyword in self._EPISODE_PREVIEW_KEYWORDS)
 
     def _extract_detail_episode_items(self, page_url: str, html_text: str, query_name: str) -> list[DanmakuSearchItem]:
         found: list[dict[str, str]] = []

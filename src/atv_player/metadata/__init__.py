@@ -1,5 +1,10 @@
 from atv_player.metadata.bindings import MetadataBinding, MetadataBindingRepository
 from atv_player.metadata.cache import MetadataCache
+from atv_player.metadata.episode_title_overrides import (
+    EpisodeTitleOverride,
+    EpisodeTitleOverrideRepository,
+    apply_episode_title_overrides,
+)
 from atv_player.metadata.episode_title_resolver import (
     METADATA_EPISODE_TITLE_SOURCE_PRIORITY,
     build_provider_episode_playlist,
@@ -14,6 +19,9 @@ __all__ = [
     "MetadataBinding",
     "MetadataBindingRepository",
     "MetadataCache",
+    "EpisodeTitleOverride",
+    "EpisodeTitleOverrideRepository",
+    "apply_episode_title_overrides",
     "METADATA_EPISODE_TITLE_SOURCE_PRIORITY",
     "MetadataHydrator",
     "MetadataContext",

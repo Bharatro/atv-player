@@ -344,6 +344,21 @@ def test_tencent_provider_search_filters_preview_episode_candidates_from_episode
     ]
 
 
+def test_tencent_preview_filter_keeps_colon_titled_variety_episodes() -> None:
+    provider = TencentDanmakuProvider()
+    # QQ names variety episodes "<date> 第N期<part>：<subtitle>"; the fullwidth
+    # colon is a structural separator there, not a non-main-content marker, so
+    # such episodes must NOT be dropped as previews. (Regression: 《心动的信号
+    # 第9季》综艺搜出 0 候选 — all real episodes misclassified as previews.)
+    real_episode = {"title": "2026-08-10 第2期上：偶像剧现场 情歌对唱甜蜜升温"}
+    assert provider._is_preview_episode_candidate(real_episode) is False
+    # Actual non-main / preview content is still filtered.
+    assert provider._is_preview_episode_candidate({"title": "第2期 彩蛋：花絮"}) is True
+    assert provider._is_preview_episode_candidate(
+        {"title": "2", "rawTags": '{"tag_2":{"text":"预"}}'}
+    ) is True
+
+
 def test_tencent_provider_search_expands_episode_list_from_candidate_detail_page() -> None:
     def fake_get(
         url: str,

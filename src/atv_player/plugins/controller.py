@@ -33,8 +33,13 @@ from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import (
     episode_title_matches,
     extract_episode_number,
+    extract_official_link_url,
+    extract_variety_episode_label,
     has_explicit_episode_marker,
+    has_variety_issue_marker,
     infer_playlist_episode_number,
+    is_variety_collection,
+    match_provider,
     normalize_name,
     strip_episode_suffix,
 )
@@ -239,6 +244,8 @@ def _should_omit_default_episode_label(item: PlayItem, playlist: list[PlayItem] 
 
 
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
+    if has_variety_issue_marker(item.title) or is_variety_collection(item.type_name, item.category_name):
+        return extract_variety_episode_label(item.title)
     if _looks_like_calendar_episode_title(item.title):
         return _strip_trailing_title_size_suffix(item.title)
     if _should_omit_default_episode_label(item, playlist):
@@ -1293,6 +1300,7 @@ class SpiderPluginController:
                     play_source=play_source,
                     type_name=detail.type_name or item.type_name,
                     category_name=resolved_category_name or item.category_name,
+                    metadata_provider_url=extract_official_link_url(detail.detail_fields),
                 )
                 for index, item in enumerate(detail.items)
                 if item.url
@@ -1311,6 +1319,7 @@ class SpiderPluginController:
                 play_source=play_source,
                 type_name=detail.type_name or item.type_name,
                 category_name=resolved_category_name or item.category_name,
+                metadata_provider_url=extract_official_link_url(detail.detail_fields),
             )
             for index, item in enumerate(playlist)
             if item.url and not _looks_like_drive_share_link(item.url)
@@ -1547,6 +1556,30 @@ class SpiderPluginController:
             )
         )
 
+    def _metadata_danmaku_preference(
+        self,
+        item: PlayItem,
+        series_key: str,
+    ) -> DanmakuSeriesPreference | None:
+        """Synthesize a danmaku preference from metadata's official-link URL.
+
+        When the user has no saved source choice for this series, metadata
+        hydration may still tell us the official platform (e.g. a ``v.qq.com``
+        cover URL). Pin that provider so the search hits it directly instead of
+        blind keyword search across all providers. Returns None if metadata
+        offers no recognizable platform URL.
+        """
+        metadata_url = str(item.metadata_provider_url or "").strip()
+        provider_key = match_provider(metadata_url) if metadata_url else None
+        if provider_key is None:
+            return None
+        return DanmakuSeriesPreference(
+            series_key=series_key,
+            provider=provider_key,
+            page_url=metadata_url,
+            title="",
+        )
+
     def _prepare_danmaku_lookup(
         self,
         item: PlayItem,
@@ -1555,6 +1588,8 @@ class SpiderPluginController:
     ) -> tuple[DanmakuSeriesPreference | None, str, str] | None:
         series_key = build_danmaku_series_key(item.media_title or item.title)
         preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+        if preference is None:
+            preference = self._metadata_danmaku_preference(item, series_key)
         search_title = self._resolve_danmaku_search_title(item, preference)
         search_episode = self._resolve_danmaku_search_episode(item, playlist)
         search_name = _compose_danmaku_search_query(search_title, search_episode)
@@ -2159,6 +2194,37 @@ class SpiderPluginController:
         )
         candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
         self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
+
+    def auto_resolve_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+        *,
+        media_duration_seconds: int = 0,
+    ) -> bool:
+        """Find and download the default danmaku source for one playlist item.
+
+        Mirrors ``GenericDanmakuController.auto_resolve_danmaku`` so the player
+        window's generic auto-load fallback (``_maybe_restore_cached_danmaku_for_current_item``)
+        can search and download danmaku for spider-plugin sources, not just restore
+        from a cached source. Without this, opening a plugin item from playback
+        history — where the loader-based ``_maybe_resolve_danmaku`` does not always
+        run for the resumed episode — left danmaku unloaded until a manual search.
+        """
+        if item.danmaku_xml:
+            return True
+        query_override = item.danmaku_search_query if item.danmaku_search_query_overridden else None
+        self.refresh_danmaku_sources(
+            item,
+            query_override=query_override,
+            playlist=playlist,
+            media_duration_seconds=media_duration_seconds,
+        )
+        selected_url = str(item.selected_danmaku_url or "").strip()
+        if not selected_url:
+            return False
+        self.switch_danmaku_source(item, selected_url)
+        return bool(item.danmaku_xml)
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         selected_option = None
