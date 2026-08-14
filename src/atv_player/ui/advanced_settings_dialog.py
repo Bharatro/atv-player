@@ -40,7 +40,11 @@ from atv_player.controllers.youtube_category_config import (
 from atv_player.danmaku.providers.dandan import probe_dandan_server
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
-from atv_player.source_preferences import DANMAKU_SOURCE_PREFERENCES, METADATA_SOURCE_PREFERENCES
+from atv_player.source_preferences import (
+    DANMAKU_SOURCE_PREFERENCES,
+    METADATA_SOURCE_PREFERENCES,
+    SUBTITLE_SOURCE_PREFERENCES,
+)
 from atv_player.ui.log_console import LogConsoleWidget
 from atv_player.ui.theme import (
     FlatComboBox,
@@ -124,6 +128,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.appearance_tab = QWidget()
         self.metadata_tab = QWidget()
         self.danmaku_tab = QWidget()
+        self.subtitle_tab = QWidget()
         self.ai_tab = QWidget()
         self.network_proxy_tab = QWidget()
         self.playback_tab = QWidget()
@@ -153,6 +158,29 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.episode_title_enhancement_checkbox = QCheckBox("启用剧集标题增强")
         self.metadata_source_checkboxes: dict[str, QCheckBox] = {}
         self.danmaku_source_checkboxes: dict[str, QCheckBox] = {}
+        self.subtitle_source_checkboxes: dict[str, QCheckBox] = {}
+        self.subtitle_source_group = QGroupBox("字幕站")
+        self.subtitle_token_group = QGroupBox("字幕站账号")
+        self.subtitle_subdl_api_key_edit = QLineEdit()
+        self.subtitle_subdl_api_key_edit.setPlaceholderText(
+            "在 subdl.com 账号面板免费获取；留空则不使用 SubDL"
+        )
+        self.subtitle_subdl_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.subtitle_assrt_token_edit = QLineEdit()
+        self.subtitle_assrt_token_edit.setPlaceholderText(
+            "在 assrt.net 用户面板获取；留空则不使用射手网"
+        )
+        self.subtitle_assrt_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.subtitle_opensubtitles_api_key_edit = QLineEdit()
+        self.subtitle_opensubtitles_api_key_edit.setPlaceholderText(
+            "在 opensubtitles.com 申请；免费账号每天限 5 次下载"
+        )
+        self.subtitle_opensubtitles_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.subtitle_subsource_api_key_edit = QLineEdit()
+        self.subtitle_subsource_api_key_edit.setPlaceholderText(
+            "在 subsource.net 注册后于个人资料页生成；留空则不使用 SubSource"
+        )
+        self.subtitle_subsource_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.dandan_base_url_edit = QLineEdit()
         self.dandan_base_url_edit.setPlaceholderText(
             "http://host:9321 或 http://host:9321/87654321；留空=关闭此源"
@@ -368,6 +396,17 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             checkbox = QCheckBox(source.label)
             checkbox.setChecked(source.id not in disabled_danmaku_sources)
             self.danmaku_source_checkboxes[source.id] = checkbox
+        disabled_subtitle_sources = set(config.disabled_subtitle_provider_ids)
+        for source in SUBTITLE_SOURCE_PREFERENCES:
+            checkbox = QCheckBox(source.label)
+            checkbox.setChecked(source.id not in disabled_subtitle_sources)
+            self.subtitle_source_checkboxes[source.id] = checkbox
+        self.subtitle_subdl_api_key_edit.setText(config.subtitle_subdl_api_key)
+        self.subtitle_assrt_token_edit.setText(config.subtitle_assrt_token)
+        self.subtitle_subsource_api_key_edit.setText(config.subtitle_subsource_api_key)
+        self.subtitle_opensubtitles_api_key_edit.setText(
+            config.subtitle_opensubtitles_api_key
+        )
         self.danmaku_blocked_words_edit.setPlainText("\n".join(config.danmaku_blocked_words))
         self.danmaku_duplicate_window_spinbox.setValue(config.danmaku_duplicate_window_minutes)
         self.danmaku_convert_top_bottom_checkbox.setChecked(config.danmaku_convert_top_bottom_to_scroll)
@@ -496,6 +535,30 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         danmaku_tab_layout.addWidget(self.danmaku_cleaning_group)
         danmaku_tab_layout.addStretch(1)
 
+        self.subtitle_source_group.setLayout(
+            _build_source_checkbox_layout(list(self.subtitle_source_checkboxes.values()))
+        )
+        subtitle_token_layout = QFormLayout()
+        subtitle_token_layout.addRow("SubDL API Key", self.subtitle_subdl_api_key_edit)
+        subtitle_token_layout.addRow("射手网 Token", self.subtitle_assrt_token_edit)
+        subtitle_token_layout.addRow(
+            "OpenSubtitles API Key", self.subtitle_opensubtitles_api_key_edit
+        )
+        subtitle_token_layout.addRow(
+            "SubSource API Key", self.subtitle_subsource_api_key_edit
+        )
+        subtitle_hint = QLabel(
+            "SubHD 与字幕库无需配置即可使用；填写上面的 Token 后会额外启用对应站点。"
+            "播放器中按 C 打开字幕搜索。"
+        )
+        subtitle_hint.setWordWrap(True)
+        subtitle_token_layout.addRow(subtitle_hint)
+        self.subtitle_token_group.setLayout(subtitle_token_layout)
+        subtitle_tab_layout = QVBoxLayout(self.subtitle_tab)
+        subtitle_tab_layout.addWidget(self.subtitle_source_group)
+        subtitle_tab_layout.addWidget(self.subtitle_token_group)
+        subtitle_tab_layout.addStretch(1)
+
         ai_layout = QFormLayout()
         ai_layout.addRow(self.ai_enabled_checkbox)
         ai_layout.addRow(self.ai_metadata_enrichment_checkbox)
@@ -596,6 +659,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.danmaku_tab, "弹幕")
+        self.settings_tabs.addTab(self.subtitle_tab, "字幕")
         self.settings_tabs.addTab(self.ai_tab, "AI")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
         self.settings_tabs.addTab(self.cache_tab, "缓存管理")
@@ -1372,6 +1436,21 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             if not checkbox.isChecked()
         ]
         self._config.dandan_base_url = self.dandan_base_url_edit.text().strip()
+        self._config.disabled_subtitle_provider_ids = [
+            provider_id
+            for provider_id, checkbox in self.subtitle_source_checkboxes.items()
+            if not checkbox.isChecked()
+        ]
+        self._config.subtitle_subdl_api_key = (
+            self.subtitle_subdl_api_key_edit.text().strip()
+        )
+        self._config.subtitle_assrt_token = self.subtitle_assrt_token_edit.text().strip()
+        self._config.subtitle_opensubtitles_api_key = (
+            self.subtitle_opensubtitles_api_key_edit.text().strip()
+        )
+        self._config.subtitle_subsource_api_key = (
+            self.subtitle_subsource_api_key_edit.text().strip()
+        )
         self._config.bangumi_data_danmaku_enabled = self.bangumi_data_danmaku_checkbox.isChecked()
         self._config.disabled_metadata_provider_ids = [
             provider_id

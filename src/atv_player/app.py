@@ -28,6 +28,7 @@ from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import create_default_danmaku_service
+from atv_player.subtitles.service import create_default_subtitle_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.favorites_controller import FavoritesController
@@ -487,6 +488,12 @@ class AppCoordinator(QObject):
             config_loader=self.repo.load_config,
         )
         self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
+        self._subtitle_search_service = create_default_subtitle_service(
+            get=self._proxy_http_get(),
+            post=self._proxy_http_post(),
+            config_loader=self.repo.load_config,
+            disabled_provider_ids_loader=lambda: self.repo.load_config().disabled_subtitle_provider_ids,
+        )
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -2318,6 +2325,7 @@ class AppCoordinator(QObject):
             youtube_category_text_loader=getattr(self._api_client, "get_text", None),
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,
+            subtitle_search_service=self._subtitle_search_service,
             danmaku_controller_factory=danmaku_controller_factory,
             episode_title_enhancer_factory=episode_title_enhancer_factory,
             metadata_binding_repository=self._metadata_binding_repository,

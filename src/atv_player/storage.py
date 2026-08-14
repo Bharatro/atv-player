@@ -8,7 +8,11 @@ from typing import Any, cast
 import uuid
 
 from atv_player.models import AppConfig, AppIdentity
-from atv_player.source_preferences import VALID_DANMAKU_PROVIDER_IDS, VALID_METADATA_PROVIDER_IDS
+from atv_player.source_preferences import (
+    VALID_DANMAKU_PROVIDER_IDS,
+    VALID_METADATA_PROVIDER_IDS,
+    VALID_SUBTITLE_PROVIDER_IDS,
+)
 from atv_player.sqlite_utils import managed_connection
 
 _VALID_DANMAKU_RENDER_MODES = {"static", "scroll_only", "mixed"}
@@ -467,6 +471,11 @@ class SettingsRepository:
                     danmaku_convert_top_bottom_to_scroll INTEGER NOT NULL DEFAULT 0,
                     dandan_base_url TEXT NOT NULL DEFAULT '',
                     bangumi_data_danmaku_enabled INTEGER NOT NULL DEFAULT 0,
+                    subtitle_subdl_api_key TEXT NOT NULL DEFAULT '',
+                    subtitle_assrt_token TEXT NOT NULL DEFAULT '',
+                    subtitle_opensubtitles_api_key TEXT NOT NULL DEFAULT '',
+                    subtitle_subsource_api_key TEXT NOT NULL DEFAULT '',
+                    disabled_subtitle_provider_ids TEXT NOT NULL DEFAULT '[]',
                     disabled_metadata_provider_ids TEXT NOT NULL DEFAULT '[]',
                     metadata_douban_cookie TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
@@ -592,6 +601,26 @@ class SettingsRepository:
             if "bangumi_data_danmaku_enabled" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN bangumi_data_danmaku_enabled INTEGER NOT NULL DEFAULT 0"
+                )
+            if "subtitle_subdl_api_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN subtitle_subdl_api_key TEXT NOT NULL DEFAULT ''"
+                )
+            if "subtitle_assrt_token" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN subtitle_assrt_token TEXT NOT NULL DEFAULT ''"
+                )
+            if "subtitle_opensubtitles_api_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN subtitle_opensubtitles_api_key TEXT NOT NULL DEFAULT ''"
+                )
+            if "subtitle_subsource_api_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN subtitle_subsource_api_key TEXT NOT NULL DEFAULT ''"
+                )
+            if "disabled_subtitle_provider_ids" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN disabled_subtitle_provider_ids TEXT NOT NULL DEFAULT '[]'"
                 )
             if "disabled_metadata_provider_ids" not in columns:
                 conn.execute(
@@ -1146,7 +1175,12 @@ class SettingsRepository:
                     following_episode_grid_columns,
                     home_mode,
                     dandan_base_url,
-                    bangumi_data_danmaku_enabled
+                    bangumi_data_danmaku_enabled,
+                    subtitle_subdl_api_key,
+                    subtitle_assrt_token,
+                    subtitle_opensubtitles_api_key,
+                    subtitle_subsource_api_key,
+                    disabled_subtitle_provider_ids
                 FROM app_config
                 WHERE id = 1
                 """
@@ -1243,6 +1277,11 @@ class SettingsRepository:
             home_mode,
             dandan_base_url,
             bangumi_data_danmaku_enabled,
+            subtitle_subdl_api_key,
+            subtitle_assrt_token,
+            subtitle_opensubtitles_api_key,
+            subtitle_subsource_api_key,
+            disabled_subtitle_provider_ids,
         ) = row
         return AppConfig(
             base_url=base_url,
@@ -1366,6 +1405,18 @@ class SettingsRepository:
             home_mode=_normalize_home_mode(home_mode),
             dandan_base_url=str(dandan_base_url or "").strip(),
             bangumi_data_danmaku_enabled=bool(bangumi_data_danmaku_enabled),
+            subtitle_subdl_api_key=str(subtitle_subdl_api_key or "").strip(),
+            subtitle_assrt_token=str(subtitle_assrt_token or "").strip(),
+            subtitle_opensubtitles_api_key=str(
+                subtitle_opensubtitles_api_key or ""
+            ).strip(),
+            subtitle_subsource_api_key=str(
+                subtitle_subsource_api_key or ""
+            ).strip(),
+            disabled_subtitle_provider_ids=_normalize_disabled_provider_ids(
+                disabled_subtitle_provider_ids,
+                VALID_SUBTITLE_PROVIDER_IDS,
+            ),
         )
 
     def save_config(self, config: AppConfig) -> None:
@@ -1463,7 +1514,12 @@ class SettingsRepository:
                     following_episode_grid_columns = ?,
                     home_mode = ?,
                     dandan_base_url = ?,
-                    bangumi_data_danmaku_enabled = ?
+                    bangumi_data_danmaku_enabled = ?,
+                    subtitle_subdl_api_key = ?,
+                    subtitle_assrt_token = ?,
+                    subtitle_opensubtitles_api_key = ?,
+                    subtitle_subsource_api_key = ?,
+                    disabled_subtitle_provider_ids = ?
                 WHERE id = 1
                 """,
                 (
@@ -1581,6 +1637,17 @@ class SettingsRepository:
                     _normalize_home_mode(config.home_mode),
                     str(config.dandan_base_url or "").strip(),
                     int(config.bangumi_data_danmaku_enabled),
+                    str(config.subtitle_subdl_api_key or "").strip(),
+                    str(config.subtitle_assrt_token or "").strip(),
+                    str(config.subtitle_opensubtitles_api_key or "").strip(),
+                    str(config.subtitle_subsource_api_key or "").strip(),
+                    json.dumps(
+                        _normalize_disabled_provider_ids(
+                            config.disabled_subtitle_provider_ids,
+                            VALID_SUBTITLE_PROVIDER_IDS,
+                        ),
+                        ensure_ascii=False,
+                    ),
                 ),
             )
 

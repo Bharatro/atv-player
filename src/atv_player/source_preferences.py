@@ -35,7 +35,17 @@ METADATA_SOURCE_PREFERENCES = (
     SourcePreference("tmdb", "TMDB"),
 )
 
+SUBTITLE_SOURCE_PREFERENCES = (
+    SourcePreference("subdl", "SubDL"),
+    SourcePreference("subhd", "SubHD"),
+    SourcePreference("zimuku", "字幕库"),
+    SourcePreference("assrt", "射手网(伪)"),
+    SourcePreference("subsource", "SubSource"),
+    SourcePreference("opensubtitles", "OpenSubtitles"),
+)
+
 VALID_DANMAKU_PROVIDER_IDS = {item.id for item in DANMAKU_SOURCE_PREFERENCES}
+VALID_SUBTITLE_PROVIDER_IDS = {item.id for item in SUBTITLE_SOURCE_PREFERENCES}
 VALID_METADATA_PROVIDER_IDS = {item.id for item in METADATA_SOURCE_PREFERENCES} | {
     "plugin",
     "douban",

@@ -49,6 +49,7 @@ class PlayerSession:
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
+    subtitle_search_service: object | None = None
     metadata_binding_repository: object | None = None
     episode_title_override_repository: object | None = None
     metadata_hydrated: bool = False
@@ -409,6 +410,7 @@ class PlayerController:
         detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None,
         metadata_hydrator: Callable[[object], VodItem | None] | None = None,
         metadata_scrape_service: object | None = None,
+        subtitle_search_service: object | None = None,
         metadata_binding_repository: object | None = None,
         episode_title_override_repository: object | None = None,
         episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None,
@@ -497,6 +499,7 @@ class PlayerController:
             detail_field_runner=detail_field_runner,
             metadata_hydrator=metadata_hydrator,
             metadata_scrape_service=metadata_scrape_service,
+            subtitle_search_service=subtitle_search_service,
             metadata_binding_repository=metadata_binding_repository,
             episode_title_override_repository=episode_title_override_repository,
             episode_title_enhancer=episode_title_enhancer,

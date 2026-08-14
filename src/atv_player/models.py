@@ -65,6 +65,11 @@ class AppConfig:
     danmaku_convert_top_bottom_to_scroll: bool = False
     dandan_base_url: str = ""
     bangumi_data_danmaku_enabled: bool = False
+    subtitle_subdl_api_key: str = ""
+    subtitle_assrt_token: str = ""
+    subtitle_opensubtitles_api_key: str = ""
+    subtitle_subsource_api_key: str = ""
+    disabled_subtitle_provider_ids: list[str] = field(default_factory=list)
     disabled_metadata_provider_ids: list[str] = field(default_factory=list)
     last_path: str = "/"
     last_active_window: str = "main"

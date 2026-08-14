@@ -1486,6 +1486,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             media_detail_controller=None,
             metadata_hydrator_factory=None,
             metadata_scrape_service_factory=None,
+            subtitle_search_service=None,
             danmaku_controller_factory=None,
             episode_title_enhancer_factory=None,
             metadata_binding_repository=None,
@@ -1506,6 +1507,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._media_detail_controller = media_detail_controller
         self._metadata_hydrator_factory = metadata_hydrator_factory
         self._metadata_scrape_service_factory = metadata_scrape_service_factory
+        self._subtitle_search_service = subtitle_search_service
         self._danmaku_controller_factory = danmaku_controller_factory
         self._episode_title_enhancer_factory = episode_title_enhancer_factory
         self._metadata_binding_repository = metadata_binding_repository
@@ -6628,6 +6630,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             detail_field_runner=request.detail_field_runner,
             metadata_hydrator=request.metadata_hydrator,
             metadata_scrape_service=request.metadata_scrape_service,
+            subtitle_search_service=self._subtitle_search_service,
             metadata_binding_repository=request.metadata_binding_repository,
             episode_title_override_repository=request.episode_title_override_repository,
             episode_title_enhancer=request.episode_title_enhancer,
