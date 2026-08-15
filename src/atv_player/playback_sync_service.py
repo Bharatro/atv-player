@@ -17,7 +17,11 @@ logger = logging.getLogger(__name__)
 # 鉴权复用 ApiClient 的 session 令牌(Authorization),服务端 resolveUid 解析为 uid。
 INITIAL_DELAY_MS = 30_000
 PERIOD_MS = 30_000
-PULL_PERIOD_MS = 5 * 60_000
+# PULL 是带游标的增量 GET,开销小;与安卓端(PlaybackSyncer 60s 周期)对齐,
+# 让跨端续播进度在最坏 ~90s 内可见,而不是等满 5 分钟。
+PULL_PERIOD_MS = 60_000
+# pull_soon()(窗口重新激活等外部触发)的最小间隔,避免频繁切窗打爆服务端。
+PULL_SOON_MIN_INTERVAL_MS = 10_000
 SYNC_SOURCE_KINDS = frozenset(
     {
         "browse",
@@ -118,6 +122,19 @@ class PlaybackHistorySyncService(QObject):
     def stop(self) -> None:
         self._started = False
         self._timer.stop()
+
+    def pull_soon(self) -> None:
+        """请求尽快 PULL 一次(如窗口重新激活),越过 PULL_PERIOD_MS 节流。
+
+        仍受 PULL_SOON_MIN_INTERVAL_MS 限流;服务未启动时是空操作。
+        """
+        if not self._started:
+            return
+        now = monotonic()
+        if self._last_pull_at > 0 and (now - self._last_pull_at) * 1000 < PULL_SOON_MIN_INTERVAL_MS:
+            return
+        self._last_pull_at = 0.0
+        self.sync()
 
     def flush(self) -> None:
         """关闭/登出前同步执行最后一次 PUSH,把未到 tick 的进度上报到服务端。

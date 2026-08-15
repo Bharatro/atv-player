@@ -5,8 +5,9 @@ import threading
 from atv_player.models import HistoryRecord
 from atv_player.playback_sync_service import (
     INITIAL_DELAY_MS,
-    PERIOD_MS,
     PULL_PERIOD_MS,
+    PULL_SOON_MIN_INTERVAL_MS,
+    PERIOD_MS,
     PlaybackHistorySyncService,
 )
 
@@ -169,7 +170,8 @@ class FakeApi:
 def test_playback_sync_runs_every_30_seconds() -> None:
     assert INITIAL_DELAY_MS == 30_000
     assert PERIOD_MS == 30_000
-    assert PULL_PERIOD_MS == 5 * 60_000
+    # PULL 与安卓端 60s 同步周期对齐,跨端续播进度最坏 ~90s 内可见
+    assert PULL_PERIOD_MS == 60_000
 
 
 def test_push_versions_are_tracked_per_record() -> None:
@@ -737,3 +739,64 @@ def test_sync_runs_outside_calling_thread() -> None:
     service.sync()
 
     assert worker_called.wait(timeout=1)
+
+
+def test_pull_soon_bypasses_pull_throttle() -> None:
+    from time import monotonic
+
+    pulled = []
+
+    class PullApi(FakeApi):
+        def pull_playback_records(
+            self, since: int, *, source_kinds: str = "", site_keys: str = ""
+        ) -> dict:
+            pulled.append(since)
+            return {}
+
+    service = PlaybackHistorySyncService(PullApi(), FakeRepository([]))
+    service._started = True
+
+    # 距上次拉取 30s:仍在 PULL_PERIOD_MS(60s)周期内,但已过 pull_soon 节流(10s)
+    service._last_pull_at = monotonic() - 30.0
+    service.pull_soon()
+    if service._worker is not None:
+        service._worker.join(timeout=5.0)
+    assert len(pulled) == 1  # pull_soon 越过周期节流,worker 立即补拉
+
+
+def test_pull_soon_is_throttled_within_min_interval() -> None:
+    from time import monotonic
+
+    pulled = []
+
+    class PullApi(FakeApi):
+        def pull_playback_records(
+            self, since: int, *, source_kinds: str = "", site_keys: str = ""
+        ) -> dict:
+            pulled.append(since)
+            return {}
+
+    service = PlaybackHistorySyncService(PullApi(), FakeRepository([]))
+    service._started = True
+    # 刚拉取过(_last_pull_at 距今 < PULL_SOON_MIN_INTERVAL_MS)→ 忽略本次请求
+    service._last_pull_at = monotonic() - (PULL_SOON_MIN_INTERVAL_MS - 5_000) / 1000.0
+    service.pull_soon()
+
+    assert service._worker is None or not service._worker.is_alive()
+    assert pulled == []
+
+    # 超过最小间隔后允许再次触发
+    service._last_pull_at = monotonic() - (PULL_SOON_MIN_INTERVAL_MS + 1_000) / 1000.0
+    service.pull_soon()
+    if service._worker is not None:
+        service._worker.join(timeout=5.0)
+    assert len(pulled) == 1
+
+
+def test_pull_soon_is_noop_when_stopped() -> None:
+    service = PlaybackHistorySyncService(FakeApi(), FakeRepository([]))
+    service._started = False
+
+    service.pull_soon()
+
+    assert service._worker is None

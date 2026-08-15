@@ -391,25 +391,32 @@ class PlayerController:
     ) -> tuple[int, int, int, list[PlayItem]]:
         _, pair_to_flat, flat_to_pair = self._flatten_source_groups(source_groups)
         if history is not None:
-            history_pair = (history.source_group_index, history.source_index)
-            pair_flat_index = pair_to_flat.get(history_pair, -1)
-            should_use_explicit_pair = (
-                history_pair in pair_to_flat
-                and (
-                    history.source_group_index != 0
-                    or history.source_index != 0
-                    or pair_flat_index == history.playlist_index
+            # 跨端记录优先按规范分享身份定位网盘资源:安卓端不产生分组/资源坐标
+            # (本地缺省为 0,会误选第一个分组),分享 ID 才是资源级稳定指针。
+            share_pair = self._match_source_by_drive_share_key(
+                source_groups, history.drive_share_key)
+            if share_pair is not None:
+                source_group_index, source_index = share_pair
+            else:
+                history_pair = (history.source_group_index, history.source_index)
+                pair_flat_index = pair_to_flat.get(history_pair, -1)
+                should_use_explicit_pair = (
+                    history_pair in pair_to_flat
+                    and (
+                        history.source_group_index != 0
+                        or history.source_index != 0
+                        or pair_flat_index == history.playlist_index
+                    )
                 )
-            )
-            if should_use_explicit_pair:
-                source_group_index = history.source_group_index
-                active_group = source_groups[source_group_index]
-                if 0 <= history.source_index < len(active_group.sources):
-                    source_index = history.source_index
-                else:
-                    source_index = 0
-            elif 0 <= history.playlist_index < len(playlists):
-                source_group_index, source_index = flat_to_pair[history.playlist_index]
+                if should_use_explicit_pair:
+                    source_group_index = history.source_group_index
+                    active_group = source_groups[source_group_index]
+                    if 0 <= history.source_index < len(active_group.sources):
+                        source_index = history.source_index
+                    else:
+                        source_index = 0
+                elif 0 <= history.playlist_index < len(playlists):
+                    source_group_index, source_index = flat_to_pair[history.playlist_index]
         playlist_index = pair_to_flat[(source_group_index, source_index)]
         return (
             source_group_index,
@@ -417,6 +424,24 @@ class PlayerController:
             playlist_index,
             source_groups[source_group_index].sources[source_index].playlist,
         )
+
+    @staticmethod
+    def _match_source_by_drive_share_key(
+        source_groups: list[PlaybackSourceGroup],
+        share_key: str,
+    ) -> tuple[int, int] | None:
+        """按 driveShareKey(盘类型@分享ID@提取码)在源列表中定位网盘资源,找不到返回 None。"""
+        parts = str(share_key or "").split("@")
+        if len(parts) < 2 or not parts[1]:
+            return None
+        share_id = parts[1]
+        for group_index, group in enumerate(source_groups):
+            for source_index, source in enumerate(group.sources):
+                for item in source.playlist:
+                    for candidate in (item.vod_id, item.url):
+                        if candidate and share_id in str(candidate):
+                            return group_index, source_index
+        return None
 
     def create_session(
         self,

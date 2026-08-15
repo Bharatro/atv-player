@@ -25682,3 +25682,92 @@ def test_open_session_resets_buffer_value(qtbot) -> None:
     window.open_session(session)
 
     assert window.progress._buffer_value == 0
+
+
+def test_player_window_restores_nested_drive_history_by_drive_path(qtbot) -> None:
+    import base64
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    def dir_id(rel: str) -> str:
+        path = f"/我的夸克分享/temp/quark@79710fe33776@{rel}"
+        return base64.urlsafe_b64encode(path.encode("utf-8")).decode("ascii").rstrip("=")
+
+    s05_playlist = [
+        PlayItem(
+            title="S05E07",
+            url="http://m/7",
+            play_id="1@900001",
+            path=f"/我的夸克分享/temp/quark@79710fe33776@/C 菜鸟老警 全8季 1080P/S05/S05E07.mp4",
+        )
+    ]
+    s06_playlist = [
+        PlayItem(
+            title="S06E07",
+            url="http://m/77",
+            play_id="1@900002",
+            path=f"/我的夸克分享/temp/quark@79710fe33776@/C 菜鸟老警 全8季 1080P/S06/S06E07.mp4",
+        ),
+        PlayItem(
+            title="S06E08",
+            url="http://m/8",
+            play_id="1@188698",
+            path=f"/我的夸克分享/temp/quark@79710fe33776@/C 菜鸟老警 全8季 1080P/S06/S06E08.mp4",
+        ),
+    ]
+    parent_source = PlaybackSource(
+        label="夸克资源",
+        playlist=[PlayItem(title="夸克资源", url="")],
+        subgroups=[
+            PlaybackSourceGroup(
+                label="S05",
+                sources=[PlaybackSource(label="S05", playlist=s05_playlist)],
+                drive_dir_id=dir_id("/C 菜鸟老警 全8季 1080P/S05"),
+            ),
+            PlaybackSourceGroup(
+                label="S06",
+                sources=[PlaybackSource(label="S06", playlist=s06_playlist)],
+                drive_dir_id=dir_id("/C 菜鸟老警 全8季 1080P/S06"),
+            ),
+        ],
+        subgroup_index=0,
+    )
+    # 安卓端记录:子目录名/索引/播放 id 都对不上本端解析结果,只有规范路径可信
+    history = HistoryRecord(
+        id=1,
+        key="gy_tv_58kD",
+        vod_name="菜鸟老警",
+        vod_pic="",
+        vod_remarks="08",
+        episode=0,
+        episode_url="1@188698@5@7",
+        position=1063896,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1786763901121,
+        source_subgroup_index=0,
+        source_subgroup_name="6",
+        drive_share_key="quark@79710fe33776@",
+        drive_path="/C 菜鸟老警 全8季 1080P/S06/S06E08.mp4",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="gy_tv_58kD", vod_name="菜鸟老警"),
+        playlist=[],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        resume_history=history,
+    )
+    session.source_groups = [
+        PlaybackSourceGroup(label="夸克", sources=[parent_source])
+    ]
+    session.source_group_index = 0
+    session.source_index = 0
+    window.session = session
+
+    assert window._restore_nested_drive_history(parent_source) is True
+    assert parent_source.subgroup_index == 1
+    assert session.playlist is s06_playlist
+    assert window.current_index == 1

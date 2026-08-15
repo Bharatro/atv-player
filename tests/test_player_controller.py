@@ -1751,3 +1751,94 @@ def test_player_controller_history_payload_drive_ref_empty_for_plain_source() ->
 
     assert saved[0]["driveShareKey"] == ""
     assert saved[0]["drivePath"] == ""
+
+
+def test_player_controller_restores_source_by_drive_share_key() -> None:
+    # 安卓端记录:无分组/资源坐标(缺省 0),但带规范分享身份
+    api = FakeApiClient()
+    api.history = HistoryRecord(
+        id=1,
+        key="gy_tv_58kD",
+        vod_name="菜鸟老警",
+        vod_pic="",
+        vod_remarks="08",
+        episode=7,
+        episode_url="1@188698@5@7",
+        position=1063896,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1786763901121,
+        source_subgroup_index=5,
+        source_subgroup_name="6",
+        drive_share_key="quark@79710fe33776@",
+        drive_path="/C 菜鸟老警 全8季 1080P/S06/S06E08.mp4",
+    )
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="gy_tv_58kD", vod_name="菜鸟老警")
+    baidu_playlist = [
+        PlayItem(title="百度资源", url="", vod_id="https://pan.baidu.com/s/1fFDWZTTtXy8aTPjKJ2F0uA")
+    ]
+    quark_playlist = [
+        PlayItem(title="夸克资源", url="", vod_id="https://pan.quark.cn/s/79710fe33776")
+    ]
+    source_groups = [
+        PlaybackSourceGroup(label="百度", sources=[PlaybackSource(label="百度资源", playlist=baidu_playlist)]),
+        PlaybackSourceGroup(label="夸克", sources=[PlaybackSource(label="夸克资源", playlist=quark_playlist)]),
+    ]
+
+    session = controller.create_session(
+        vod,
+        quark_playlist,
+        clicked_index=0,
+        source_groups=source_groups,
+        source_group_index=0,
+        source_index=0,
+    )
+
+    # 坐标指向 (0,0)=百度,分享 ID 指向夸克资源 → 内容指针优先
+    assert session.source_group_index == 1
+    assert session.source_index == 0
+    assert session.playlist is quark_playlist
+
+
+def test_player_controller_share_key_mismatch_falls_back_to_coordinates() -> None:
+    api = FakeApiClient()
+    api.history = HistoryRecord(
+        id=1,
+        key="v1",
+        vod_name="Movie",
+        vod_pic="",
+        vod_remarks="1",
+        episode=0,
+        episode_url="",
+        position=1000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+        source_group_index=1,
+        source_index=0,
+        playlist_index=1,
+        drive_share_key="quark@expired_share@",  # 资源已失效,列表里没有
+    )
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="v1", vod_name="Movie")
+    first = [PlayItem(title="1", url="http://m/1")]
+    second = [PlayItem(title="2", url="http://m/2")]
+    source_groups = [
+        PlaybackSourceGroup(label="线路1", sources=[PlaybackSource(label="1", playlist=first)]),
+        PlaybackSourceGroup(label="线路2", sources=[PlaybackSource(label="2", playlist=second)]),
+    ]
+
+    session = controller.create_session(
+        vod,
+        second,
+        clicked_index=0,
+        source_groups=source_groups,
+        source_group_index=0,
+        source_index=0,
+    )
+
+    # 分享 ID 匹配不上时退回坐标逻辑
+    assert session.source_group_index == 1

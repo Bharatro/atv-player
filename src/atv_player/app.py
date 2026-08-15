@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
@@ -200,6 +200,24 @@ class _ButtonCursorEventFilter(QObject):
         del event
         if isinstance(watched, (QPushButton, QToolButton)) and watched.cursor().shape() != Qt.CursorShape.PointingHandCursor:
             watched.setCursor(Qt.CursorShape.PointingHandCursor)
+        return False
+
+
+class _ActivationPullFilter(QObject):
+    """主窗口重新激活时请求一次播放记录 PULL,让跨端续播进度立即可见。"""
+
+    def __init__(self, callback, parent=None) -> None:
+        super().__init__(parent)
+        self._callback = callback
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.ActivationChange:
+            window = watched
+            if callable(getattr(window, "isActiveWindow", None)) and window.isActiveWindow():
+                try:
+                    self._callback()
+                except Exception:  # noqa: BLE001 - 同步触发失败不应影响窗口事件
+                    logger.exception("playback sync pull_soon failed")
         return False
 
 
@@ -461,6 +479,7 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._playback_sync_service: PlaybackHistorySyncService | None = None
+        self._activation_pull_filter: _ActivationPullFilter | None = None
         self._api_client: ApiClient | None = None
         initial_config = self.repo.load_config()
         set_proxy_decider_loader(self._build_proxy_decider)
@@ -2337,6 +2356,16 @@ class AppCoordinator(QObject):
             following_update_service.start()
         if self._playback_sync_service is not None:
             self._playback_sync_service.start()
+        if self.main_window is not None:
+            self._activation_pull_filter = _ActivationPullFilter(
+                lambda: (
+                    self._playback_sync_service.pull_soon()
+                    if self._playback_sync_service is not None
+                    else None
+                ),
+                self.main_window,
+            )
+            self.main_window.installEventFilter(self._activation_pull_filter)
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
@@ -2356,6 +2385,11 @@ class AppCoordinator(QObject):
         return self.main_window
 
     def _stop_playback_sync_service(self) -> None:
+        if self._activation_pull_filter is not None:
+            if self.main_window is not None:
+                self.main_window.removeEventFilter(self._activation_pull_filter)
+            self._activation_pull_filter.deleteLater()
+            self._activation_pull_filter = None
         if self._playback_sync_service is None:
             return
         # 关闭/登出/重建前 flush 最后一次 PUSH,避免 <30s tick 窗口内的进度丢失。

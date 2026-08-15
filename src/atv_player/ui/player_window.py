@@ -94,6 +94,8 @@ from atv_player.metadata.episode_title_overrides import (
 )
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
+from atv_player.controllers.player_controller import decode_drive_dir_id, split_drive_path
+from atv_player.player.resume import drive_relative_path
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
 from atv_player.models import (
     ExternalSubtitleOption,
@@ -3869,6 +3871,25 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     parent_source, subgroup_index, playlist, history.episode
                 )
             return False
+
+        # 规范网盘路径优先:跨端记录的子目录名/播放 id 可能与本端解析结果对不上
+        # (服务端线路名被公共前后缀裁剪、各资源文件命名不同),路径才是稳定内容指针。
+        drive_path = str(getattr(history, "drive_path", "") or "")
+        if drive_path and "/" in drive_path:
+            dir_rel = drive_path.rsplit("/", 1)[0]
+            for subgroup_index, subgroup in enumerate(parent_source.subgroups):
+                _, subgroup_rel = split_drive_path(decode_drive_dir_id(subgroup.drive_dir_id))
+                if subgroup_rel != dir_rel:
+                    continue
+                self._ensure_drive_subgroup_loaded(subgroup)
+                if not subgroup.sources:
+                    continue
+                playlist = subgroup.sources[0].playlist
+                for index, item in enumerate(playlist):
+                    if item.path and drive_relative_path(item.path) == drive_path:
+                        return self._select_nested_drive_history_item(
+                            parent_source, subgroup_index, playlist, index
+                        )
 
         if history.source_subgroup_name:
             for subgroup_index, subgroup in enumerate(parent_source.subgroups):
