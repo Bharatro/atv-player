@@ -911,6 +911,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._subtitle_search_secondary_button: QPushButton | None = None
         self._subtitle_search_items: list[object] = []
         self._subtitle_search_result: object | None = None
+        # 记录上次搜索对应的播放上下文和自动填充值，切集/换片后用来识别并重置过期内容
+        self._subtitle_search_last_context: tuple[str, str, int | None] | None = None
+        self._subtitle_search_auto_title = ""
+        self._subtitle_search_auto_tmdb_id = ""
         self._danmaku_source_title_edit: QLineEdit | None = None
         self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_url_edit: QLineEdit | None = None
@@ -8394,11 +8398,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log("字幕搜索不可用")
             return
         dialog = self._ensure_subtitle_search_dialog()
+        self._reset_subtitle_search_if_context_changed()
         self._refresh_subtitle_search_context()
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
-        # 首次打开自动按当前播放项搜一次，省掉一次手动点击
+        # 首次打开（或换了播放项）自动按当前播放项搜一次，省掉一次手动点击
         if not self._subtitle_search_items:
             self._start_subtitle_search()
 
@@ -8571,16 +8576,43 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return provider_id, ""
         return "", ""
 
+    def _reset_subtitle_search_if_context_changed(self) -> None:
+        """切换播放项后清掉过期的片名/TMDB id/搜索结果。
+
+        只清自动填充的内容；用户手改过的片名和 id 保留，不打断手动搜索。
+        """
+        context = self._subtitle_search_query_context()
+        if self._subtitle_search_last_context == context:
+            return
+        self._subtitle_search_last_context = context
+        self._subtitle_search_items = []
+        self._subtitle_search_result = None
+        if self._subtitle_search_table is not None:
+            self._subtitle_search_table.setRowCount(0)
+        title_edit = self._subtitle_search_title_edit
+        if title_edit is not None:
+            current = title_edit.text().strip()
+            if not current or current == self._subtitle_search_auto_title:
+                title_edit.setText("")
+        tmdb_edit = self._subtitle_search_tmdb_id_edit
+        if tmdb_edit is not None:
+            current = tmdb_edit.text().strip()
+            if not current or current == self._subtitle_search_auto_tmdb_id:
+                tmdb_edit.setText("")
+        self._set_subtitle_search_status("")
+
     def _refresh_subtitle_search_context(self) -> None:
         query = self._build_subtitle_search_query()
         title_edit = self._subtitle_search_title_edit
         if title_edit is not None and not title_edit.text().strip():
             title_edit.setText(query.title)
+            self._subtitle_search_auto_title = query.title
         # 自动填充刮削绑定到的 TMDB id（用户没手填时才覆盖）
         tmdb_id, _imdb_id = self._resolve_subtitle_search_media_ids()
         if tmdb_id and self._subtitle_search_tmdb_id_edit is not None:
             if not self._subtitle_search_tmdb_id_edit.text().strip():
                 self._subtitle_search_tmdb_id_edit.setText(tmdb_id)
+                self._subtitle_search_auto_tmdb_id = tmdb_id
         if self._subtitle_search_context_label is not None:
             parts = [f"影片：{query.title or '未知'}"]
             if query.season is not None and query.episode is not None:

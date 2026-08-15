@@ -160,6 +160,72 @@ def test_dialog_autosearches_with_parsed_release_context(qtbot) -> None:
     assert query.release_group == "GRP"
 
 
+def test_switching_playback_resets_stale_search_context(qtbot) -> None:
+    """换片/换集后重新打开对话框，应显示新片名并按新片名搜，而不是沿用旧的。"""
+    window, service = _open_dialog(qtbot)
+    assert service.searched_queries[0].title == "Show"
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="m1", vod_name="Movie"),
+            playlist=[
+                PlayItem(
+                    title="正片",
+                    original_title="Movie.2024.1080p.WEB-DL.x265-GRP.mkv",
+                    url="http://example.com/m.mkv",
+                )
+            ],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            subtitle_search_service=service,
+        )
+    )
+    window._open_subtitle_search_dialog()
+    qtbot.waitUntil(lambda: len(service.searched_queries) >= 2, timeout=3000)
+
+    assert window._subtitle_search_title_edit.text() == "Movie"
+    assert service.searched_queries[-1].title == "Movie"
+    # 旧片的搜索结果不该留在表里误导下载
+    rows = window._subtitle_search_table.rowCount()
+    assert rows == len(
+        [
+            item
+            for item in window._subtitle_search_items
+            if not window._subtitle_search_language_filter()
+            or item.language == window._subtitle_search_language_filter()
+        ]
+    )
+
+
+def test_manually_entered_title_survives_context_switch(qtbot) -> None:
+    """用户手改过片名时，切集后不应被重置覆盖。"""
+    window, service = _open_dialog(qtbot)
+    window._subtitle_search_title_edit.setText("My.Custom.Title")
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="m2", vod_name="Another"),
+            playlist=[
+                PlayItem(
+                    title="正片",
+                    original_title="Another.2024.1080p.WEB-DL.x265-GRP.mkv",
+                    url="http://example.com/a.mkv",
+                )
+            ],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            subtitle_search_service=service,
+        )
+    )
+
+    window._open_subtitle_search_dialog()
+    qtbot.waitUntil(lambda: len(service.searched_queries) >= 2, timeout=3000)
+
+    assert window._subtitle_search_title_edit.text() == "My.Custom.Title"
+    assert service.searched_queries[-1].title == "My.Custom.Title"
+
+
 def test_manually_entered_media_ids_are_sent_to_providers(qtbot) -> None:
     """中文片名在英文站搜不到时，用户填 TMDB/IMDb id 后应按 id 搜。"""
     _window, service = _open_dialog(qtbot)
