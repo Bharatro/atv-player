@@ -2845,3 +2845,30 @@ def test_local_playback_history_pending_deletions_round_trip(tmp_path: Path) -> 
 
     repo.clear_pending_deletions([("telegram", "", "vod-2")])
     assert repo.list_pending_deletions() == []
+
+
+def test_local_playback_history_repository_round_trips_drive_ref(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.save_history(
+        "spider_plugin",
+        "gy_tv_58kD",
+        {
+            "vodName": "菜鸟老警",
+            "episode": 2,
+            "episodeUrl": "1@188323@1@2",
+            "position": 1052000,
+            "createTime": 1786760312034,
+            "driveShareKey": "baidu@1fFDWZTTtXy8aTPjKJ2F0uA@f1z9",
+            "drivePath": "/C 菜鸟老警 全8季 1080P/S02/S02E03.mp4",
+        },
+        source_key="bbb01514f3d54e27bb48a80f50f2e39d5db0",
+        source_name="观影",
+    )
+
+    history = repo.get_history("spider_plugin", "gy_tv_58kD", "bbb01514f3d54e27bb48a80f50f2e39d5db0")
+    assert history is not None
+    assert history.drive_share_key == "baidu@1fFDWZTTtXy8aTPjKJ2F0uA@f1z9"
+    assert history.drive_path == "/C 菜鸟老警 全8季 1080P/S02/S02E03.mp4"
+    assert repo.list_histories()[0].drive_path == "/C 菜鸟老警 全8季 1080P/S02/S02E03.mp4"

@@ -1681,3 +1681,73 @@ def test_delayed_prefetch_callback_noops_after_tail_prefetch_already_succeeded()
     delayed_callback()
 
     assert len(danmaku_controller.calls) == 1
+
+
+def test_player_controller_history_payload_carries_drive_ref() -> None:
+    import base64 as _base64
+
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="gy_tv_58kD", vod_name="菜鸟老警")
+    playlist = [
+        PlayItem(
+            title="S02E03.mp4",
+            original_title="S02E03.mp4",
+            url="http://m/p/1/1@998",
+            path="/我的百度分享/temp/baidu@1fFDWZTTtXy8aTPjKJ2F0uA@f1z9/C 菜鸟老警 全8季 1080P/S02/S02E03.mp4",
+            play_id="1@998",
+        )
+    ]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
+    controller.report_progress(session, 0, 90, 1.0, 0, 0, paused=False)
+
+    payload = saved[0]
+    assert payload["driveShareKey"] == "baidu@1fFDWZTTtXy8aTPjKJ2F0uA@f1z9"
+    assert payload["drivePath"] == "/C 菜鸟老警 全8季 1080P/S02/S02E03.mp4"
+
+    # path 拿不到时退回子目录 id(base64 的目录绝对路径)+ 文件名
+    dir_path = "/我的夸克分享/temp/quark@2b3682416f78@/C 菜鸟老警S01~S06【1080P】/S02【2019】"
+    dir_id = _base64.urlsafe_b64encode(dir_path.encode("utf-8")).decode("ascii").rstrip("=")
+    playlist2 = [PlayItem(title="S02E03.mp4", original_title="S02E03.mp4", url="http://m/x")]
+    session2 = controller.create_session(vod, playlist2, clicked_index=0)
+    session2.source_groups = [
+        PlaybackSourceGroup(
+            label="夸克",
+            sources=[
+                PlaybackSource(
+                    label="资源",
+                    playlist=playlist2,
+                    subgroups=[PlaybackSourceGroup(label="S02【2019】", drive_dir_id=dir_id)],
+                    subgroup_index=0,
+                )
+            ],
+        )
+    ]
+    session2.source_group_index = 0
+    session2.source_index = 0
+
+    saved2: list[dict] = []
+    session2.playback_history_saver = lambda payload: saved2.append(payload)
+    controller.report_progress(session2, 0, 90, 1.0, 0, 0, paused=False)
+
+    payload2 = saved2[0]
+    assert payload2["driveShareKey"] == "quark@2b3682416f78@"
+    assert payload2["drivePath"] == "/C 菜鸟老警S01~S06【1080P】/S02【2019】/S02E03.mp4"
+
+
+def test_player_controller_history_payload_drive_ref_empty_for_plain_source() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="v1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
+    controller.report_progress(session, 0, 90, 1.0, 0, 0, paused=False)
+
+    assert saved[0]["driveShareKey"] == ""
+    assert saved[0]["drivePath"] == ""

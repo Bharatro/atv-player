@@ -447,6 +447,8 @@ class ApiClient:
             source_subgroup_index=int(data.get("sourceSubgroupIndex", 0)),
             source_subgroup_name=str(data.get("sourceSubgroupName") or ""),
             drive_dir_id=str(data.get("driveDirId") or ""),
+            drive_share_key=str(data.get("driveShareKey") or ""),
+            drive_path=str(data.get("drivePath") or ""),
         )
 
     def push_playback_events(self, records: list[dict[str, Any]]) -> None:

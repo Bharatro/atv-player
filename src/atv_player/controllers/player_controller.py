@@ -1,3 +1,4 @@
+import base64
 import logging
 import inspect
 import threading
@@ -19,11 +20,41 @@ from atv_player.models import (
     VodItem,
 )
 from atv_player.episode_titles import playlist_item_display_title
-from atv_player.player.resume import resolve_resume_index
+from atv_player.player.resume import resolve_resume_index, resolve_resume_index_by_drive_path
 from atv_player.yt_dlp_service import looks_like_youtube_video_id
 
 
 logger = logging.getLogger(__name__)
+
+
+def split_drive_path(path: str) -> tuple[str, str]:
+    """网盘 AList 完整路径 → (分享身份, 资源内相对路径)。
+
+    分享挂载段为 ``/temp/<盘类型>@<分享ID>@<提取码>/...``(见后端 ShareService.add);
+    返回 ("", "") 表示不是网盘分享路径。
+    """
+    value = str(path or "").strip()
+    marker = "/temp/"
+    index = value.find(marker)
+    if index < 0:
+        return "", ""
+    rest = value[index + len(marker):]
+    slash = rest.find("/")
+    if slash <= 0:
+        return "", ""
+    return rest[:slash], rest[slash:]
+
+
+def decode_drive_dir_id(value: str) -> str:
+    """drive_dir_id 是目录绝对路径的 base64url 编码(见后端 DriveService),解不出返回空。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        return base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return ""
 
 
 @dataclass(slots=True)
@@ -446,8 +477,11 @@ class PlayerController:
         start_index = resolve_resume_index(history, active_playlist, clicked_index)
         history_episode = history.episode if history is not None else None
         history_episode_url = history.episode_url if history is not None else ""
+        drive_path_index = resolve_resume_index_by_drive_path(history, active_playlist)
         matched_history = history is not None and (
-            start_index == history.episode or playback_history_loader is not None
+            start_index == history.episode
+            or (drive_path_index is not None and start_index == drive_path_index)
+            or playback_history_loader is not None
         )
         if matched_history and history is not None:
             position_seconds = int(history.position / 1000)
@@ -568,6 +602,7 @@ class PlayerController:
             position_ms,
             paused,
         )
+        drive_share_key, drive_path = self._history_drive_ref(session, current_item)
         payload = {
             "cid": 0,
             "key": session.vod.vod_id,
@@ -587,6 +622,8 @@ class PlayerController:
             "sourceSubgroupIndex": self._history_source_subgroup_index(session),
             "sourceSubgroupName": self._history_source_subgroup_name(session),
             "driveDirId": self._history_drive_dir_id(session),
+            "driveShareKey": drive_share_key,
+            "drivePath": drive_path,
             "createTime": int(time() * 1000),
         }
         if session.playback_history_saver is not None:
@@ -628,6 +665,27 @@ class PlayerController:
     def _history_drive_dir_id(self, session: PlayerSession) -> str:
         subgroup = self._history_drive_subgroup(session)
         return subgroup.drive_dir_id if subgroup is not None else ""
+
+    def _history_drive_ref(
+        self,
+        session: PlayerSession | None,
+        current_item: PlayItem,
+    ) -> tuple[str, str]:
+        """当前网盘文件 → 规范标识 (driveShareKey, drivePath),与后端归一化格式对齐。
+
+        优先用 PlayItem.path(/api/drive 返回的文件完整路径);拿不到时退回
+        子目录 id(目录绝对路径)+ 文件名拼接。非网盘播放返回 ("", "")。
+        """
+        share_key, rel_path = split_drive_path(current_item.path)
+        if share_key:
+            return share_key, rel_path
+        subgroup = self._history_drive_subgroup(session) if session is not None else None
+        if subgroup is not None and subgroup.drive_dir_id:
+            dir_share_key, dir_path = split_drive_path(decode_drive_dir_id(subgroup.drive_dir_id))
+            name = str(current_item.original_title or current_item.title or "").strip()
+            if dir_share_key and name:
+                return dir_share_key, dir_path + "/" + name
+        return "", ""
 
     def stop_playback(self, session: PlayerSession, current_index: int) -> None:
         self._invalidate_pending_next_episode_danmaku_prefetch(session)

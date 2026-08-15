@@ -415,6 +415,10 @@ class HistoryRecord:
     source_subgroup_index: int = 0
     source_subgroup_name: str = ""
     drive_dir_id: str = ""
+    # 网盘播放内容的跨端规范标识(与后端 driveShareKey/drivePath 对齐):
+    # share_key = 盘类型@分享ID@提取码;path = 资源内相对路径(含文件名),不随会话/列表顺序漂移
+    drive_share_key: str = ""
+    drive_path: str = ""
     source_kind: str = "remote"
     source_plugin_id: int = 0
     source_plugin_name: str = ""

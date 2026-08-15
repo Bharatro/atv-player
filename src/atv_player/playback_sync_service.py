@@ -294,6 +294,8 @@ class PlaybackHistorySyncService(QObject):
             "sourceSubgroupIndex": record.source_subgroup_index,
             "sourceSubgroupName": record.source_subgroup_name,
             "driveDirId": record.drive_dir_id,
+            "driveShareKey": record.drive_share_key,
+            "drivePath": record.drive_path,
         }
 
     # ── PULL:服务端 → 本地 Tier-B(LWW by updated_at) ──────────────────────
@@ -425,6 +427,10 @@ class PlaybackHistorySyncService(QObject):
                 or item.get("source_subgroup_name")
                 or "",
                 "driveDirId": item.get("driveDirId") or item.get("drive_dir_id") or "",
+                "driveShareKey": item.get("driveShareKey")
+                or item.get("drive_share_key")
+                or "",
+                "drivePath": item.get("drivePath") or item.get("drive_path") or "",
             }
             self._repo.save_history(source_kind, vod_id, payload, source_key=source_key, source_name=source_name)
             self._repo.set_sync_snapshot_version(self._namespace, sync_identity, updated_at)
