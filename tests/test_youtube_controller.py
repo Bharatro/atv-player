@@ -287,7 +287,7 @@ def test_youtube_controller_synthesizes_video_thumbnails_when_flat_items_omit_th
     items, _total = controller.load_items("cat_sub_feed", 1)
 
     assert items[1].vod_id == "yt:video:train123456"
-    assert items[1].vod_pic == "https://i.ytimg.com/vi/train123456/hqdefault.jpg"
+    assert items[1].vod_pic == "https://i.ytimg.com/vi/train123456/hq720.jpg"
 
 
 def test_youtube_controller_searches_all_result_types_for_channels() -> None:
@@ -835,3 +835,97 @@ def test_youtube_controller_channel_thumbnail_cache_expires_after_30_minutes() -
     assert first_items[0].vod_pic == "https://img.test/avatar-1.jpg"
     assert cached_items[0].vod_pic == "https://img.test/avatar-1.jpg"
     assert refreshed_items[0].vod_pic == "https://img.test/avatar-2.jpg"
+
+
+def test_youtube_controller_falls_back_to_oembed_metadata_when_flat_extract_is_empty(
+    monkeypatch,
+) -> None:
+    class EmptyDetailService(FakeYtdlpService):
+        def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30):
+            self.flat_calls.append((url, page, page_size))
+            return []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "title": "oEmbed 标题",
+                "author_name": "oEmbed 频道",
+                "thumbnail_url": "https://i.ytimg.com/vi/abc123/hq720.jpg",
+            }
+
+    captured: dict[str, object] = {}
+
+    def fake_get(url: str, timeout: int = 5) -> FakeResponse:
+        captured["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "atv_player.controllers.youtube_controller.requests.get", fake_get
+    )
+
+    service = EmptyDetailService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("abc123")
+
+    assert "oembed" in str(captured["url"])
+    assert "format=json" in str(captured["url"])
+    assert request.vod.vod_name == "oEmbed 标题"
+    assert request.vod.vod_pic == "https://i.ytimg.com/vi/abc123/hq720.jpg"
+    assert request.vod.vod_remarks == "oEmbed 频道"
+
+
+def test_youtube_controller_marks_live_entries_and_resolves_full_manifest() -> None:
+    class LiveEntryService(ResolvingChannelYtdlpService):
+        def extract_flat_playlist(self, url: str, *, page: int = 1, page_size: int = 30):
+            self.flat_calls.append((url, page, page_size))
+            return [
+                {
+                    "id": "live1234567",
+                    "title": "直播测试",
+                    "url": "https://www.youtube.com/watch?v=live1234567",
+                    "channel": "直播频道",
+                    "is_live": True,
+                    "ie_key": "Youtube",
+                }
+            ]
+
+    service = LiveEntryService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("yt:video:live1234567")
+    item = request.playlist[0]
+
+    assert item.is_live is True
+    assert request.vod.vod_remarks == "直播频道 | 正在直播"
+
+    request.playback_loader(item)
+
+    assert service.resolve_fast_calls == []
+    assert service.resolve_calls == ["https://www.youtube.com/watch?v=live1234567"]
+
+
+def test_youtube_controller_uses_fast_resolve_for_non_live_items() -> None:
+    service = ResolvingChannelYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("yt:video:island12345")
+
+    assert request.playlist[0].is_live is False
+
+    request.playback_loader(request.playlist[0])
+
+    assert service.resolve_fast_calls == ["https://www.youtube.com/watch?v=island12345"]
+    assert service.resolve_calls == []

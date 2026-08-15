@@ -96,6 +96,19 @@ def test_episode_matches_request_rejects_wrong_episode_number() -> None:
     assert episode_matches_request("第十二集 剧情字幕", 13, "百花杀 13集") is False
 
 
+def test_episode_matches_request_accepts_plot_subtitle_numbering_after_episode_marker() -> None:
+    # Bilibili names episodes "第138话 外海风云14"; the subtitle's trailing number
+    # is plot numbering, not a sequel marker, so the correct episode must match
+    # (regression: 《凡人修仙传》138 集预下载到 136 话的弹幕).
+    assert episode_matches_request("《凡人修仙传》第138话 外海风云14", 138, "凡人修仙传 138集") is True
+    assert episode_matches_request("《凡人修仙传》第136话 外海风云12", 138, "凡人修仙传 138集") is False
+
+
+def test_episode_matches_request_keeps_rejecting_season_mismatch_with_plot_subtitle() -> None:
+    assert episode_matches_request("《凡人修仙传 第二季》第2话 外海风云14", 2, "凡人修仙传 第2季 2集") is True
+    assert episode_matches_request("《凡人修仙传》第2话 外海风云14", 2, "凡人修仙传 第2季 2集") is False
+
+
 def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
     assert extract_episode_number("0002 剑来-笼中雀") == 2
 

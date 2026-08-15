@@ -4,7 +4,9 @@ import logging
 from collections.abc import Callable
 from dataclasses import replace
 from time import monotonic
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
+
+import requests
 
 from atv_player.api import ApiError
 from atv_player.controllers.pagination import page_count_from_total
@@ -144,7 +146,8 @@ def _youtube_video_url(video_id: str) -> str:
 
 
 def _youtube_video_thumbnail(video_id: str) -> str:
-    return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else ""
+    # hqdefault is 4:3 with baked-in black bars; hq720 is the true 16:9 frame.
+    return f"https://i.ytimg.com/vi/{video_id}/hq720.jpg" if video_id else ""
 
 
 def _normalize_image_url(url: str) -> str:
@@ -245,9 +248,17 @@ def _entry_thumbnail(entry: dict, video_id: str = "") -> str:
     return _youtube_video_thumbnail(video_id)
 
 
+def _entry_is_live(entry: dict) -> bool:
+    if entry.get("is_live"):
+        return True
+    return str(entry.get("live_status") or "").strip() == "is_live"
+
+
 def _entry_remarks(entry: dict) -> str:
     channel = str(entry.get("channel") or entry.get("uploader") or "").strip()
-    duration = _format_detail_duration(entry.get("duration_string") or entry.get("duration"))
+    duration = "正在直播" if _entry_is_live(entry) else _format_detail_duration(
+        entry.get("duration_string") or entry.get("duration")
+    )
     return " | ".join(part for part in (channel, duration) if part)
 
 
@@ -781,11 +792,45 @@ class YouTubeController:
         return items, page_count
 
     def _entry_for_video(self, video_id: str) -> dict:
-        entries = self._flat_entries(_youtube_video_url(video_id), 1, 1)
+        try:
+            entries = self._flat_entries(_youtube_video_url(video_id), 1, 1)
+        except Exception as exc:
+            logger.info("YouTube flat detail failed video=%s error=%s", video_id, exc)
+            entries = []
         for entry in entries:
             if _video_id(entry, _entry_url(entry)) == video_id or str(entry.get("id") or "") == video_id:
                 return entry
+        oembed_entry = self._oembed_entry(video_id)
+        if oembed_entry is not None:
+            return oembed_entry
         return {"id": video_id, "title": "YouTube视频", "url": _youtube_video_url(video_id), "ie_key": "Youtube"}
+
+    def _oembed_entry(self, video_id: str) -> dict | None:
+        # Lightweight metadata lookup when a full yt-dlp extract is unavailable:
+        # one request returns title, channel name and a real thumbnail.
+        oembed_url = (
+            "https://www.youtube.com/oembed?"
+            f"url={quote(_youtube_video_url(video_id), safe='')}&format=json"
+        )
+        try:
+            response = requests.get(oembed_url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.info("YouTube oembed lookup failed video=%s error=%s", video_id, exc)
+            return None
+        title = str(data.get("title") or "").strip()
+        if not title:
+            return None
+        logger.info("YouTube oembed lookup ok video=%s title=%s", video_id, title[:60])
+        return {
+            "id": video_id,
+            "title": title,
+            "url": _youtube_video_url(video_id),
+            "ie_key": "Youtube",
+            "uploader": str(data.get("author_name") or "").strip(),
+            "thumbnail": _normalize_image_url(str(data.get("thumbnail_url") or "").strip()),
+        }
 
     def _play_item_from_entry(self, entry: dict, *, media_title: str = "", playlist_id: str = "") -> PlayItem | None:
         url = _entry_url(entry)
@@ -804,6 +849,7 @@ class YouTubeController:
             play_source="YouTube",
             detail_fields=_video_detail_fields(entry),
             ytdl_format=self._yt_dlp_service.playback_format_selector(),
+            is_live=_entry_is_live(entry),
         )
 
     def _channel_videos_url(self, channel_ref: str) -> str:
@@ -1126,12 +1172,16 @@ class YouTubeController:
         selected_audio_track_id: str,
         current_url: str,
         use_full_metadata: bool,
+        prefer_official_manifest: bool = False,
     ):
+        # Live streams must resolve to the official HLS/DASH manifest; the
+        # --get-url fast path can return a segment URL that mpv cannot rewind.
         can_fast_resolve = (
             (not current_url or current_url == source_url)
             and not selected_audio_track_id
             and not selected_quality_id.startswith("ytdlp_")
             and not use_full_metadata
+            and not prefer_official_manifest
             and hasattr(service, "resolve_fast")
         )
         if can_fast_resolve:
@@ -1179,6 +1229,7 @@ class YouTubeController:
             selected_audio_track_id=selected_audio_track_id,
             current_url=current_url,
             use_full_metadata=self._should_resolve_with_full_metadata(session, current_item, current_url, source_url),
+            prefer_official_manifest=bool(getattr(current_item, "is_live", False)),
         )
         service.apply_result(
             result,
@@ -1223,6 +1274,7 @@ class YouTubeController:
             selected_audio_track_id=selected_audio_track_id,
             current_url=current_url,
             use_full_metadata=True,
+            prefer_official_manifest=bool(getattr(start_item, "is_live", False)),
         )
         service.apply_result(
             result,

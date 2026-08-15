@@ -625,8 +625,18 @@ def _simplify_name(name: str) -> str:
     return value
 
 
+_EPISODE_MARKER_SPLIT_RE = re.compile("|".join(_EXPLICIT_EPISODE_PATTERNS), re.IGNORECASE)
+
+
 def _extract_title_sequel_number(name: str) -> int | None:
-    value = _simplify_name(strip_episode_suffix(name))
+    # Sequel markers ("第2季", "Show 2") live in the show-name part before the
+    # episode marker. Numbers after the marker are episode-subtitle numbering
+    # (e.g. "第138话 外海风云14") and must not be read as sequel numbers.
+    value = normalize_name(strip_episode_suffix(name))
+    marker = _EPISODE_MARKER_SPLIT_RE.search(value)
+    if marker is not None:
+        value = value[: marker.start()]
+    value = _simplify_name(value)
     matches = re.findall(r"(?<=[^\W\d_])(\d{1,2})(?=[^\W\d_]|$)", value, re.UNICODE)
     if not matches:
         return None

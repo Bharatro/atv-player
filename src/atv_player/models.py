@@ -219,6 +219,7 @@ class PlayItem:
     dash_video_id: str = ""
     play_source: str = ""
     media_title: str = ""
+    is_live: bool = False
     parse_required: bool = False
     danmaku_title_only: bool = False
     danmaku_xml: str = ""

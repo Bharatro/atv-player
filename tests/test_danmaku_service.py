@@ -701,6 +701,45 @@ def test_rerank_danmaku_source_search_result_prefers_matching_episode_over_histo
     assert reranked.default_option_url == "https://www.iqiyi.com/v_ep8.html"
 
 
+def test_rerank_prefers_requested_episode_over_historical_page_with_plot_subtitle_names() -> None:
+    # The preferred page is the previously watched episode ("第136话 外海风云12");
+    # when the query names episode 138, the default must follow the query, not the
+    # preference (regression: 《凡人修仙传》138 集预下载到 136 话的弹幕).
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="bilibili",
+                provider_label="B站",
+                options=[
+                    DanmakuSourceOption(
+                        provider="bilibili",
+                        name="《凡人修仙传》第136话 外海风云12",
+                        url="https://www.bilibili.com/bangumi/play/ep136",
+                    ),
+                    DanmakuSourceOption(
+                        provider="bilibili",
+                        name="《凡人修仙传》第138话 外海风云14",
+                        url="https://www.bilibili.com/bangumi/play/ep138",
+                    ),
+                ],
+            )
+        ],
+        default_option_url="https://www.bilibili.com/bangumi/play/ep136",
+        default_provider="bilibili",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="凡人修仙传 138集",
+        preferred_provider="bilibili",
+        preferred_page_url="https://www.bilibili.com/bangumi/play/ep136",
+    )
+
+    assert reranked.default_option_url == "https://www.bilibili.com/bangumi/play/ep138"
+
+
 def test_rerank_prefers_reg_src_cover_among_same_named_shows() -> None:
     # Two same-named shows both have an ep13 candidate. reg_src identifies the
     # user's show by Tencent cover id; its candidate must rank first even when the

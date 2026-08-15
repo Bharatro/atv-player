@@ -1450,9 +1450,18 @@ class SpiderPluginController:
         candidates = self._iter_danmaku_candidate_options(item.danmaku_candidates, default_url)
         if not candidates:
             return
+        explicit_episode_requested, requested_episode = _query_requests_explicit_episode(search_name)
         provider_label_by_key = {group.provider: group.provider_label for group in item.danmaku_candidates}
         last_error = ""
         for candidate in candidates:
+            if explicit_episode_requested and requested_episode is not None:
+                candidate_episode = extract_episode_number(candidate.name)
+                if (
+                    candidate_episode is not None
+                    and candidate_episode != requested_episode
+                    and episode_title_matches(search_name, candidate.name)
+                ):
+                    continue
             try:
                 if not is_prefetch_valid():
                     return

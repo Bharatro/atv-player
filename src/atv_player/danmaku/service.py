@@ -885,6 +885,9 @@ class DanmakuService:
         best_query_match = (0, 0)
         best_query_option = None
         if query_name:
+            normalized_query = normalize_name(query_name)
+            requested_episode = extract_episode_number(normalized_query) if normalized_query else None
+            explicit_episode_request = has_explicit_episode_marker(normalized_query) if normalized_query else False
             for group in groups:
                 for option in group.options:
                     match_priority = _source_option_query_match_priority(query_name, option)
@@ -893,7 +896,20 @@ class DanmakuService:
                         best_query_option = option
                     if preferred_page_url and option.url == preferred_page_url:
                         preferred_option = option
-            if preferred_option is not None and _source_option_query_match_priority(query_name, preferred_option) >= best_query_match:
+            # The preferred page is the last downloaded episode of the series; when
+            # the query names a different episode, honoring it would prefetch the
+            # previous episode's danmaku under the new episode's cache key.
+            preferred_episode_matches_request = (
+                preferred_option is None
+                or requested_episode is None
+                or not explicit_episode_request
+                or extract_episode_number(preferred_option.name) == requested_episode
+            )
+            if (
+                preferred_option is not None
+                and preferred_episode_matches_request
+                and _source_option_query_match_priority(query_name, preferred_option) >= best_query_match
+            ):
                 return preferred_option
             if best_query_option is not None and best_query_match > (0, 0):
                 return best_query_option
