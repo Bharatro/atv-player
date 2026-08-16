@@ -1105,6 +1105,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video_widget.context_menu_requested.connect(self._show_video_context_menu_at_cursor)
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
+        self.video_widget.left_clicked.connect(self._release_focus_for_video_press)
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
@@ -8500,6 +8501,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not self._video_context_menu_contains_global_pos(global_pos):
             self._close_video_context_menu()
 
+    def _release_focus_for_video_press(self) -> None:
+        """视频控件为 NoFocus,点击它 Qt 不会转移焦点,需主动让当前控件失焦。"""
+        focused = self.focusWidget()
+        if focused is not None and focused.window() is self:
+            focused.clearFocus()
+
     def _contains_video_global_pos(self, global_pos) -> bool:
         return self.video_widget.isVisible() and self.video_widget.rect().contains(self.video_widget.mapFromGlobal(global_pos))
 
@@ -12043,9 +12050,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             elif event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
                 if self._video_context_menu_contains_global_pos(event.globalPosition().toPoint()):
                     return False
-                if event.button() == Qt.MouseButton.LeftButton and self._close_video_context_menu():
-                    event.accept()
-                    return True
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._release_focus_for_video_press()
+                    if self._close_video_context_menu():
+                        event.accept()
+                        return True
                 if event.button() == Qt.MouseButton.RightButton:
                     self._show_video_context_menu_from_widget(watched, event.position().toPoint())
                     event.accept()
@@ -12075,9 +12084,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             global_pos = event.globalPosition().toPoint() if isinstance(event, QMouseEvent) else event.globalPos()
             if self._video_context_menu_contains_global_pos(global_pos):
                 return False
-            if isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton and self._close_video_context_menu():
-                event.accept()
-                return True
+            if isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton:
+                self._release_focus_for_video_press()
+                if self._close_video_context_menu():
+                    event.accept()
+                    return True
             if isinstance(event, QMouseEvent):
                 if event.button() == Qt.MouseButton.RightButton:
                     self._show_video_context_menu_from_global_pos(global_pos)

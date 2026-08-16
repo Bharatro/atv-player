@@ -316,6 +316,7 @@ class Chapter:
 
 class MpvWidget(QWidget):
     double_clicked = Signal()
+    left_clicked = Signal()
     playback_finished = Signal()
     playback_failed = Signal(str)
     file_loaded = Signal()
@@ -739,6 +740,8 @@ class MpvWidget(QWidget):
             self.context_menu_requested.emit()
 
         def handle_left_click(*_args) -> None:
+            # wid 嵌入时 mpv 子窗口直接拦截鼠标,Qt 收不到事件,左键语义经信号转发。
+            self.left_clicked.emit()
             self.context_menu_dismiss_requested.emit()
 
         register_key_binding("MBTN_RIGHT", handle_right_click, mode="force")
