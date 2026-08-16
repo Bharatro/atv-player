@@ -5,6 +5,7 @@ import threading
 from atv_player.models import HistoryRecord
 from atv_player.playback_sync_service import (
     INITIAL_DELAY_MS,
+    MAX_IDLE_PUSHES,
     PULL_PERIOD_MS,
     PULL_SOON_MIN_INTERVAL_MS,
     PERIOD_MS,
@@ -800,3 +801,107 @@ def test_pull_soon_is_noop_when_stopped() -> None:
     service.pull_soon()
 
     assert service._worker is None
+
+
+def test_idle_push_is_capped_while_not_playing() -> None:
+    # 暂停时 report_timer 仍每 5s 刷新本地记录 updated_at;未播放状态下
+    # 最多 PUSH MAX_IDLE_PUSHES 次即暂停,不能无限上报相同进度。
+    record = _record(key="paused", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api, repository, is_playing_provider=lambda: False
+    )
+    service._started = True
+
+    for _ in range(MAX_IDLE_PUSHES + 3):
+        record.create_time += 1  # 模拟暂停期间周期性进度保存
+        service._run_sync()
+
+    assert len(api.pushed) == MAX_IDLE_PUSHES
+
+
+def test_idle_push_quota_resets_when_playback_resumes() -> None:
+    record = _record(key="paused", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    playing = False
+    service = PlaybackHistorySyncService(
+        api, repository, is_playing_provider=lambda: playing
+    )
+    service._started = True
+
+    for _ in range(MAX_IDLE_PUSHES + 1):
+        record.create_time += 1
+        service._run_sync()
+    assert len(api.pushed) == MAX_IDLE_PUSHES
+
+    playing = True  # 恢复播放:配额重置,进度继续上报
+    record.create_time += 1
+    service._run_sync()
+    assert len(api.pushed) == MAX_IDLE_PUSHES + 1
+
+    playing = False  # 再次暂停:重新限流
+    for _ in range(MAX_IDLE_PUSHES + 2):
+        record.create_time += 1
+        service._run_sync()
+    assert len(api.pushed) == 2 * MAX_IDLE_PUSHES + 1
+
+
+def test_flush_pushes_final_progress_after_idle_cap() -> None:
+    record = _record(key="paused", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api, repository, is_playing_provider=lambda: False
+    )
+    service._started = True
+
+    for _ in range(MAX_IDLE_PUSHES + 1):
+        record.create_time += 1
+        service._run_sync()
+    assert len(api.pushed) == MAX_IDLE_PUSHES
+
+    record.create_time += 1
+    service.flush()  # 关闭前的最后一次 PUSH 不受未播放配额限制
+
+    assert len(api.pushed) == MAX_IDLE_PUSHES + 1
+
+
+def test_pull_continues_while_idle_push_is_capped() -> None:
+    from time import monotonic
+
+    record = _record(key="paused", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(
+        api, repository, is_playing_provider=lambda: False
+    )
+    service._started = True
+    for _ in range(MAX_IDLE_PUSHES + 1):
+        record.create_time += 1
+        service._run_sync()
+    assert len(api.pushed) == MAX_IDLE_PUSHES
+
+    # PUSH 已被限流,但 PULL 周期到了仍要执行(跨端进度仍需可见)
+    service._last_pull_at = monotonic() - (PULL_PERIOD_MS / 1000.0 + 1.0)
+    record.create_time += 1
+    service._run_sync()
+
+    assert len(api.pushed) == MAX_IDLE_PUSHES
+    assert len(api.pull_since) >= 2
+
+
+def test_push_without_playing_provider_stays_unlimited() -> None:
+    # 未接线播放状态(如测试/旧调用方)时保持原有行为:有变更就上报。
+    record = _record(key="idle", source_key="server", updated_at=100)
+    repository = FakeRepository([record])
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, repository)
+    service._started = True
+
+    for _ in range(MAX_IDLE_PUSHES + 3):
+        record.create_time += 1
+        service._run_sync()
+
+    assert len(api.pushed) == MAX_IDLE_PUSHES + 3

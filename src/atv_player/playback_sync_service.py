@@ -22,6 +22,10 @@ PERIOD_MS = 30_000
 PULL_PERIOD_MS = 60_000
 # pull_soon()(窗口重新激活等外部触发)的最小间隔,避免频繁切窗打爆服务端。
 PULL_SOON_MIN_INTERVAL_MS = 10_000
+# 未播放(暂停/无播放窗口)时最多 PUSH 3 次即暂停上报:暂停期间 report_timer
+# 仍会周期性刷新本地记录的 updated_at,若不加限流,每个同步 tick 都会判定
+# "有变更"而无限 PUSH 相同进度。恢复播放后配额重置;关闭前的 flush() 不受限。
+MAX_IDLE_PUSHES = 3
 SYNC_SOURCE_KINDS = frozenset(
     {
         "browse",
@@ -68,6 +72,7 @@ SYNC_PULL_SOURCE_KINDS = tuple(sorted(SYNC_SOURCE_KINDS | {"site"}))
 SYNC_PULL_SITE_KEYS = tuple(sorted(TVBOX_SITE_TO_ATV_KIND))
 SourceKeyResolver = Callable[[str, str], str | None]
 SourceKeysLoader = Callable[[], list[str]]
+PlayingStateProvider = Callable[[], bool]
 
 
 class PlaybackHistorySyncService(QObject):
@@ -80,6 +85,7 @@ class PlaybackHistorySyncService(QObject):
         to_sync_source_key: SourceKeyResolver | None = None,
         to_local_source_key: SourceKeyResolver | None = None,
         playback_source_keys_loader: SourceKeysLoader | None = None,
+        is_playing_provider: PlayingStateProvider | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -91,6 +97,9 @@ class PlaybackHistorySyncService(QObject):
         self._sync_key_resolver = to_sync_source_key or self._default_source_key_resolver
         self._local_key_resolver = to_local_source_key or self._default_source_key_resolver
         self._playback_source_keys_loader = playback_source_keys_loader or (lambda: [])
+        self._is_playing_provider = is_playing_provider
+        self._idle_pushes = 0
+        self._idle_push_logged = False
         self._unmapped_plugins: set[tuple[str, str]] = set()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.sync)
@@ -175,12 +184,27 @@ class PlaybackHistorySyncService(QObject):
 
     def _run_sync(self) -> None:
         try:
+            playing = self._playing()
+            if playing:
+                self._idle_pushes = 0
+                self._idle_push_logged = False
             push_succeeded = True
-            try:
-                self._push()
-            except Exception as exc:  # noqa: BLE001 - 后台同步不能让异常冒泡到 Qt
-                push_succeeded = False
-                logger.warning("playback sync push failed: %s", exc)
+            if playing or self._idle_pushes < MAX_IDLE_PUSHES:
+                try:
+                    pushed = self._push()
+                except Exception as exc:  # noqa: BLE001 - 后台同步不能让异常冒泡到 Qt
+                    push_succeeded = False
+                    logger.warning("playback sync push failed: %s", exc)
+                else:
+                    # 只计实际发出上报的轮次;空扫描不消耗配额,失败留给下个 tick 重试。
+                    if pushed and not playing:
+                        self._idle_pushes += 1
+                        if self._idle_pushes >= MAX_IDLE_PUSHES and not self._idle_push_logged:
+                            self._idle_push_logged = True
+                            logger.info(
+                                "playback sync push paused after %d idle pushes; will resume on playback",
+                                self._idle_pushes,
+                            )
             pull_due = self._last_pull_at <= 0 or (
                 monotonic() - self._last_pull_at
             ) * 1000 >= PULL_PERIOD_MS
@@ -194,9 +218,20 @@ class PlaybackHistorySyncService(QObject):
             with self._sync_lock:
                 self._sync_in_progress = False
 
+    def _playing(self) -> bool:
+        """探测是否有播放器正在播放;未接线或探测失败时按"播放中"处理,不限制同步。"""
+        provider = self._is_playing_provider
+        if provider is None:
+            return True
+        try:
+            return bool(provider())
+        except Exception:  # noqa: BLE001 - 状态探测不能中断同步
+            return True
+
     # ── PUSH:本地 Tier-B → 服务端 ──────────────────────────────────────────
 
-    def _push(self) -> None:
+    def _push(self) -> bool:
+        """扫描本地记录并上报变更。返回是否实际发出了上报(空扫描返回 False)。"""
         all_records = sorted(
             [
                 record
@@ -237,7 +272,7 @@ class PlaybackHistorySyncService(QObject):
             if current_versions != self._pushed_versions:
                 self._repo.replace_sync_snapshot(self._namespace, current_versions)
                 self._pushed_versions = current_versions
-            return
+            return False
         self._api.push_playback_events([payload for _, _, payload in changed] + tombstones)
         logger.info(
             "playback sync push succeeded: updates=%d deletes=%d",
@@ -249,6 +284,7 @@ class PlaybackHistorySyncService(QObject):
             self._repo.clear_pending_deletions(consumed_deletes)
         self._repo.replace_sync_snapshot(self._namespace, current_versions)
         self._pushed_versions = current_versions
+        return True
 
     def _build_pending_tombstones(self) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]]]:
         """把本地 pending 删除队列转成服务端 tombstone。

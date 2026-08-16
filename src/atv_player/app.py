@@ -2268,6 +2268,7 @@ class AppCoordinator(QObject):
                 to_sync_source_key=self._to_playback_sync_source_key,
                 to_local_source_key=self._to_local_playback_source_key,
                 playback_source_keys_loader=self._playback_sync_source_keys,
+                is_playing_provider=self._playback_sync_is_playing,
                 parent=self,
             )
         player_controller = PlayerController(self._api_client)
@@ -2415,6 +2416,15 @@ class AppCoordinator(QObject):
             return None
         plugin = self._plugin_repository.find_plugin_by_manifest_id(source_key)
         return str(plugin.id) if plugin is not None else None
+
+    def _playback_sync_is_playing(self) -> bool:
+        """同步 PUSH 限流用:播放器窗口处于播放中才算"正在播放"(暂停/无窗口均不算)。
+
+        供 worker 线程调用,只读普通 Python 属性,不触碰 Qt 可见性等跨线程不安全接口。
+        """
+        window = self.main_window
+        player = getattr(window, "player_window", None) if window is not None else None
+        return bool(getattr(player, "is_playing", False))
 
     def _playback_sync_source_keys(self) -> list[str]:
         if self._plugin_repository is None:
