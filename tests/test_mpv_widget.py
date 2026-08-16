@@ -1757,6 +1757,8 @@ def test_mpv_widget_registers_left_click_binding_and_emits_context_menu_dismiss_
     monkeypatch.setattr(widget, "_create_player", lambda: player)
     dismissed = {"count": 0}
     widget.context_menu_dismiss_requested.connect(lambda: dismissed.__setitem__("count", dismissed["count"] + 1))
+    clicked = {"count": 0}
+    widget.left_clicked.connect(lambda: clicked.__setitem__("count", clicked["count"] + 1))
 
     widget.load("http://m/1.m3u8")
 
@@ -1765,6 +1767,7 @@ def test_mpv_widget_registers_left_click_binding_and_emits_context_menu_dismiss_
 
     player._left_click_handler("d", "MBTN_LEFT", None, None, None)
 
+    assert clicked["count"] == 1
     assert dismissed["count"] == 1
 
 
