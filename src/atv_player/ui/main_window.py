@@ -2943,28 +2943,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 self._open_media_folder(self._classic_home_page.grid_page, controller, item)
             return
         if source_key == "youtube":
-            fast_request_builder = getattr(controller, "build_request_from_item", None)
-            if callable(fast_request_builder):
-                try:
-                    request = fast_request_builder(item)
-                except Exception as exc:
-                    self.show_error(str(exc))
-                    return
-                self.open_player(request)
-                return
-            normalized_vod_id = str(getattr(item, "vod_id", "") or "").strip()
-            if normalized_vod_id and normalized_vod_id == self._youtube_open_request_vod_id:
-                self._append_player_status_log("详情仍在加载中...")
-                return
-            self._youtube_open_request_vod_id = normalized_vod_id
-            placeholder_request = self._build_placeholder_player_request(item, source_kind="youtube")
-            self._open_player_immediately(placeholder_request)
-
-            def build_request() -> OpenPlayerRequest:
-                request = controller.build_request(getattr(item, "vod_id", ""))
-                return self._apply_request_fallback_metadata(request, item)
-
-            self._youtube_open_request_id = self._start_open_request(build_request)
+            self._start_youtube_item_open(controller, item)
             return
         if callable(getattr(controller, "build_request", None)):
             self._start_open_request(lambda: controller.build_request(getattr(item, "vod_id", "")))
@@ -4411,26 +4390,29 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._start_open_request(lambda: self.bilibili_controller.build_request(vod_id))
 
     def _handle_youtube_item_open_requested(self, item) -> None:
-        vod_id = item.vod_id
-        fast_request_builder = getattr(self.youtube_controller, "build_request_from_item", None)
-        if callable(fast_request_builder):
-            try:
-                request = fast_request_builder(item)
-            except Exception as exc:
-                self.show_error(str(exc))
-                return
-            self.open_player(request)
-            return
-        normalized_vod_id = str(vod_id or "").strip()
-        if normalized_vod_id and normalized_vod_id == self._youtube_open_request_vod_id:
+        self._start_youtube_item_open(self.youtube_controller, item)
+
+    def _start_youtube_item_open(self, controller: Any, item: Any) -> None:
+        """Open a YouTube card immediately, then resolve its playable request off-thread."""
+        vod_id = str(getattr(item, "vod_id", "") or "").strip()
+        if vod_id and vod_id == self._youtube_open_request_vod_id:
             self._append_player_status_log("详情仍在加载中...")
             return
-        self._youtube_open_request_vod_id = normalized_vod_id
+        self._youtube_open_request_vod_id = vod_id
+
+        # Building a request may invoke yt-dlp (especially for playlists/channels),
+        # so never make it part of the click handler. The placeholder carries the
+        # card's title and poster and is deliberately opened before the worker starts.
         placeholder_request = self._build_placeholder_player_request(item, source_kind="youtube")
         self._open_player_immediately(placeholder_request)
 
+        fast_request_builder = getattr(controller, "build_request_from_item", None)
+
         def build_request() -> OpenPlayerRequest:
-            request = self.youtube_controller.build_request(vod_id)
+            if callable(fast_request_builder):
+                request = fast_request_builder(item)
+            else:
+                request = controller.build_request(vod_id)
             return self._apply_request_fallback_metadata(request, item)
 
         self._youtube_open_request_id = self._start_open_request(build_request)
