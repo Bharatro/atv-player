@@ -3116,3 +3116,16 @@ def test_mpv_widget_emits_chapters_changed_on_chapter_list_observation(qtbot, mo
     player._chapter_list_observer("chapter-list", [{"title": "正片", "time": 92.0}])
 
     assert changes["count"] == 1
+
+
+def test_mpv_widget_reports_current_video_height_from_video_out_params(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    assert widget.current_video_height() is None
+
+    widget._video_out_params = {"pixelformat": "yuv420p", "w": 1920, "h": 1080}
+    assert widget.current_video_height() == 1080
+
+    widget._video_out_params = {"w": 1920, "h": 0}
+    assert widget.current_video_height() is None

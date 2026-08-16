@@ -25771,3 +25771,152 @@ def test_player_window_restores_nested_drive_history_by_drive_path(qtbot) -> Non
     assert parent_source.subgroup_index == 1
     assert session.playlist is s06_playlist
     assert window.current_index == 1
+
+
+def _make_youtube_hydrated_session() -> PlayerSession:
+    return PlayerSession(
+        vod=VodItem(vod_id="yt:video:up1234567", vod_name="Upgrade Video"),
+        playlist=[
+            PlayItem(
+                title="Upgrade Video",
+                url="https://rr4.example.googlevideo.com/videoplayback?itag=137",
+                original_url="https://www.youtube.com/watch?v=up1234567",
+                vod_id="yt:video:up1234567",
+                playback_qualities=[
+                    VideoQualityOption(id="ytdlp_360", label="360p"),
+                    VideoQualityOption(id="ytdlp_1080", label="1080p"),
+                ],
+                selected_playback_quality_id="ytdlp_1080",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="youtube",
+    )
+
+
+def test_player_window_upgrades_ytdlp_quality_after_hydration(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    window.video_widget.current_video_height = lambda: 360
+
+    window.open_session(_make_youtube_hydrated_session())
+    current = window.session.playlist[window.current_index]
+    load_count = len(video.load_calls)
+
+    pending = player_window_module._PendingPlaybackLoader(
+        index=window.current_index,
+        previous_index=window.current_index,
+        start_position_seconds=0,
+        pause=False,
+        hydrate_only=True,
+        playback_started_url="https://rr3.example.googlevideo.com/videoplayback?itag=18",
+        playback_started_quality_id="ytdlp_1080",
+    )
+
+    assert window._maybe_upgrade_ytdlp_playback_quality(current, pending) is True
+    assert len(video.load_calls) == load_count + 1
+    assert video.load_calls[-1][0] == "https://rr4.example.googlevideo.com/videoplayback?itag=137"
+    assert video.load_calls[-1][1] == 30  # RecordingVideo.position_seconds()
+
+    # Same-or-higher playing quality must not trigger another reload.
+    window.video_widget.current_video_height = lambda: 1080
+    assert window._maybe_upgrade_ytdlp_playback_quality(current, pending) is False
+    assert len(video.load_calls) == load_count + 1
+
+    # Live streams never auto-upgrade.
+    window.video_widget.current_video_height = lambda: 360
+    current.is_live = True
+    assert window._maybe_upgrade_ytdlp_playback_quality(current, pending) is False
+    assert len(video.load_calls) == load_count + 1
+    current.is_live = False
+
+    # No upgrade when hydration did not replace the playing URL.
+    pending_same_url = player_window_module._PendingPlaybackLoader(
+        index=window.current_index,
+        previous_index=window.current_index,
+        start_position_seconds=0,
+        pause=False,
+        hydrate_only=True,
+        playback_started_url="https://rr4.example.googlevideo.com/videoplayback?itag=137",
+    )
+    assert window._maybe_upgrade_ytdlp_playback_quality(current, pending_same_url) is False
+    assert len(video.load_calls) == load_count + 1
+
+
+def test_player_window_recovers_failed_ytdlp_fast_stream_with_full_resolve(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+
+    loader_calls: list[PlayItem] = []
+
+    def playback_loader(item):
+        loader_calls.append(item)
+        item.url = "https://rr5.example.googlevideo.com/videoplayback?itag=316"
+        return None
+
+    session = _make_youtube_hydrated_session()
+    session.playlist[0].url = "https://rr3.example.googlevideo.com/videoplayback?itag=18"
+    session.playlist[0].playback_qualities = []
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    window.open_session(session)
+    session.playback_loader = playback_loader
+    session.async_playback_loader = True
+    current = window.session.playlist[window.current_index]
+    load_count = len(video.load_calls)
+
+    window._handle_playback_failed("播放失败: fast stream died")
+
+    _spin_until(lambda: len(loader_calls) == 1 and len(video.load_calls) > load_count)
+    assert loader_calls[0] is current
+    assert video.load_calls[-1][0] == "https://rr5.example.googlevideo.com/videoplayback?itag=316"
+    assert video.load_calls[-1][1] == 30  # resumed at the failure position
+
+    # Recovery only fires once per item.
+    assert window._ytdlp_full_resolve_recovery_item is current
+    assert window._try_recover_youtube_playback_with_full_resolve("again") is False
+
+
+def test_player_window_recovery_cancels_pending_hydration_loader(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+
+    loader_calls: list[PlayItem] = []
+
+    def playback_loader(item):
+        loader_calls.append(item)
+        item.url = "https://rr5.example.googlevideo.com/videoplayback?itag=316"
+        return None
+
+    session = _make_youtube_hydrated_session()
+    session.playlist[0].url = "https://rr3.example.googlevideo.com/videoplayback?itag=18"
+    session.playlist[0].playback_qualities = []
+    session.playlist[0].selected_playback_quality_id = "ytdlp_1080"
+
+    window.open_session(session)
+    session.playback_loader = playback_loader
+    session.async_playback_loader = True
+    before_request_id = window._playback_loader_request_id
+    window._pending_playback_loader = player_window_module._PendingPlaybackLoader(
+        index=window.current_index,
+        previous_index=window.current_index,
+        start_position_seconds=0,
+        pause=False,
+        hydrate_only=True,
+    )
+
+    assert window._try_recover_youtube_playback_with_full_resolve("dead") is True
+    # One bump cancels the stale hydration wait, one starts the recovery loader.
+    assert window._playback_loader_request_id == before_request_id + 2
+    assert window._pending_playback_loader is not None
+    assert window._pending_playback_loader.hydrate_only is False
+
+    _spin_until(lambda: len(loader_calls) == 1)

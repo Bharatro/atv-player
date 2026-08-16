@@ -248,6 +248,16 @@ def _summarize_media_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
+def _ytdlp_quality_height(quality_id: str) -> int | None:
+    if not quality_id.startswith("ytdlp_"):
+        return None
+    suffix = quality_id.removeprefix("ytdlp_")
+    if not suffix.isdigit():
+        return None
+    height = int(suffix)
+    return height if height > 0 else None
+
+
 def _metadata_provider_label(provider: str) -> str:
     normalized = str(provider or "").strip()
     if not normalized:
@@ -720,6 +730,10 @@ class _PendingPlaybackLoader:
     pause: bool
     hydrate_only: bool = False
     youtube_detail_parse: bool = False
+    playback_started_url: str = ""
+    playback_started_audio_url: str = ""
+    playback_started_headers: dict[str, str] | None = None
+    playback_started_quality_id: str = ""
 
 
 class _PlayerToolDialog(ThemedDialogBase):
@@ -983,6 +997,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._ignore_playback_finished_until = 0.0
         self._recent_user_seek_target_seconds: int | None = None
         self._auto_switched_failure_sources: set[tuple[int, int]] = set()
+        self._ytdlp_full_resolve_recovery_item: PlayItem | None = None
         self._danmaku_track_id: int | None = None
         self._danmaku_temp_path: Path | None = None
         self._danmaku_temp_path_is_ephemeral = False
@@ -3463,6 +3478,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def open_session(self, session, start_paused: bool = False) -> None:
         self._pending_file_loaded_danmaku_item = None
         self._reset_auto_switched_failure_sources()
+        self._ytdlp_full_resolve_recovery_item = None
         self._invalidate_play_item_resolution()
         if session.source_groups:
             session.playlists, mapping = self._flatten_source_groups(session.source_groups)
@@ -3978,7 +3994,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log(f"正在加载播放地址: {current_item.title}")
         self._playback_loader_request_id += 1
         request_id = self._playback_loader_request_id
-        self._pending_playback_loader = _PendingPlaybackLoader(
+        pending_loader = _PendingPlaybackLoader(
             index=self.current_index,
             previous_index=previous_index,
             start_position_seconds=start_position_seconds,
@@ -3986,6 +4002,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             hydrate_only=hydrate_only,
             youtube_detail_parse=youtube_detail_parse,
         )
+        if hydrate_only:
+            # Snapshot the playing state so a failed quality upgrade can roll back.
+            pending_loader.playback_started_url = str(current_item.url or "")
+            pending_loader.playback_started_audio_url = str(current_item.audio_url or "")
+            pending_loader.playback_started_headers = (
+                dict(current_item.headers) if current_item.headers else None
+            )
+            pending_loader.playback_started_quality_id = str(current_item.selected_playback_quality_id or "")
+        self._pending_playback_loader = pending_loader
 
         def run() -> None:
             try:
@@ -4045,6 +4070,77 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause=False,
             hydrate_only=True,
         )
+
+    def _maybe_upgrade_ytdlp_playback_quality(
+        self,
+        current_item: PlayItem,
+        pending_loader: _PendingPlaybackLoader,
+    ) -> bool:
+        """Switch to the hydrated yt-dlp DASH/HLS stream when it beats the playing quality.
+
+        After a fast low-quality start, metadata hydration replaces the item URL
+        with the full yt-dlp result while mpv keeps playing the old stream. Reload
+        at the current position to actually play the higher-quality stream.
+        """
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            return False
+        if self.session.playlist[self.current_index] is not current_item:
+            return False
+        if not self._is_youtube_resolved_direct_item(current_item):
+            return False
+        if getattr(current_item, "is_live", False):
+            return False
+        started_url = str(pending_loader.playback_started_url or "")
+        if started_url and str(current_item.url or "").strip() == started_url:
+            return False
+        pending_prepare = self._pending_playback_prepare
+        if pending_prepare is not None and pending_prepare.index == self.current_index:
+            return False
+        target_height = _ytdlp_quality_height(str(current_item.selected_playback_quality_id or ""))
+        if target_height is None:
+            return False
+        current_video_height = getattr(self.video_widget, "current_video_height", None)
+        try:
+            playing_height = current_video_height() if callable(current_video_height) else None
+        except Exception:
+            playing_height = None
+        if not playing_height or playing_height >= target_height:
+            return False
+        try:
+            position_seconds = int(self.video.position_seconds() or 0)
+        except Exception:
+            position_seconds = 0
+        logger.info(
+            "Upgrading ytdlp playback quality index=%s %sp->%sp position=%ss url=%s",
+            self.current_index,
+            playing_height,
+            target_height,
+            position_seconds,
+            _summarize_media_url(current_item.url),
+        )
+        self._append_log(f"清晰度提升: {playing_height}p → {target_height}p")
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=position_seconds,
+                pause=not self.is_playing,
+            )
+        except Exception as exc:
+            current_item.url = started_url or current_item.url
+            current_item.audio_url = str(pending_loader.playback_started_audio_url or "")
+            if pending_loader.playback_started_headers is not None:
+                current_item.headers = dict(pending_loader.playback_started_headers)
+            if pending_loader.playback_started_quality_id:
+                current_item.selected_playback_quality_id = pending_loader.playback_started_quality_id
+            self._refresh_video_quality_state()
+            self._append_log(f"清晰度切换失败: {exc}")
+            try:
+                self._start_current_item_playback(
+                    start_position_seconds=position_seconds,
+                    pause=not self.is_playing,
+                )
+            except Exception:
+                logger.warning("Failed to restore playback after quality upgrade failure", exc_info=True)
+        return True
 
     def _prepare_current_play_item(
         self,
@@ -4931,6 +5027,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._append_log(message)
             self._recover_current_item_after_seek()
             return
+        if self._try_recover_youtube_playback_with_full_resolve(message):
+            return
         if self._try_auto_switch_source_after_failure():
             return
         self._show_failed_startup_state(message)
@@ -4939,6 +5037,56 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         pixmap = self.video_poster_overlay.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
+
+    def _try_recover_youtube_playback_with_full_resolve(self, message: str) -> bool:
+        """When a fast-started low-quality stream dies, restart with the yt-dlp full result.
+
+        The full resolve races in the background from playback start; rerunning the
+        playback loader consumes it (waiting while it is still in flight) and restarts
+        playback with the DASH/HLS stream instead of failing outright. Only attempted
+        once per item so a genuinely broken stream still reaches the failure UI.
+        """
+        if self.session is None or self.session.playback_loader is None:
+            return False
+        if not (0 <= self.current_index < len(self.session.playlist)):
+            return False
+        current_item = self.session.playlist[self.current_index]
+        if not self._is_youtube_resolved_direct_item(current_item):
+            return False
+        if getattr(current_item, "is_live", False):
+            return False
+        if self._ytdlp_full_resolve_recovery_item is current_item:
+            return False
+        pending_loader = self._pending_playback_loader
+        if pending_loader is not None:
+            if not pending_loader.hydrate_only or pending_loader.index != self.current_index:
+                return False
+            # Drop the stale hydration wait; the racing resolve caches its result
+            # anyway, and the recovery loader below picks it up.
+            self._playback_loader_request_id += 1
+            self._pending_playback_loader = None
+        pending_prepare = self._pending_playback_prepare
+        if pending_prepare is not None and pending_prepare.index == self.current_index:
+            return False
+        try:
+            position_seconds = int(self.video.position_seconds() or 0)
+        except Exception:
+            position_seconds = 0
+        self._ytdlp_full_resolve_recovery_item = current_item
+        logger.info(
+            "Recovering failed ytdlp fast playback with full resolve index=%s position=%ss error=%s",
+            self.current_index,
+            position_seconds,
+            message,
+        )
+        self._append_log("低画质流播放失败，正在切换到 yt-dlp 完整解析...")
+        self._start_playback_loader(
+            previous_index=self.current_index,
+            start_position_seconds=position_seconds,
+            pause=False,
+            hydrate_only=False,
+        )
+        return True
 
     def _should_recover_recent_seek_failure(self) -> bool:
         target_seconds = self._recent_user_seek_target_seconds
@@ -5391,9 +5539,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._schedule_followup_subtitle_refresh_if_needed(current_item)
             self._refresh_audio_state()
             self._refresh_video_quality_state()
-            pending_prepare = self._pending_playback_prepare
-            if pending_prepare is None or pending_prepare.index != self.current_index:
-                self._configure_danmaku_for_current_item()
+            if not self._maybe_upgrade_ytdlp_playback_quality(current_item, pending_loader):
+                pending_prepare = self._pending_playback_prepare
+                if pending_prepare is None or pending_prepare.index != self.current_index:
+                    self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]
         self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)

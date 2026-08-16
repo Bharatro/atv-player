@@ -333,6 +333,7 @@ class MpvWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self._player: Any | None = None
         self._video_picture_state = "idle"
+        self._video_out_params: dict[str, object] = {}
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
@@ -713,6 +714,7 @@ class MpvWidget(QWidget):
         self._chapter_list_handler = handle_chapter_list
 
         def handle_video_out_params(_property_name, params) -> None:
+            self._video_out_params = dict(params) if isinstance(params, dict) else {}
             if params:
                 if self._audio_cover_active:
                     self._set_video_picture_state("audio-cover")
@@ -1009,6 +1011,7 @@ class MpvWidget(QWidget):
             return
         load_started_at = time.monotonic()
         self._set_video_picture_state("loading")
+        self._video_out_params = {}
         self._audio_cover_active = False
         self._audio_cover_mode = bool(poster_image_path)
         self._playback_finished_emitted = False
@@ -1330,6 +1333,14 @@ class MpvWidget(QWidget):
             return int(pos) if pos is not None else None
         except Exception:
             return None
+
+    def current_video_height(self) -> int | None:
+        if not self._on_widget_thread():
+            return self._run_on_widget_thread(self.current_video_height)
+        height = self._video_out_params.get("h")
+        if isinstance(height, (int, float)) and height > 0:
+            return int(height)
+        return None
 
     def duration_seconds(self) -> int:
         if not self._on_widget_thread():

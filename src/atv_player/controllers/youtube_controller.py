@@ -1185,6 +1185,11 @@ class YouTubeController:
             and hasattr(service, "resolve_fast")
         )
         if can_fast_resolve:
+            # Race a full resolve in the background: the fast stream starts
+            # playback quickly (often a low-quality muxed format) and the full
+            # DASH/HLS result upgrades it later via metadata hydration.
+            if hasattr(service, "resolve_fast_or_full"):
+                return service.resolve_fast_or_full(source_url)
             return service.resolve_fast(source_url)
         if selected_quality_id.startswith("ytdlp_"):
             resolver = (

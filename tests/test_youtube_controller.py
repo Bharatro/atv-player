@@ -929,3 +929,29 @@ def test_youtube_controller_uses_fast_resolve_for_non_live_items() -> None:
 
     assert service.resolve_fast_calls == ["https://www.youtube.com/watch?v=island12345"]
     assert service.resolve_calls == []
+
+
+class RacingYtdlpService(ResolvingChannelYtdlpService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_fast_or_full_calls: list[str] = []
+
+    def resolve_fast_or_full(self, url: str, *, max_height=None):
+        del max_height
+        self.resolve_fast_or_full_calls.append(url)
+        return self.resolve_fast(url)
+
+
+def test_youtube_controller_races_full_resolve_with_fast_resolve() -> None:
+    service = RacingYtdlpService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+
+    request = controller.build_request("yt:video:island12345")
+    request.playback_loader(request.playlist[0])
+
+    assert service.resolve_fast_or_full_calls == ["https://www.youtube.com/watch?v=island12345"]
+    assert service.resolve_fast_calls == ["https://www.youtube.com/watch?v=island12345"]
+    assert service.resolve_calls == []

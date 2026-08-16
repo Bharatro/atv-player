@@ -4704,7 +4704,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 and not selected_quality_id.startswith("ytdlp_")
                 and hasattr(self._yt_dlp_service, "resolve_fast")
             ):
-                result = self._yt_dlp_service.resolve_fast(source_url)
+                fast_or_full = getattr(self._yt_dlp_service, "resolve_fast_or_full", None)
+                if callable(fast_or_full):
+                    result = fast_or_full(source_url)
+                else:
+                    result = self._yt_dlp_service.resolve_fast(source_url)
             elif selected_quality_id.startswith("ytdlp_"):
                 resolver = (
                     self._yt_dlp_service.resolve_for_quality_full

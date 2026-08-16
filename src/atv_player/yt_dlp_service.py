@@ -6,10 +6,14 @@ import json
 import logging
 import re
 import subprocess
+import threading
+from concurrent.futures import Future
 from dataclasses import dataclass
 from time import monotonic
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+
+import httpx
 
 from atv_player.models import (
     AppConfig,
@@ -893,6 +897,192 @@ def _has_dash_segment_metadata(fmt: dict | None) -> bool:
     return bool(_format_dash_byte_range(fmt.get("init_range")) or _format_dash_byte_range(fmt.get("index_range")))
 
 
+_DASH_PROBE_INITIAL_BYTES = 128 * 1024
+_DASH_PROBE_MAX_BYTES = 1024 * 1024
+_DASH_PROBE_TIMEOUT_SECONDS = 8.0
+_MP4_FRAGMENT_BOX_TYPES = (b"moof", b"mdat")
+_WEBM_EBML_HEADER_ID = b"\x1a\x45\xdf\xa3"
+_WEBM_SEGMENT_ID = b"\x18\x53\x80\x67"
+_WEBM_TRACKS_ID = b"\x16\x54\xae\x6b"
+_WEBM_CUES_ID = b"\x1c\x53\xbb\x6b"
+_WEBM_CLUSTER_ID = b"\x1f\x43\xb6\x75"
+
+
+def _ebml_vint_length(byte: int) -> int:
+    for length in range(1, 9):
+        if byte & (0x80 >> (length - 1)):
+            return length
+    return 0
+
+
+def _read_ebml_element(payload: bytes, offset: int) -> tuple[int, int, int] | None:
+    """Return (id_length, size_length, data_size) for the EBML element at offset."""
+    if offset + 1 >= len(payload):
+        return None
+    id_length = _ebml_vint_length(payload[offset])
+    if id_length <= 0 or offset + id_length >= len(payload):
+        return None
+    size_length = _ebml_vint_length(payload[offset + id_length])
+    if size_length <= 0 or offset + id_length + size_length > len(payload):
+        return None
+    size_start = offset + id_length
+    value = payload[size_start] & (0xFE if size_length == 8 else 0xFF >> size_length)
+    for index in range(1, size_length):
+        value = (value << 8) | payload[size_start + index]
+    if value >= (1 << 56):
+        return None
+    return id_length, size_length, value
+
+
+def _parse_mp4_segment_ranges(payload: bytes) -> tuple[dict[str, str], dict[str, str]] | None:
+    """Derive (init_range, index_range) from an on-demand fMP4 header window.
+
+    YouTube progressive files start with ftyp+moov followed by the sidx index,
+    so everything before sidx is the init segment and sidx itself the index.
+    """
+    offset = 0
+    while offset + 8 <= len(payload):
+        size = int.from_bytes(payload[offset:offset + 4], "big")
+        box_type = payload[offset + 4:offset + 8]
+        if size < 8:
+            return None
+        if box_type == b"sidx":
+            end = offset + size
+            if end > len(payload):
+                return None
+            return (
+                {"start": "0", "end": str(offset - 1)},
+                {"start": str(offset), "end": str(end - 1)},
+            )
+        if box_type in _MP4_FRAGMENT_BOX_TYPES:
+            return None
+        offset += size
+    return None
+
+
+def _parse_webm_segment_ranges(payload: bytes) -> tuple[dict[str, str], dict[str, str]] | None:
+    """Derive (init_range, index_range) from a WebM header window.
+
+    YouTube WebM streams keep the EBML header, Segment info and Tracks up
+    front, directly followed by the Cues index and then the clusters.
+    """
+    header = _read_ebml_element(payload, 0)
+    if header is None or payload[:4] != _WEBM_EBML_HEADER_ID:
+        return None
+    offset = header[0] + header[1] + header[2]
+    segment = _read_ebml_element(payload, offset)
+    if segment is None or payload[offset:offset + 4] != _WEBM_SEGMENT_ID:
+        return None
+    child = offset + segment[0] + segment[1]
+    tracks_end = 0
+    while child + 4 <= len(payload):
+        element = _read_ebml_element(payload, child)
+        if element is None:
+            return None
+        id_length, size_length, data_size = element
+        element_id = payload[child:child + 4]
+        end = child + id_length + size_length + data_size
+        if element_id == _WEBM_CUES_ID:
+            if tracks_end <= 0 or end > len(payload):
+                return None
+            return (
+                {"start": "0", "end": str(tracks_end - 1)},
+                {"start": str(child), "end": str(end - 1)},
+            )
+        if element_id == _WEBM_TRACKS_ID:
+            tracks_end = end
+        elif element_id == _WEBM_CLUSTER_ID:
+            return None
+        child = end
+    return None
+
+
+def _is_webm_media_format(fmt: dict) -> bool:
+    mime_type = str(fmt.get("mime_type") or "").strip().lower()
+    if mime_type.startswith(("video/webm", "audio/webm")):
+        return True
+    return str(fmt.get("ext") or "").strip().lower() == "webm"
+
+
+def _is_hls_media_format(fmt: dict) -> bool:
+    if str(fmt.get("protocol") or "").strip().startswith("m3u8"):
+        return True
+    return ".m3u8" in str(fmt.get("url") or "")
+
+
+def _fetch_dash_probe_payload(
+    get: Callable[..., object],
+    url: str,
+    headers: dict[str, str],
+    limit: int,
+) -> bytes:
+    probe_headers = dict(headers)
+    probe_headers["Range"] = f"bytes=0-{limit - 1}"
+    response = get(
+        url,
+        headers=probe_headers,
+        timeout=_DASH_PROBE_TIMEOUT_SECONDS,
+        follow_redirects=True,
+    )
+    response.raise_for_status()
+    return bytes(response.content)
+
+
+def _attach_dash_segment_metadata(
+    formats: list[dict | None],
+    *,
+    get: Callable[..., object] | None = None,
+) -> None:
+    """Probe stream heads for SegmentBase ranges when yt-dlp omitted them.
+
+    Without init/index ranges the generated MPD carries representations with a
+    bare BaseURL, which DASH demuxers skip, leaving mpv with no playable
+    streams (error -16).
+    """
+    fetch = get or httpx.get
+    for fmt in formats:
+        if not isinstance(fmt, dict):
+            continue
+        if _format_dash_byte_range(fmt.get("init_range")) and _format_dash_byte_range(fmt.get("index_range")):
+            continue
+        url = str(fmt.get("url") or "")
+        if not url or _is_hls_media_format(fmt):
+            continue
+        raw_headers = fmt.get("http_headers")
+        headers = (
+            {str(key): str(value) for key, value in raw_headers.items()}
+            if isinstance(raw_headers, dict)
+            else {}
+        )
+        parser = (
+            _parse_webm_segment_ranges
+            if _is_webm_media_format(fmt)
+            else _parse_mp4_segment_ranges
+        )
+        for limit in (_DASH_PROBE_INITIAL_BYTES, _DASH_PROBE_MAX_BYTES):
+            try:
+                payload = _fetch_dash_probe_payload(fetch, url, headers, limit)
+            except Exception as exc:
+                logger.info(
+                    "dash segment probe failed url=%s error=%s",
+                    _summarize_media_url(url),
+                    exc,
+                )
+                break
+            ranges = parser(payload)
+            if ranges is not None:
+                fmt["init_range"], fmt["index_range"] = ranges
+                logger.info(
+                    "dash segment ranges probed url=%s init=%s-%s index=%s-%s",
+                    _summarize_media_url(url),
+                    ranges[0]["start"],
+                    ranges[0]["end"],
+                    ranges[1]["start"],
+                    ranges[1]["end"],
+                )
+                break
+
+
 def _merge_http_headers(*sources: object) -> dict[str, str]:
     merged: dict[str, str] = {}
     for source in sources:
@@ -1032,6 +1222,14 @@ class _YtdlpCacheEntry:
     expires_at: float
 
 
+@dataclass(slots=True)
+class _PendingFullResolve:
+    future: Future
+    cache_height: int | None
+    audio_track_id: str
+    include_subtitles: bool
+
+
 class YtdlpPlaybackService:
     def __init__(
         self,
@@ -1045,6 +1243,8 @@ class YtdlpPlaybackService:
         self._ttl_seconds = float(ttl_seconds)
         self._now = now
         self._cache: dict[str, _YtdlpCacheEntry] = {}
+        self._pending_full_resolves: dict[str, _PendingFullResolve] = {}
+        self._pending_full_resolve_lock = threading.Lock()
         self._proxy_decider = proxy_decider
         self._config_loader = config_loader
 
@@ -1122,6 +1322,26 @@ class YtdlpPlaybackService:
             self._cache[
                 self._cache_key(url, selected_height, audio_track_id, include_subtitles=include_subtitles)
             ] = entry
+
+    def _matching_pending_resolve(
+        self,
+        canonical_url: str,
+        cache_height: int | None,
+        audio_track_id: str,
+        *,
+        include_subtitles: bool,
+    ) -> Future | None:
+        with self._pending_full_resolve_lock:
+            entry = self._pending_full_resolves.get(canonical_url)
+        if entry is None:
+            return None
+        if entry.cache_height != cache_height:
+            return None
+        if entry.audio_track_id != str(audio_track_id or "").strip():
+            return None
+        if entry.include_subtitles != include_subtitles:
+            return None
+        return entry.future
 
     def is_available(self) -> bool:
         if self._ytdlp_path is None:
@@ -1509,6 +1729,102 @@ class YtdlpPlaybackService:
         )
         return result
 
+    def start_full_resolve_race(self, url: str, log: object = None) -> Future | None:
+        """Kick off a background full resolve so it overlaps a fast startup resolve.
+
+        The result is written to the resolve cache; a later resolve() call with
+        matching parameters reuses it instead of spawning another extraction.
+        """
+        canonical_url = _canonicalize_ytdlp_url(url)
+        if not canonical_url:
+            return None
+        if not self.is_available():
+            return None
+        cache_height = self._configured_max_height()
+        with self._pending_full_resolve_lock:
+            existing = self._pending_full_resolves.get(canonical_url)
+            if existing is not None:
+                return existing.future
+            if self._get_cached_result(canonical_url, cache_height, "", include_subtitles=True) is not None:
+                return None
+            future: Future = Future()
+            entry = _PendingFullResolve(
+                future=future,
+                cache_height=cache_height,
+                audio_track_id="",
+                include_subtitles=True,
+            )
+            self._pending_full_resolves[canonical_url] = entry
+
+        def run_race() -> None:
+            started_at = monotonic()
+            succeeded = False
+            try:
+                result = self._resolve_uncached(
+                    canonical_url,
+                    cache_height,
+                    extraction_max_height=None,
+                    selected_audio_track_id="",
+                    include_subtitles=True,
+                )
+            except BaseException as exc:
+                future.set_exception(exc)
+            else:
+                succeeded = True
+                future.set_result(result)
+            finally:
+                with self._pending_full_resolve_lock:
+                    if self._pending_full_resolves.get(canonical_url) is entry:
+                        del self._pending_full_resolves[canonical_url]
+            logger.info(
+                "yt-dlp full resolve race done url=%s max_height=%s elapsed=%.3fs ok=%s",
+                canonical_url,
+                cache_height,
+                monotonic() - started_at,
+                succeeded,
+            )
+
+        threading.Thread(target=run_race, daemon=True, name="ytdlp-full-resolve-race").start()
+        return future
+
+    def resolve_fast_or_full(
+        self,
+        url: str,
+        log: object = None,
+        *,
+        max_height: int | None = None,
+    ) -> YtdlpResolveResult:
+        """Fast resolve for quick startup while a full resolve races in the background.
+
+        If the fast path fails, wait for the racing full result instead of
+        failing playback outright; if the race already finished before the fast
+        path returned, prefer the (higher quality) full result directly.
+        """
+        race = self.start_full_resolve_race(url, log=log)
+        try:
+            result = self.resolve_fast(url, log=log, max_height=max_height)
+        except ValueError:
+            canonical_url = _canonicalize_ytdlp_url(url)
+            if race is None:
+                logger.info("yt-dlp fast resolve failed; falling back to full resolve url=%s", canonical_url)
+                if callable(log):
+                    log("yt-dlp 快速解析失败，使用完整解析...")
+                return self.resolve(url, log=log, max_height=max_height, include_subtitles=True)
+            logger.info("yt-dlp fast resolve failed; waiting for racing full resolve url=%s", canonical_url)
+            if callable(log):
+                log("yt-dlp 快速解析失败，等待完整解析结果...")
+            return race.result()
+        if race is not None and race.done():
+            try:
+                return race.result()
+            except Exception:
+                logger.warning(
+                    "yt-dlp racing full resolve failed url=%s; keeping fast result",
+                    _canonicalize_ytdlp_url(url),
+                    exc_info=True,
+                )
+        return result
+
     def resolve(
         self,
         url: str,
@@ -1521,7 +1837,6 @@ class YtdlpPlaybackService:
         canonical_url = _canonicalize_ytdlp_url(url)
         configured_default_height = self._configured_max_height() if max_height is None else None
         cache_height = max_height if max_height is not None else configured_default_height
-        extraction_max_height = max_height
         logger.info("yt-dlp resolve start url=%s max_height=%s", canonical_url, cache_height)
         cached = self._get_cached_result(
             canonical_url,
@@ -1543,6 +1858,49 @@ class YtdlpPlaybackService:
                 log(f"yt-dlp 命中缓存 [{cached.extractor}]")
             return cached
 
+        racing = self._matching_pending_resolve(
+            canonical_url,
+            cache_height,
+            selected_audio_track_id,
+            include_subtitles=include_subtitles,
+        )
+        if racing is not None:
+            logger.info(
+                "yt-dlp resolve waiting for racing full resolve url=%s max_height=%s",
+                canonical_url,
+                cache_height,
+            )
+            if callable(log):
+                log("yt-dlp 正在等待并行的完整解析...")
+            try:
+                return racing.result()
+            except Exception:
+                logger.warning(
+                    "yt-dlp racing full resolve failed url=%s max_height=%s; resolving in current thread",
+                    canonical_url,
+                    cache_height,
+                    exc_info=True,
+                )
+
+        return self._resolve_uncached(
+            canonical_url,
+            cache_height,
+            extraction_max_height=max_height,
+            selected_audio_track_id=selected_audio_track_id,
+            include_subtitles=include_subtitles,
+            log=log,
+        )
+
+    def _resolve_uncached(
+        self,
+        canonical_url: str,
+        cache_height: int | None,
+        *,
+        extraction_max_height: int | None,
+        selected_audio_track_id: str,
+        include_subtitles: bool,
+        log: object = None,
+    ) -> YtdlpResolveResult:
         if callable(log):
             log("yt-dlp 正在提取视频信息...")
         started_at = monotonic()
@@ -1581,9 +1939,10 @@ class YtdlpPlaybackService:
 
         configured_video_codec = self._configured_video_codec()
         qualities = _build_quality_options(info, video_codec=configured_video_codec)
+        configured_default_height = cache_height if extraction_max_height is None else None
         selection_max_height = (
-            max_height
-            if max_height is not None
+            extraction_max_height
+            if extraction_max_height is not None
             else _resolve_startup_selection_height(qualities, configured_default_height)
         )
 
@@ -1652,6 +2011,8 @@ class YtdlpPlaybackService:
                 or _has_dash_segment_metadata(selected_video)
                 or _has_dash_segment_metadata(selected_audio)
             ):
+                if _is_youtube_extractor(info):
+                    _attach_dash_segment_metadata([selected_video, selected_audio])
                 playback_url = _build_dash_manifest_data_uri(
                     selected_video,
                     selected_audio,

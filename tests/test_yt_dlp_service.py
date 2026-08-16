@@ -15,6 +15,11 @@ from atv_player.network_proxy import ProxyConfig, ProxyDecider
 def stub_system_ytdlp(monkeypatch):
     monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "/usr/bin/yt-dlp")
 
+    def fail_get(*args, **kwargs):
+        raise AssertionError("unexpected dash probe network access")
+
+    monkeypatch.setattr("atv_player.yt_dlp_service.httpx.get", fail_get)
+
 
 @pytest.fixture
 def service():
@@ -1330,6 +1335,53 @@ class TestResolve:
             in manifest
         )
 
+    def test_probes_youtube_segment_ranges_when_ytdlp_omits_them(self, monkeypatch, service):
+        info = _sample_info(
+            extractor="youtube",
+            url="https://stream.test/master.m3u8",
+            requested_formats=[
+                {
+                    "format_id": "699",
+                    "url": "https://stream.test/video-4k.mp4",
+                    "height": 2160,
+                    "width": 3840,
+                    "tbr": 5000,
+                    "vcodec": "av01.0.12M.10",
+                    "acodec": "none",
+                    "ext": "mp4",
+                },
+                {
+                    "format_id": "251",
+                    "url": "https://stream.test/audio-251.webm",
+                    "tbr": 145,
+                    "vcodec": "none",
+                    "acodec": "opus",
+                    "ext": "webm",
+                },
+            ],
+            formats=[],
+        )
+        _stub_extract_info(monkeypatch, service, info)
+        calls: list[tuple[str, dict[str, str]]] = []
+
+        def fake_get(url, *, headers=None, timeout=None, follow_redirects=False):
+            calls.append((url, dict(headers or {})))
+            payload = _webm_probe_payload() if "audio" in url else _mp4_probe_payload()
+            return SimpleNamespace(content=payload, raise_for_status=lambda: None)
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.httpx.get", fake_get)
+
+        result = service.resolve("https://www.youtube.com/watch?v=test123")
+
+        manifest = base64.b64decode(result.url.partition(",")[2]).decode("utf-8")
+        assert '<SegmentBase indexRange="84-123"><Initialization range="0-83"/></SegmentBase>' in manifest
+        assert '<SegmentBase indexRange="41-85"><Initialization range="0-40"/></SegmentBase>' in manifest
+        assert sorted(url for url, _headers in calls) == [
+            "https://stream.test/audio-251.webm",
+            "https://stream.test/video-4k.mp4",
+        ]
+        assert all(headers["Range"] == "bytes=0-131071" for _url, headers in calls)
+
     def test_uses_configured_default_startup_quality_when_resolve_does_not_specify_limit(self, monkeypatch):
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 
@@ -1923,6 +1975,172 @@ class TestResolve:
         monkeypatch.setattr("atv_player.yt_dlp_service.resolve_system_ytdlp_path", lambda: "")
         with pytest.raises(ValueError, match="未安装"):
             service.resolve("https://www.youtube.com/watch?v=test123")
+
+
+def _mp4_probe_payload() -> bytes:
+    def box(box_type: bytes, data: bytes) -> bytes:
+        return (8 + len(data)).to_bytes(4, "big") + box_type + data
+
+    return (
+        box(b"ftyp", b"isom")
+        + box(b"moov", b"m" * 64)
+        + box(b"sidx", b"s" * 32)
+        + box(b"moof", b"f" * 16)
+    )
+
+
+def _webm_probe_payload() -> bytes:
+    def element(element_id: bytes, data: bytes, *, size_length: int = 1) -> bytes:
+        if size_length == 1:
+            size = bytes([0x80 | len(data)])
+        elif size_length == 2:
+            size = bytes([0x40 | (len(data) >> 8), len(data) & 0xFF])
+        else:
+            size = b"\x01" + len(data).to_bytes(7, "big")
+        return element_id + size + data
+
+    header = element(b"\x1a\x45\xdf\xa3", b"\x86\x81\x01")
+    segment_body = (
+        element(b"\x15\x49\xa9\x66", b"info")
+        + element(b"\x16\x54\xae\x6b", b"t" * 6, size_length=2)
+        + element(b"\x1c\x53\xbb\x6b", b"c" * 40)
+        + element(b"\x1f\x43\xb6\x75", b"k" * 8)
+    )
+    return header + element(b"\x18\x53\x80\x67", segment_body, size_length=8)
+
+
+class TestDashSegmentRangeProbing:
+    def test_parses_mp4_sidx_ranges(self):
+        from atv_player.yt_dlp_service import _parse_mp4_segment_ranges
+
+        assert _parse_mp4_segment_ranges(_mp4_probe_payload()) == (
+            {"start": "0", "end": "83"},
+            {"start": "84", "end": "123"},
+        )
+
+    def test_parses_webm_cues_ranges(self):
+        from atv_player.yt_dlp_service import _parse_webm_segment_ranges
+
+        assert _parse_webm_segment_ranges(_webm_probe_payload()) == (
+            {"start": "0", "end": "40"},
+            {"start": "41", "end": "85"},
+        )
+
+    def test_mp4_probe_requires_complete_sidx(self):
+        from atv_player.yt_dlp_service import _parse_mp4_segment_ranges
+
+        assert _parse_mp4_segment_ranges(_mp4_probe_payload()[:100]) is None
+
+    def test_mp4_probe_rejects_fragment_boxes_before_sidx(self):
+        from atv_player.yt_dlp_service import _parse_mp4_segment_ranges
+
+        payload = (
+            (8 + 16).to_bytes(4, "big") + b"mdat" + b"d" * 16
+            + (8 + 8).to_bytes(4, "big") + b"sidx" + b"s" * 8
+        )
+        assert _parse_mp4_segment_ranges(payload) is None
+
+    def test_webm_probe_rejects_clusters_before_cues(self):
+        from atv_player.yt_dlp_service import _parse_webm_segment_ranges
+
+        def element(element_id: bytes, data: bytes) -> bytes:
+            return element_id + bytes([0x80 | len(data)]) + data
+
+        payload = (
+            element(b"\x1a\x45\xdf\xa3", b"\x86\x81\x01")
+            + element(b"\x15\x49\xa9\x66", b"info")
+            + element(b"\x16\x54\xae\x6b", b"t" * 6)
+            + element(b"\x1f\x43\xb6\x75", b"k" * 8)
+        )
+        assert _parse_webm_segment_ranges(payload) is None
+
+    def test_attach_probes_formats_missing_ranges(self, monkeypatch):
+        from atv_player.yt_dlp_service import _attach_dash_segment_metadata
+
+        video = {
+            "format_id": "699",
+            "url": "https://stream.test/video-4k.mp4",
+            "ext": "mp4",
+            "vcodec": "av01",
+            "acodec": "none",
+        }
+        audio = {
+            "format_id": "251",
+            "url": "https://stream.test/audio-251.webm",
+            "ext": "webm",
+            "vcodec": "none",
+            "acodec": "opus",
+        }
+        complete = {
+            "format_id": "140",
+            "url": "https://stream.test/audio-140.m4a",
+            "ext": "m4a",
+            "init_range": {"start": "0", "end": "701"},
+            "index_range": {"start": "702", "end": "1189"},
+        }
+        hls = {
+            "format_id": "hls-1080",
+            "url": "https://stream.test/variant.m3u8",
+            "protocol": "m3u8_native",
+            "ext": "mp4",
+        }
+        calls: list[str] = []
+
+        def fake_get(url, *, headers=None, timeout=None, follow_redirects=False):
+            calls.append(url)
+            payload = _webm_probe_payload() if "audio-251" in url else _mp4_probe_payload()
+            return SimpleNamespace(content=payload, raise_for_status=lambda: None)
+
+        _attach_dash_segment_metadata([video, audio, complete, hls], get=fake_get)
+
+        assert video["init_range"] == {"start": "0", "end": "83"}
+        assert video["index_range"] == {"start": "84", "end": "123"}
+        assert audio["init_range"] == {"start": "0", "end": "40"}
+        assert audio["index_range"] == {"start": "41", "end": "85"}
+        assert calls == [
+            "https://stream.test/video-4k.mp4",
+            "https://stream.test/audio-251.webm",
+        ]
+
+    def test_attach_keeps_formats_unchanged_when_probe_fails(self):
+        from atv_player.yt_dlp_service import _attach_dash_segment_metadata
+
+        fmt = {
+            "format_id": "699",
+            "url": "https://stream.test/video-4k.mp4",
+            "ext": "mp4",
+        }
+
+        def failing_get(url, **kwargs):
+            raise RuntimeError("boom")
+
+        _attach_dash_segment_metadata([fmt], get=failing_get)
+
+        assert "init_range" not in fmt
+        assert "index_range" not in fmt
+
+    def test_attach_retries_with_larger_window_when_sidx_incomplete(self):
+        from atv_player.yt_dlp_service import _attach_dash_segment_metadata
+
+        full_payload = _mp4_probe_payload()
+        fmt = {
+            "format_id": "699",
+            "url": "https://stream.test/video-4k.mp4",
+            "ext": "mp4",
+        }
+        requested_limits: list[int] = []
+
+        def fake_get(url, *, headers=None, timeout=None, follow_redirects=False):
+            limit = int(headers["Range"].partition("-")[2]) + 1
+            requested_limits.append(limit)
+            payload = full_payload[:100] if limit <= 131072 else full_payload
+            return SimpleNamespace(content=payload, raise_for_status=lambda: None)
+
+        _attach_dash_segment_metadata([fmt], get=fake_get)
+
+        assert fmt.get("init_range") == {"start": "0", "end": "83"}
+        assert fmt.get("index_range") == {"start": "84", "end": "123"}
+        assert requested_limits == [131072, 1048576]
 
 
 class TestResolveToPlayItem:
