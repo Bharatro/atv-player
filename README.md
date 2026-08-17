@@ -293,5 +293,6 @@ GitHub Actions 会为 Pull Request 和手动触发构建 Linux、macOS、Windows
 
 1. 用户目录下的 `mpv` 目录，例如 `~/mpv/libmpv-2.dll`
 2. 应用目录下的 `lib` 子目录，例如 `<应用目录>/lib/libmpv-2.dll`
+3. 应用目录本身，例如 `<应用目录>/libmpv-2.dll`
 
-目录内按 `libmpv-2.dll`、`mpv-2.dll`、`mpv.dll` 的顺序查找（Linux/macOS 对应 `libmpv.so`、`libmpv.so.2`、`libmpv.dylib`）。若文件加载失败，应用会在日志中记录原因并回退到内置 libmpv。
+目录内按 `libmpv-2.dll`、`mpv-2.dll`、`mpv.dll` 的顺序查找（Linux/macOS 对应 `libmpv.so`、`libmpv.so.2`、`libmpv.dylib`）。候选按优先级逐个尝试；某个文件加载失败会在日志中记录原因并继续尝试下一个，全部失败才回退到内置 libmpv。

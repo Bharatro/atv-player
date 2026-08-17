@@ -55,6 +55,7 @@ def test_search_dirs_prefer_user_mpv_dir_then_app_lib(monkeypatch, tmp_path) -> 
     assert directories == [
         tmp_path / "home" / "mpv",
         app_dir / "lib",
+        app_dir,
     ]
 
 
@@ -137,6 +138,32 @@ def test_prepare_custom_mpv_library_preloads_and_prepends_path(
     assert os.environ["PATH"].split(os.pathsep).count(str(user_dir)) == 1
 
 
+def test_prepare_custom_mpv_library_tries_next_candidate_when_dll_broken(
+    search_dirs, monkeypatch
+) -> None:
+    monkeypatch.setattr(mpv_library, "_is_windows", lambda: True)
+    user_dir, app_lib_dir = search_dirs
+    broken = user_dir / "libmpv-2.dll"
+    broken.write_bytes(b"")
+    good = app_lib_dir / "libmpv-2.dll"
+    good.write_bytes(b"")
+    attempts: list[str] = []
+
+    def flaky_cdll(path: str, **_kwargs: object):
+        attempts.append(path)
+        if Path(path).parent == user_dir:
+            raise OSError("illegal instruction")
+        return FakeCDLL(path)
+
+    monkeypatch.setattr(ctypes, "CDLL", flaky_cdll)
+    monkeypatch.delenv("PATH", raising=False)
+
+    assert prepare_custom_mpv_library() == good
+    assert attempts == [str(broken), str(good)]
+    # 前插的是最终成功候选所在的目录
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(app_lib_dir)
+
+
 def test_prepare_custom_mpv_library_falls_back_when_dll_broken(
     search_dirs, monkeypatch
 ) -> None:
@@ -152,7 +179,7 @@ def test_prepare_custom_mpv_library_falls_back_when_dll_broken(
     monkeypatch.delenv("PATH", raising=False)
 
     assert prepare_custom_mpv_library() is None
-    # 加载失败后不再前插 PATH,也不再重试
+    # 全部候选加载失败后不前插 PATH
     assert os.environ.get("PATH", "") == ""
     assert prepare_custom_mpv_library() is None
 
@@ -176,6 +203,67 @@ def test_prepare_custom_mpv_library_windows_flags_passed(
 
     assert prepare_custom_mpv_library() == dll
     assert recorded["kwargs"] == {"winmode": 0x00001000 | 0x00000100}
+
+
+def test_prepare_custom_mpv_library_creates_alias_when_first_name_shadowed(
+    search_dirs, monkeypatch
+) -> None:
+    monkeypatch.setattr(mpv_library, "_is_windows", lambda: True)
+    user_dir, _app_lib_dir = search_dirs
+    dll = user_dir / "libmpv-2.dll"
+    dll.write_bytes(b"custom-dll")
+    stray_dir = user_dir.parent / "stray"
+    stray_dir.mkdir()
+    (stray_dir / "mpv-2.dll").write_bytes(b"stray-dll")
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+    monkeypatch.setenv("PATH", str(stray_dir))
+
+    assert prepare_custom_mpv_library() == dll
+
+    # PATH 中别处的 mpv-2.dll 抢先时,自动在自定义目录生成首名字硬链接
+    alias = user_dir / "mpv-2.dll"
+    assert alias.is_file()
+    assert alias.samefile(dll)
+
+
+def test_prepare_custom_mpv_library_alias_falls_back_to_copy(
+    search_dirs, monkeypatch
+) -> None:
+    monkeypatch.setattr(mpv_library, "_is_windows", lambda: True)
+    user_dir, _app_lib_dir = search_dirs
+    dll = user_dir / "libmpv-2.dll"
+    dll.write_bytes(b"custom-dll")
+    stray_dir = user_dir.parent / "stray"
+    stray_dir.mkdir()
+    (stray_dir / "mpv-2.dll").write_bytes(b"stray-dll")
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+    monkeypatch.setenv("PATH", str(stray_dir))
+
+    def broken_link(*_args: object, **_kwargs: object):
+        raise OSError("link unsupported")
+
+    monkeypatch.setattr(os, "link", broken_link)
+
+    assert prepare_custom_mpv_library() == dll
+
+    alias = user_dir / "mpv-2.dll"
+    assert alias.is_file()
+    assert alias.read_bytes() == b"custom-dll"
+
+
+def test_prepare_custom_mpv_library_skips_alias_without_conflict(
+    search_dirs, monkeypatch
+) -> None:
+    monkeypatch.setattr(mpv_library, "_is_windows", lambda: True)
+    user_dir, _app_lib_dir = search_dirs
+    dll = user_dir / "libmpv-2.dll"
+    dll.write_bytes(b"custom-dll")
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+    monkeypatch.delenv("PATH", raising=False)
+
+    assert prepare_custom_mpv_library() == dll
+
+    assert not (user_dir / "mpv-2.dll").exists()
 
 
 def test_custom_mpv_library_diagnostics_reports_resolved_path(
