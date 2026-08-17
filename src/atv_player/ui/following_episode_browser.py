@@ -43,6 +43,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -331,13 +332,14 @@ class EpisodeThumbnailStore(QObject):
         self._pending.add(key)
 
         def load() -> None:
-            image = load_local_poster_image(key, target_size)
-            if image is None:
-                image = load_remote_poster_image(image_url, target_size)
-            if image is not None:
-                self._handle_thumbnail_ready(key, image)
-                return
-            self._pending.discard(key)
+            with poster_load_slot():
+                image = load_local_poster_image(key, target_size)
+                if image is None:
+                    image = load_remote_poster_image(image_url, target_size)
+                if image is not None:
+                    self._handle_thumbnail_ready(key, image)
+                    return
+                self._pending.discard(key)
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -616,11 +618,12 @@ class FollowingSeasonPosterPreviewDialog(ThemedDialogBase):
             target_size = QSize(480, 720)
 
         def load() -> None:
-            image = load_local_poster_image(self._poster_source, target_size)
-            if image is None:
-                image = load_remote_poster_image(image_url, target_size)
-            if image is not None:
-                self._image_loaded.emit(self.poster_label, image)
+            with poster_load_slot():
+                image = load_local_poster_image(self._poster_source, target_size)
+                if image is None:
+                    image = load_remote_poster_image(image_url, target_size)
+                if image is not None:
+                    self._image_loaded.emit(self.poster_label, image)
 
         threading.Thread(target=load, daemon=True).start()
 

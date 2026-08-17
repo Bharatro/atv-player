@@ -25,6 +25,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import (
     build_pill_button_qss,
@@ -67,7 +68,7 @@ class SimplifiedHomePage(QWidget, AsyncGuardMixin):
         self.recommendation_buttons: list[QToolButton] = []
         self._recommendation_columns = 0
         self._poster_generation = 0
-        self._poster_semaphore = threading.BoundedSemaphore(value=6)
+        self._poster_semaphore = poster_load_slot()
 
         self._signals = _SimplifiedHomeSignals()
         self._connect_async_signal(

@@ -21,6 +21,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -43,7 +44,7 @@ class HeatRecommendationsDialog(ThemedDialogBase, AsyncGuardMixin):
         super().__init__(title="大家在看", parent=parent, resizable=True)
         self._init_async_guard()
         self._poster_generation = 0
-        self._poster_semaphore = threading.BoundedSemaphore(value=6)
+        self._poster_semaphore = poster_load_slot()
         self._card_buttons: list[QToolButton] = []
         self._item_buttons: dict[str, QToolButton] = {}
         self._signals = _HeatRecommendationSignals()

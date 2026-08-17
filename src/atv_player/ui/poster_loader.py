@@ -5,6 +5,7 @@ from io import BytesIO
 from hashlib import sha256
 import json
 from pathlib import Path
+import threading
 from urllib.parse import urlparse
 
 import httpx
@@ -29,6 +30,7 @@ else:
     register_heif_opener()
 
 POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+POSTER_LOAD_CONCURRENCY = 6
 POSTER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
@@ -42,6 +44,12 @@ _YOUTUBE_PAGE_HOSTS = {
     "youtu.be",
 }
 _proxy_decider_loader: Callable[[], ProxyDecider | None] | None = None
+_poster_load_semaphore = threading.BoundedSemaphore(POSTER_LOAD_CONCURRENCY)
+
+
+def poster_load_slot() -> threading.BoundedSemaphore:
+    """进程级海报加载并发闸（各页面线程共享，配合 acquire/finally release 使用）。"""
+    return _poster_load_semaphore
 
 
 def _looks_like_unsupported_page_url(source: str) -> bool:

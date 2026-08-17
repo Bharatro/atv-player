@@ -24,7 +24,12 @@ from PySide6.QtWidgets import (
 
 from atv_player.ui.following_search_result_card import FollowingSearchResultCard, following_search_candidate_media_type, _following_display_title
 from atv_player.ui.async_guard import AsyncGuardMixin
-from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+    poster_load_slot,
+)
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
@@ -149,10 +154,11 @@ class FollowingDiscoveryResultDelegate(QStyledItemDelegate):
         target_size = QSize(86, 122)
 
         def load() -> None:
-            image = load_local_poster_image(source, target_size)
-            if image is None:
-                image = load_remote_poster_image(normalize_poster_url(source), target_size)
-            self.poster_loaded.emit(source, image)
+            with poster_load_slot():
+                image = load_local_poster_image(source, target_size)
+                if image is None:
+                    image = load_remote_poster_image(normalize_poster_url(source), target_size)
+                self.poster_loaded.emit(source, image)
 
         threading.Thread(target=load, daemon=True).start()
 

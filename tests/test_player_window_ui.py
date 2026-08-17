@@ -15129,6 +15129,8 @@ def test_player_window_auto_loads_spider_subtitle_when_no_embedded_tracks(qtbot,
 
     window.open_session(session)
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
     assert window.subtitle_combo.currentText() == "外挂字幕 [插件]"
@@ -15545,6 +15547,8 @@ def test_player_window_reloads_manual_ytdlp_subtitle_when_saved_external_track_i
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(2)
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert window.video.loaded_external_subtitles == [(window.video.loaded_external_subtitles[0][0], False)]
     assert window.video.subtitle_apply_calls == [("track", 91)]
 
@@ -15554,6 +15558,8 @@ def test_player_window_reloads_manual_ytdlp_subtitle_when_saved_external_track_i
     window.video._current_sid = None
 
     window._refresh_subtitle_state()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert window.video.loaded_external_subtitles == [(window.video.loaded_external_subtitles[0][0], False)]
     assert window.video.subtitle_apply_calls == [("track", 92)]
@@ -15644,6 +15650,8 @@ def test_player_window_auto_loads_configured_ytdlp_default_subtitle(qtbot, monke
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert window.video.loaded_external_subtitles == [(window.video.loaded_external_subtitles[0][0], False)]
     assert window.video.subtitle_apply_calls == [("track", 91)]
@@ -15737,6 +15745,9 @@ def test_player_window_play_next_reloads_auto_ytdlp_default_subtitle_for_channel
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
         first_subtitle_path.read_text(encoding="utf-8")
     ]
@@ -15745,6 +15756,8 @@ def test_player_window_play_next_reloads_auto_ytdlp_default_subtitle_for_channel
     window.video.subtitle_apply_calls.clear()
 
     window.play_next()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
         second_subtitle_path.read_text(encoding="utf-8")
@@ -15857,16 +15870,16 @@ def test_player_window_loads_ytdlp_webvtt_with_vtt_suffix(qtbot, monkeypatch) ->
     qtbot.addWidget(window)
     window.video = FakeVideo()
 
-    track_id, subtitle_path = window._load_external_subtitle(
-        ExternalSubtitleOption(
-            name="English [yt-dlp]",
-            lang="en",
-            url="https://sub.example/en.vtt",
-            format="vtt",
-            source="ytdlp",
-        ),
-        secondary=False,
+    subtitle = ExternalSubtitleOption(
+        name="English [yt-dlp]",
+        lang="en",
+        url="https://sub.example/en.vtt",
+        format="vtt",
+        source="ytdlp",
     )
+    text = window._fetch_external_subtitle_text(subtitle)
+
+    track_id, subtitle_path = window._load_external_subtitle_from_text(subtitle, text, secondary=False)
 
     assert track_id == 91
     assert subtitle_path.suffix == ".vtt"
@@ -15891,17 +15904,17 @@ def test_player_window_rejects_blocked_ytdlp_translated_vtt_html_response(qtbot,
     qtbot.addWidget(window)
     window.video = FakeVideo()
 
+    subtitle = ExternalSubtitleOption(
+        name="简体中文 [yt-dlp]",
+        lang="zh-Hans",
+        url="https://www.youtube.com/api/timedtext?lang=en&fmt=vtt&tlang=zh-Hans",
+        format="vtt",
+        source="ytdlp",
+    )
+    text = window._fetch_external_subtitle_text(subtitle)
+
     with pytest.raises(ValueError, match="YouTube 翻译字幕"):
-        window._load_external_subtitle(
-            ExternalSubtitleOption(
-                name="简体中文 [yt-dlp]",
-                lang="zh-Hans",
-                url="https://www.youtube.com/api/timedtext?lang=en&fmt=vtt&tlang=zh-Hans",
-                format="vtt",
-                source="ytdlp",
-            ),
-            secondary=False,
-        )
+        window._load_external_subtitle_from_text(subtitle, text, secondary=False)
 
 
 def test_player_window_retries_first_manual_external_subtitle_selection_when_track_id_is_delayed(
@@ -16054,6 +16067,8 @@ def test_player_window_auto_loads_spider_subtitle_from_local_path(qtbot, monkeyp
 
     window.open_session(session)
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
         "1\n00:00:00,000 --> 00:00:01,000\n你好\n"
     ]
@@ -16130,6 +16145,8 @@ def test_player_window_auto_loads_generated_spider_karaoke_ass_from_local_path(q
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
@@ -16501,6 +16518,8 @@ def test_player_window_user_selection_loads_bilibili_subtitle_as_primary(qtbot, 
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(2)
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
 
@@ -16571,6 +16590,8 @@ def test_player_window_user_selection_loads_spider_subtitle_as_primary(qtbot, mo
 
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(2)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
@@ -16889,6 +16910,8 @@ def test_player_window_context_menu_loads_bilibili_subtitle_as_secondary(qtbot, 
     window.open_session(session)
     window._set_secondary_subtitle_from_menu("external", "http://sub/en.srt")
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [True]
     assert window.video.secondary_subtitle_apply_calls == [("track", 101)]
 
@@ -16969,6 +16992,8 @@ def test_player_window_context_menu_lists_and_loads_bilibili_subtitle_as_primary
 
     next(action for action in _submenu_actions(menu, "主字幕") if action.text() == "中文 [B站]").trigger()
 
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
 
@@ -17043,6 +17068,9 @@ def test_player_window_unloads_primary_bilibili_subtitle_when_switching_to_off(q
 
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(2)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.video.removed_track_ids.clear()
     window.video.subtitle_apply_calls.clear()
 
@@ -17126,6 +17154,8 @@ def test_player_window_logs_bilibili_subtitle_failure_without_interrupting_playb
     window.open_session(session)
 
     window.subtitle_combo.setCurrentIndex(2)
+
+    qtbot.waitUntil(lambda: "字幕切换失败: boom" in window.log_view.toPlainText(), timeout=2000)
 
     assert "字幕切换失败: boom" in window.log_view.toPlainText()
 
@@ -19953,10 +19983,15 @@ def test_player_window_refresh_button_reloads_auto_spider_subtitle(qtbot, monkey
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.video.loaded_external_subtitles.clear()
     window.video.subtitle_apply_calls.clear()
 
     window.refresh_button.click()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
@@ -20033,10 +20068,15 @@ def test_player_window_refresh_button_reloads_selected_external_subtitle(qtbot, 
 
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(2)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.video.loaded_external_subtitles.clear()
     window.video.subtitle_apply_calls.clear()
 
     window.refresh_button.click()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_external_subtitles] == [False]
     assert window.video.subtitle_apply_calls == [("track", 91)]
@@ -20124,13 +20164,21 @@ def test_player_window_play_next_reloads_selected_spider_karaoke_subtitle_for_ne
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.subtitle_combo.setCurrentIndex(1)
     window.subtitle_combo.setCurrentIndex(window.subtitle_combo.findText("逐字歌词 [插件]"))
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2, timeout=2000)
+
     window.video.load_calls.clear()
     window.video.loaded_external_subtitles.clear()
     window.video.subtitle_apply_calls.clear()
 
     window.play_next()
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
 
     assert window.video.load_calls == [("http://m/2.m3u8", 0)]
     assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == ["second"]
@@ -20227,6 +20275,9 @@ def test_player_window_play_next_recovers_selected_spider_karaoke_after_stale_tr
     window.open_session(session)
     window.subtitle_combo.setCurrentIndex(1)
     window.subtitle_combo.setCurrentIndex(window.subtitle_combo.findText("逐字歌词 [插件]"))
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.video.loaded_external_subtitles.clear()
     window.video.subtitle_apply_calls.clear()
 
@@ -20533,14 +20584,20 @@ def test_player_window_play_next_recovers_selected_spider_karaoke_when_track_id_
     window.video = FakeVideo()
 
     window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 1, timeout=2000)
+
     window.subtitle_combo.setCurrentIndex(1)
     window.subtitle_combo.setCurrentIndex(window.subtitle_combo.findText("逐字歌词 [插件]"))
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2, timeout=2000)
+
     window.video.loaded_external_subtitles.clear()
     window.video.subtitle_apply_calls.clear()
 
     window.play_next()
 
-    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2)
+    qtbot.waitUntil(lambda: len(window.video.loaded_external_subtitles) == 2, timeout=2000)
 
     assert [Path(path).read_text(encoding="utf-8") for path, _ in window.video.loaded_external_subtitles] == [
         "second",

@@ -21,6 +21,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import current_tokens
 
@@ -63,7 +64,7 @@ class MediaHomePage(QWidget, AsyncGuardMixin):
         self._loader = loader
         self._request_id = 0
         self._poster_generation = 0
-        self._poster_semaphore = threading.BoundedSemaphore(value=6)
+        self._poster_semaphore = poster_load_slot()
         self._card_buttons: list[QToolButton] = []
         self.current_playing_button: QToolButton | None = None
         self.continue_buttons: list[QToolButton] = []

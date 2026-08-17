@@ -596,6 +596,20 @@ class _DanmakuRenderSignals(QObject):
     failed = Signal(int, str)
 
 
+class _ExternalSubtitleFetchSignals(QObject):
+    succeeded = Signal(int, object, str)
+    failed = Signal(int, object, str)
+
+
+@dataclass(slots=True)
+class _ExternalSubtitleFetchRequest:
+    token: int
+    subtitle: ExternalSubtitleOption
+    secondary: bool
+    purpose: str
+    previous_track_id: int | None = None
+
+
 class _PlaybackPrepareSignals(QObject):
     succeeded = Signal(int, str)
     failed = Signal(int, str)
@@ -1073,6 +1087,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_render_signals = _DanmakuRenderSignals()
         self._connect_async_signal(self._danmaku_render_signals.succeeded, self._handle_danmaku_render_succeeded)
         self._connect_async_signal(self._danmaku_render_signals.failed, self._handle_danmaku_render_failed)
+        self._external_subtitle_fetch_signals = _ExternalSubtitleFetchSignals()
+        self._connect_async_signal(
+            self._external_subtitle_fetch_signals.succeeded,
+            self._handle_external_subtitle_fetch_succeeded,
+        )
+        self._connect_async_signal(self._external_subtitle_fetch_signals.failed, self._handle_external_subtitle_fetch_failed)
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
@@ -1205,6 +1225,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._secondary_external_subtitle_selection: ExternalSubtitleSelection | None = None
         self._primary_external_subtitle_track_id: int | None = None
         self._secondary_external_subtitle_track_id: int | None = None
+        self._external_subtitle_fetch_counter = 0
+        self._primary_external_subtitle_fetch: _ExternalSubtitleFetchRequest | None = None
+        self._secondary_external_subtitle_fetch: _ExternalSubtitleFetchRequest | None = None
         self._primary_external_subtitle_path: Path | None = None
         self._secondary_external_subtitle_path: Path | None = None
         self._main_subtitle_position = 50
@@ -6934,6 +6957,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video.remove_subtitle_track(track_id)
 
     def _clear_primary_external_subtitle(self, *, preserve_selection: bool = False) -> None:
+        self._primary_external_subtitle_fetch = None
         self._stop_primary_external_subtitle_retry()
         self._remove_external_subtitle_track(self._primary_external_subtitle_track_id)
         if not preserve_selection:
@@ -6942,6 +6966,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._primary_external_subtitle_path = None
 
     def _clear_secondary_external_subtitle(self, *, preserve_selection: bool = False) -> None:
+        self._secondary_external_subtitle_fetch = None
         self._remove_external_subtitle_track(self._secondary_external_subtitle_track_id)
         if not preserve_selection:
             self._secondary_external_subtitle_selection = None
@@ -7061,23 +7086,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._primary_external_subtitle_retry_attempts += 1
         self._primary_external_subtitle_retry_timer.start(400)
 
-    def _ensure_primary_external_subtitle_loaded(self, subtitle: ExternalSubtitleOption) -> bool:
+    def _ensure_primary_external_subtitle_loaded(
+        self,
+        subtitle: ExternalSubtitleOption,
+        *,
+        purpose: str = "primary-auto",
+    ) -> bool:
         if self._primary_external_subtitle_track_id is not None:
             return True
-        try:
-            loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=False)
-        except Exception as exc:
-            if self._should_retry_primary_external_subtitle_apply(exc):
-                self._schedule_primary_external_subtitle_retry()
-                return False
-            self._stop_primary_external_subtitle_retry()
-            raise
-        self._primary_external_subtitle_track_id = loaded_track_id
-        self._primary_external_subtitle_path = subtitle_path
-        if loaded_track_id is None:
-            self._schedule_primary_external_subtitle_retry_for_pending_track()
+        if self._primary_external_subtitle_fetch is not None:
             return False
-        return True
+        self._start_external_subtitle_fetch(subtitle, secondary=False, purpose=purpose)
+        return False
 
     def _apply_primary_external_subtitle_track(self, track_id: int | None) -> bool:
         if track_id is None:
@@ -7115,7 +7135,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._stop_primary_external_subtitle_retry()
             return
         try:
-            if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle):
+            if not self._ensure_primary_external_subtitle_loaded(current_external_subtitle, purpose="primary-retry"):
                 return
             track_id = self._primary_external_subtitle_track_id
             if not self._apply_primary_external_subtitle_track(track_id):
@@ -8209,29 +8229,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._clear_primary_external_subtitle()
             return
         if mode == "external" and external_subtitle is not None:
-            previous_track_id = self._primary_external_subtitle_track_id
-            try:
-                loaded_track_id, subtitle_path = self._load_external_subtitle(external_subtitle, secondary=False)
-            except Exception as exc:
-                self._append_log(f"字幕切换失败: {exc}")
-                return
-            self._subtitle_preference = SubtitlePreference(mode="external")
-            self._primary_external_subtitle_selection = ExternalSubtitleSelection(
-                source=external_subtitle.source,
-                option_url=external_subtitle.url,
-                option_name=external_subtitle.name,
-                option_lang=external_subtitle.lang,
-                option_format=external_subtitle.format,
+            self._start_external_subtitle_fetch(
+                external_subtitle,
+                secondary=False,
+                purpose="primary-manual",
+                previous_track_id=self._primary_external_subtitle_track_id,
             )
-            self._primary_external_subtitle_track_id = loaded_track_id
-            self._primary_external_subtitle_path = subtitle_path
-            if previous_track_id != loaded_track_id:
-                self._remove_external_subtitle_track(previous_track_id)
-            try:
-                self._mark_manual_subtitle_switch_refresh()
-                self._apply_primary_external_subtitle_track(loaded_track_id)
-            except Exception as exc:
-                self._append_log(f"字幕切换失败: {exc}")
             return
         track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
         if track is None:
@@ -11020,21 +11023,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 subtitle = self._find_current_item_external_subtitle(str(track_id or ""))
                 if subtitle is None:
                     return
-                previous_track_id = self._secondary_external_subtitle_track_id
-                loaded_track_id, subtitle_path = self._load_external_subtitle(subtitle, secondary=True)
-                self.video.apply_secondary_subtitle_mode("track", track_id=loaded_track_id)
-                self._secondary_subtitle_preference = SecondarySubtitlePreference(mode="external")
-                self._secondary_external_subtitle_selection = ExternalSubtitleSelection(
-                    source=subtitle.source,
-                    option_url=subtitle.url,
-                    option_name=subtitle.name,
-                    option_lang=subtitle.lang,
-                    option_format=subtitle.format,
+                self._start_external_subtitle_fetch(
+                    subtitle,
+                    secondary=True,
+                    purpose="secondary",
+                    previous_track_id=self._secondary_external_subtitle_track_id,
                 )
-                self._secondary_external_subtitle_track_id = loaded_track_id
-                self._secondary_external_subtitle_path = subtitle_path
-                if previous_track_id != loaded_track_id:
-                    self._remove_external_subtitle_track(previous_track_id)
                 return
             track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
             if track is None:
@@ -11068,13 +11062,190 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         response = httpx.get(subtitle.url, headers=headers, timeout=10.0, follow_redirects=True)
         return str(getattr(response, "text", "") or "")
 
-    def _load_external_subtitle(
+    def _start_external_subtitle_fetch(
         self,
         subtitle: ExternalSubtitleOption,
         *,
         secondary: bool,
+        purpose: str,
+        previous_track_id: int | None = None,
+    ) -> None:
+        self._external_subtitle_fetch_counter += 1
+        token = self._external_subtitle_fetch_counter
+        request = _ExternalSubtitleFetchRequest(
+            token=token,
+            subtitle=subtitle,
+            secondary=secondary,
+            purpose=purpose,
+            previous_track_id=previous_track_id,
+        )
+        if secondary:
+            self._secondary_external_subtitle_fetch = request
+        else:
+            self._primary_external_subtitle_fetch = request
+
+        def run_fetch() -> None:
+            try:
+                text = self._fetch_external_subtitle_text(subtitle)
+            except Exception as exc:
+                message = str(exc) or type(exc).__name__
+                self._external_subtitle_fetch_signals.failed.emit(token, subtitle, message)
+                return
+            self._external_subtitle_fetch_signals.succeeded.emit(token, subtitle, text)
+
+        threading.Thread(target=run_fetch, daemon=True, name="external-subtitle-fetch").start()
+
+    def _take_external_subtitle_fetch_request(
+        self,
+        token: int,
+        subtitle: ExternalSubtitleOption,
+    ) -> _ExternalSubtitleFetchRequest | None:
+        primary_request = self._primary_external_subtitle_fetch
+        if primary_request is not None and primary_request.token == token:
+            if primary_request.subtitle is subtitle:
+                self._primary_external_subtitle_fetch = None
+                return primary_request
+        secondary_request = self._secondary_external_subtitle_fetch
+        if secondary_request is not None and secondary_request.token == token:
+            if secondary_request.subtitle is subtitle:
+                self._secondary_external_subtitle_fetch = None
+                return secondary_request
+        return None
+
+    def _handle_external_subtitle_fetch_succeeded(
+        self,
+        token: int,
+        subtitle: ExternalSubtitleOption,
+        text: str,
+    ) -> None:
+        request = self._take_external_subtitle_fetch_request(token, subtitle)
+        if request is None:
+            return
+        if request.purpose == "primary-manual":
+            self._finish_primary_external_subtitle_manual_load(request, text)
+        elif request.purpose == "secondary":
+            self._finish_secondary_external_subtitle_load(request, text)
+        else:
+            self._finish_primary_external_subtitle_auto_load(request, text)
+
+    def _handle_external_subtitle_fetch_failed(
+        self,
+        token: int,
+        subtitle: ExternalSubtitleOption,
+        message: str,
+    ) -> None:
+        request = self._take_external_subtitle_fetch_request(token, subtitle)
+        if request is None:
+            return
+        if request.purpose == "secondary":
+            self._append_log(f"次字幕切换失败: {message}")
+            return
+        if request.purpose == "primary-manual":
+            self._append_log(f"字幕切换失败: {message}")
+            return
+        self._append_log(f"字幕切换失败: {message}")
+        self._clear_primary_external_subtitle()
+        if request.purpose == "primary-retry":
+            self._sync_subtitle_combo_for_current_state()
+
+    def _finish_primary_external_subtitle_manual_load(
+        self,
+        request: _ExternalSubtitleFetchRequest,
+        text: str,
+    ) -> None:
+        subtitle = request.subtitle
+        try:
+            loaded_track_id, subtitle_path = self._load_external_subtitle_from_text(
+                subtitle,
+                text,
+                secondary=False,
+            )
+        except Exception as exc:
+            self._append_log(f"字幕切换失败: {exc}")
+            return
+        self._subtitle_preference = SubtitlePreference(mode="external")
+        self._primary_external_subtitle_selection = ExternalSubtitleSelection(
+            source=subtitle.source,
+            option_url=subtitle.url,
+            option_name=subtitle.name,
+            option_lang=subtitle.lang,
+            option_format=subtitle.format,
+        )
+        self._primary_external_subtitle_track_id = loaded_track_id
+        self._primary_external_subtitle_path = subtitle_path
+        if request.previous_track_id != loaded_track_id:
+            self._remove_external_subtitle_track(request.previous_track_id)
+        try:
+            self._mark_manual_subtitle_switch_refresh()
+            self._apply_primary_external_subtitle_track(loaded_track_id)
+        except Exception as exc:
+            self._append_log(f"字幕切换失败: {exc}")
+
+    def _finish_primary_external_subtitle_auto_load(
+        self,
+        request: _ExternalSubtitleFetchRequest,
+        text: str,
+    ) -> None:
+        try:
+            loaded_track_id, subtitle_path = self._load_external_subtitle_from_text(
+                request.subtitle,
+                text,
+                secondary=False,
+            )
+        except Exception as exc:
+            if self._should_retry_primary_external_subtitle_apply(exc):
+                self._schedule_primary_external_subtitle_retry()
+            else:
+                self._stop_primary_external_subtitle_retry()
+                self._append_log(f"字幕切换失败: {exc}")
+            return
+        self._primary_external_subtitle_track_id = loaded_track_id
+        self._primary_external_subtitle_path = subtitle_path
+        if loaded_track_id is None:
+            self._schedule_primary_external_subtitle_retry_for_pending_track()
+            return
+        if not self._apply_primary_external_subtitle_track(loaded_track_id):
+            return
+        if request.purpose == "primary-retry":
+            self._sync_subtitle_combo_for_current_state()
+        else:
+            self._sync_subtitle_combo_without_tracks()
+
+    def _finish_secondary_external_subtitle_load(
+        self,
+        request: _ExternalSubtitleFetchRequest,
+        text: str,
+    ) -> None:
+        subtitle = request.subtitle
+        try:
+            loaded_track_id, subtitle_path = self._load_external_subtitle_from_text(
+                subtitle,
+                text,
+                secondary=True,
+            )
+            self.video.apply_secondary_subtitle_mode("track", track_id=loaded_track_id)
+            self._secondary_subtitle_preference = SecondarySubtitlePreference(mode="external")
+            self._secondary_external_subtitle_selection = ExternalSubtitleSelection(
+                source=subtitle.source,
+                option_url=subtitle.url,
+                option_name=subtitle.name,
+                option_lang=subtitle.lang,
+                option_format=subtitle.format,
+            )
+            self._secondary_external_subtitle_track_id = loaded_track_id
+            self._secondary_external_subtitle_path = subtitle_path
+            if request.previous_track_id != loaded_track_id:
+                self._remove_external_subtitle_track(request.previous_track_id)
+        except Exception as exc:
+            self._append_log(f"次字幕切换失败: {exc}")
+
+    def _load_external_subtitle_from_text(
+        self,
+        subtitle: ExternalSubtitleOption,
+        text: str,
+        *,
+        secondary: bool,
     ) -> tuple[int | None, Path]:
-        text = self._fetch_external_subtitle_text(subtitle)
         if not text.strip():
             raise ValueError("字幕内容为空")
         self._validate_external_subtitle_text(subtitle, text)

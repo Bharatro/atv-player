@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import BoundedSemaphore
 from typing import cast
 
 from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, Signal
@@ -37,6 +36,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import (
     FlatComboBox,
@@ -234,7 +234,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._categories_request_id = 0
         self._items_request_id = 0
         self._poster_generation = 0
-        self._poster_semaphore = BoundedSemaphore(value=6)
+        self._poster_semaphore = poster_load_slot()
         self._signals = _PosterGridSignals()
         self._connect_async_signal(self._signals.categories_loaded, self._handle_categories_loaded)
         self._connect_async_signal(self._signals.items_loaded, self._handle_items_loaded)
@@ -669,6 +669,10 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         QTimer.singleShot(0, self._relayout_cards)
 
     def _relayout_cards(self) -> None:
+        columns = self._column_count_for_width(self.cards_scroll.viewport().width())
+        if columns == self._current_card_columns:
+            if self.cards_layout.count() == len(self.card_buttons):
+                return
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item is None:
@@ -676,7 +680,6 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             widget = cast(QWidget | None, item.widget())
             if widget is not None:
                 self.cards_layout.removeWidget(widget)
-        columns = self._column_count_for_width(self.cards_scroll.viewport().width())
         self._current_card_columns = columns
         for index, button in enumerate(self.card_buttons):
             self.cards_layout.addWidget(button, index // columns, index % columns)

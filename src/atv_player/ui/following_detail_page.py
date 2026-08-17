@@ -53,6 +53,7 @@ from atv_player.ui.poster_loader import (
     load_local_poster_image,
     load_remote_poster_image,
     normalize_poster_url,
+    poster_load_slot,
 )
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -111,11 +112,12 @@ class FollowingEpisodePreviewDialog(ThemedDialogBase):
             target_size = QSize(320, 180)
 
         def load() -> None:
-            image = load_local_poster_image(self.episode.still, target_size)
-            if image is None:
-                image = load_remote_poster_image(image_url, target_size)
-            if image is not None:
-                self._image_loaded.emit(self.still_label, image)
+            with poster_load_slot():
+                image = load_local_poster_image(self.episode.still, target_size)
+                if image is None:
+                    image = load_remote_poster_image(image_url, target_size)
+                if image is not None:
+                    self._image_loaded.emit(self.still_label, image)
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -1120,11 +1122,12 @@ class FollowingDetailPage(QWidget, AsyncGuardMixin):
             target_size = QSize(max(1, label.width()), max(1, label.height()))
 
         def load() -> None:
-            image = load_local_poster_image(source, target_size)
-            if image is None:
-                image = load_remote_poster_image(image_url, target_size)
-            if image is not None and self._can_deliver_async_result():
-                self.image_loaded.emit(label, image)
+            with poster_load_slot():
+                image = load_local_poster_image(source, target_size)
+                if image is None:
+                    image = load_remote_poster_image(image_url, target_size)
+                if image is not None and self._can_deliver_async_result():
+                    self.image_loaded.emit(label, image)
 
         threading.Thread(target=load, daemon=True).start()
 

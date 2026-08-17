@@ -21,7 +21,12 @@ from PySide6.QtWidgets import (
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.following_search_dialog import FollowingSearchDialog
 from atv_player.ui.poster_grid_page import _FlowLayout
-from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+    poster_load_slot,
+)
 from atv_player.ui.theme import FlatComboBox, build_search_line_edit_qss, current_tokens
 
 
@@ -270,11 +275,12 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         target_size = QSize(card.poster_label.width(), card.poster_label.height())
 
         def load() -> None:
-            image = load_local_poster_image(poster_source, target_size)
-            if image is None:
-                image = load_remote_poster_image(image_url, target_size)
-            if image is not None and self._can_deliver_async_result():
-                self.poster_loaded.emit(card, image)
+            with poster_load_slot():
+                image = load_local_poster_image(poster_source, target_size)
+                if image is None:
+                    image = load_remote_poster_image(image_url, target_size)
+                if image is not None and self._can_deliver_async_result():
+                    self.poster_loaded.emit(card, image)
 
         threading.Thread(target=load, daemon=True).start()
 
