@@ -21,6 +21,10 @@ from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from atv_player.models import AppConfig
+from atv_player.player.mpv_library import (
+    custom_mpv_library_diagnostics,
+    prepare_custom_mpv_library,
+)
 from atv_player.player.ytdlp_runtime import (
     resolve_mpv_ytdl_raw_options,
     resolve_mpv_ytdlp_path,
@@ -446,6 +450,7 @@ class MpvWidget(QWidget):
             "candidate_mpv_dlls": _existing_windows_mpv_dll_candidates(),
             "loaded_mpv_dlls": _loaded_windows_mpv_dll_paths(),
         }
+        diagnostics.update(custom_mpv_library_diagnostics())
         if mpv_module is not None:
             diagnostics["mpv_module_file"] = str(getattr(mpv_module, "__file__", "") or "")
             diagnostics["mpv_module_name"] = str(getattr(mpv_module, "__name__", "") or "")
@@ -487,6 +492,7 @@ class MpvWidget(QWidget):
         )
 
     def _create_player(self):
+        prepare_custom_mpv_library()
         if sys.platform.startswith("win"):
             self._log_windows_mpv_runtime_diagnostics("before-import")
         try:

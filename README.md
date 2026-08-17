@@ -286,3 +286,12 @@ GitHub Actions 会为 Pull Request 和手动触发构建 Linux、macOS、Windows
 | `ATV_MPV_RUNTIME_DIR` | Windows 打包时指定 mpv 运行库目录 |
 | `ATV_YTDLP_PATH` | 指定系统 `yt-dlp` 可执行文件路径；留空时从 PATH 查找 |
 | `ATV_YTDLP_COOKIES_FROM_BROWSER` | 为 `yt-dlp` 指定浏览器 Cookie 来源，例如 `chrome`、`edge`、`firefox`；高级设置中的 YouTube Cookie 会优先用于应用内解析 |
+
+## 自定义 libmpv
+
+应用内置的 `libmpv` 在个别机器上可能无法加载（例如老 CPU 不满足新版构建的指令集要求）。此时把一份可用的 libmpv 放到以下任一目录（按优先级），应用启动时会优先加载它，无需替换应用目录里的内置文件：
+
+1. 用户目录下的 `mpv` 目录，例如 `~/mpv/libmpv-2.dll`
+2. 应用目录下的 `lib` 子目录，例如 `<应用目录>/lib/libmpv-2.dll`
+
+目录内按 `libmpv-2.dll`、`mpv-2.dll`、`mpv.dll` 的顺序查找（Linux/macOS 对应 `libmpv.so`、`libmpv.so.2`、`libmpv.dylib`）。若文件加载失败，应用会在日志中记录原因并回退到内置 libmpv。
