@@ -58,6 +58,7 @@ class AppConfig:
     playback_auto_switch_source_on_failure: bool = False
     bilibili_grouped_playlist_tree_enabled: bool = False
     m3u_proxy_segment_prefetch_size: int = 2
+    m3u8_ad_filter_mode: str = "smart"
     episode_title_enhancement_enabled: bool = True
     disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
     danmaku_blocked_words: list[str] = field(default_factory=list)

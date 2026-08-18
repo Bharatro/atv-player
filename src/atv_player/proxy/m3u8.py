@@ -4,7 +4,11 @@ from dataclasses import dataclass
 import re
 from urllib.parse import quote, urljoin, urlparse, urlunparse
 
-from atv_player.proxy.adblock import is_ad_segment
+from atv_player.proxy.ad_filter import (
+    MODE_MARKERS,
+    filter_segments,
+    parse_media_playlist,
+)
 from atv_player.proxy.session import PlaylistSegment, ProxySessionRegistry
 
 _URI_ATTR_RE = re.compile(r'URI="([^"]+)"')
@@ -23,6 +27,7 @@ def rewrite_playlist(
     content: str,
     session_registry: ProxySessionRegistry,
     proxy_base_url: str,
+    ad_filter_mode: str = MODE_MARKERS,
 ) -> RewrittenPlaylist:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     session = session_registry.get(token)
@@ -40,32 +45,46 @@ def rewrite_playlist(
             output.append(f"{proxy_base_url}/m3u/{quote(child_token, safe='')}")
         return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=True)
 
-    output: list[str] = []
-    pending_duration: float | None = None
-    segment_index = 0
+    parsed = parse_media_playlist(
+        lines, lambda uri: _resolve_playlist_uri(playlist_url, uri)
+    )
     # AES-128(等)加密播放列表: 分片是密文, 不能交给 stripper 做 TS 同步"修复"
     # (会在密文里误判 0x47 同步字节并截断, 破坏 16 字节对齐导致解密失败)。
-    session.media_encrypted = any(line.startswith("#EXT-X-KEY") for line in lines)
-    for line in lines:
-        if line.startswith("#EXTINF:"):
-            pending_duration = float(line.split(":", 1)[1].split(",", 1)[0])
-            output.append(line)
+    session.media_encrypted = parsed.has_key_tags
+    result = filter_segments(parsed, ad_filter_mode, playlist_url)
+
+    output = [
+        _rewrite_tag_uris(line, token, playlist_url, proxy_base_url)
+        for line in parsed.header_lines
+    ]
+    segment_index = 0
+    previous_block: int | None = None
+    for segment, keep in zip(parsed.segments, result.kept, strict=True):
+        if not keep:
             continue
-        if line.startswith("#"):
-            output.append(_rewrite_tag_uris(line, token, playlist_url, proxy_base_url))
-            continue
-        absolute_url = _resolve_playlist_uri(playlist_url, line)
-        if is_ad_segment(pending_duration, absolute_url):
-            if output and output[-1].startswith("#EXTINF:"):
-                output.pop()
-            pending_duration = None
-            continue
+        # 按分块变化重建 DISCONTINUITY: 被清空的广告块边界自动坍缩, 首尾不输出
+        if previous_block is not None and segment.block_index != previous_block:
+            output.append("#EXT-X-DISCONTINUITY")
+        previous_block = segment.block_index
+        output.extend(
+            _rewrite_tag_uris(tag, token, playlist_url, proxy_base_url)
+            for tag in segment.tags
+        )
+        if segment.extinf_line is not None:
+            output.append(segment.extinf_line)
         new_segments.append(
-            PlaylistSegment(index=segment_index, url=absolute_url, duration=pending_duration)
+            PlaylistSegment(
+                index=segment_index,
+                url=segment.absolute_url,
+                duration=segment.duration,
+            )
         )
         output.append(f"{proxy_base_url}/seg?v={quote(token)}&i={segment_index}")
         segment_index += 1
-        pending_duration = None
+    output.extend(
+        _rewrite_tag_uris(line, token, playlist_url, proxy_base_url)
+        for line in parsed.trailing_lines
+    )
     session.segments = new_segments
     return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=False)
 

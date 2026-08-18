@@ -48,6 +48,32 @@ def test_settings_repository_normalizes_invalid_danmaku_cleaning(tmp_path: Path)
     assert loaded.danmaku_duplicate_window_minutes == 60
 
 
+def test_settings_repository_round_trips_m3u8_ad_filter_mode(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.m3u8_ad_filter_mode == "smart"
+
+    config.m3u8_ad_filter_mode = "markers"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.m3u8_ad_filter_mode == "markers"
+
+
+def test_settings_repository_normalizes_invalid_m3u8_ad_filter_mode(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE app_config SET m3u8_ad_filter_mode = ? WHERE id = 1",
+            ("bogus",),
+        )
+
+    loaded = repo.load_config()
+
+    assert loaded.m3u8_ad_filter_mode == "smart"
+
+
 def test_settings_repository_creates_stable_app_identity(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
 

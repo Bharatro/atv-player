@@ -328,6 +328,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_default_readahead_edit.setPlaceholderText("1 - 600")
         self.m3u_proxy_segment_prefetch_size_edit = QLineEdit()
         self.m3u_proxy_segment_prefetch_size_edit.setPlaceholderText("0 - 10")
+        self.m3u8_ad_filter_mode_combo = FlatComboBox()
+        self.m3u8_ad_filter_mode_combo.addItem("智能过滤（推荐）", "smart")
+        self.m3u8_ad_filter_mode_combo.addItem("仅URL标记", "markers")
+        self.m3u8_ad_filter_mode_combo.addItem("关闭", "off")
         self.mpv_extra_options_edit = QPlainTextEdit()
         self.mpv_extra_options_edit.setPlaceholderText("一行一个 key=value，例如 cache-pause-wait=8")
         self.playback_scope_label = QLabel(
@@ -479,6 +483,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.mpv_network_timeout_edit.setText(str(config.mpv_network_timeout_seconds))
         self.mpv_default_readahead_edit.setText(str(config.mpv_default_readahead_secs))
         self.m3u_proxy_segment_prefetch_size_edit.setText(str(config.m3u_proxy_segment_prefetch_size))
+        self.m3u8_ad_filter_mode_combo.setCurrentIndex(
+            max(0, self.m3u8_ad_filter_mode_combo.findData(config.m3u8_ad_filter_mode))
+        )
         self.mpv_extra_options_edit.setPlainText(config.mpv_extra_options)
 
         appearance_layout = QFormLayout()
@@ -598,6 +605,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
         playback_layout.addRow("普通流预读时长", self.mpv_default_readahead_edit)
         playback_layout.addRow("m3u代理分片预取大小", self.m3u_proxy_segment_prefetch_size_edit)
+        playback_layout.addRow("m3u8广告过滤", self.m3u8_ad_filter_mode_combo)
         playback_layout.addRow("更多 MPV 配置", self.mpv_extra_options_edit)
         playback_layout.addRow("说明", self.playback_scope_label)
         self.playback_group.setLayout(playback_layout)
@@ -1224,7 +1232,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return browser, int(max_height), video_codec, subtitle_lang, audio_lang, metadata_language, region
 
-    def _validated_playback_values(self) -> tuple[bool, bool, int, str, int, int, int, str] | None:
+    def _validated_playback_values(self) -> tuple[bool, bool, int, str, int, int, int, str, str] | None:
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
             try:
                 value = int(text.strip())
@@ -1305,6 +1313,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             timeout,
             readahead,
             prefetch_size,
+            self.m3u8_ad_filter_mode_combo.currentData(),
             "\n".join(normalized_lines),
         )
 
@@ -1498,6 +1507,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.mpv_network_timeout_seconds,
             self._config.mpv_default_readahead_secs,
             self._config.m3u_proxy_segment_prefetch_size,
+            self._config.m3u8_ad_filter_mode,
             self._config.mpv_extra_options,
         ) = playback_values
         self._save_config()

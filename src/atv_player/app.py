@@ -489,6 +489,7 @@ class AppCoordinator(QObject):
                 get=self._proxy_http_get(),
                 stream=self._proxy_http_stream(),
                 segment_prefetch_size=initial_config.m3u_proxy_segment_prefetch_size,
+                ad_filter_mode=initial_config.m3u8_ad_filter_mode,
             ),
             get=self._proxy_http_get(),
         )
@@ -569,6 +570,9 @@ class AppCoordinator(QObject):
         update_segment_prefetch_size = getattr(proxy_server, "set_segment_prefetch_size", None)
         if callable(update_segment_prefetch_size):
             update_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size)
+        update_ad_filter_mode = getattr(proxy_server, "set_ad_filter_mode", None)
+        if callable(update_ad_filter_mode):
+            update_ad_filter_mode(config.m3u8_ad_filter_mode)
 
     def _save_shared_config(self, config: AppConfig) -> None:
         self._apply_runtime_config(config)

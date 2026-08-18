@@ -386,6 +386,14 @@ def _normalize_m3u_proxy_segment_prefetch_size(value: object) -> int:
     return max(0, min(normalized, 10))
 
 
+_VALID_M3U8_AD_FILTER_MODES = {"off", "markers", "smart"}
+
+
+def _normalize_m3u8_ad_filter_mode(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in _VALID_M3U8_AD_FILTER_MODES else "smart"
+
+
 def _normalize_following_episode_display_mode(value: object) -> str:
     text = str(value or "").strip().lower()
     return text if text in _VALID_FOLLOWING_EPISODE_DISPLAY_MODES else "poster"
@@ -505,6 +513,7 @@ class SettingsRepository:
                     playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
                     bilibili_grouped_playlist_tree_enabled INTEGER NOT NULL DEFAULT 0,
                     m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
+                    m3u8_ad_filter_mode TEXT NOT NULL DEFAULT 'smart',
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -749,6 +758,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2"
                 )
+            if "m3u8_ad_filter_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN m3u8_ad_filter_mode TEXT NOT NULL DEFAULT 'smart'"
+                )
             if "last_active_window" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_active_window TEXT NOT NULL DEFAULT 'main'"
@@ -978,6 +991,7 @@ class SettingsRepository:
                     playback_auto_switch_source_on_failure,
                     bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
+                    m3u8_ad_filter_mode,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -1026,7 +1040,7 @@ class SettingsRepository:
                     home_mode
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, 'smart', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
                 )
@@ -1128,6 +1142,7 @@ class SettingsRepository:
                     playback_auto_switch_source_on_failure,
                     bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
+                    m3u8_ad_filter_mode,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -1229,6 +1244,7 @@ class SettingsRepository:
             playback_auto_switch_source_on_failure,
             bilibili_grouped_playlist_tree_enabled,
             m3u_proxy_segment_prefetch_size,
+            m3u8_ad_filter_mode,
             last_path,
             last_active_window,
             last_playback_source,
@@ -1349,6 +1365,7 @@ class SettingsRepository:
             m3u_proxy_segment_prefetch_size=_normalize_m3u_proxy_segment_prefetch_size(
                 m3u_proxy_segment_prefetch_size
             ),
+            m3u8_ad_filter_mode=_normalize_m3u8_ad_filter_mode(m3u8_ad_filter_mode),
             last_path=last_path,
             last_active_window=last_active_window,
             last_playback_source=last_playback_source,
@@ -1467,6 +1484,7 @@ class SettingsRepository:
                     playback_auto_switch_source_on_failure = ?,
                     bilibili_grouped_playlist_tree_enabled = ?,
                     m3u_proxy_segment_prefetch_size = ?,
+                    m3u8_ad_filter_mode = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -1587,6 +1605,7 @@ class SettingsRepository:
                     int(config.playback_auto_switch_source_on_failure),
                     int(config.bilibili_grouped_playlist_tree_enabled),
                     _normalize_m3u_proxy_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size),
+                    _normalize_m3u8_ad_filter_mode(config.m3u8_ad_filter_mode),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

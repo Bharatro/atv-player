@@ -22,6 +22,7 @@ from atv_player.player.bluray_iso import (
     read_iso_stream_range,
     read_iso_stream_range_from_source,
 )
+from atv_player.proxy.ad_filter import MODE_MARKERS
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
@@ -377,6 +378,7 @@ class LocalHlsProxyServer:
         get=httpx.get,
         stream=_default_stream,
         segment_prefetch_size: int = 2,
+        ad_filter_mode: str = MODE_MARKERS,
     ) -> None:
         self.host = host
         self.port = port
@@ -384,6 +386,7 @@ class LocalHlsProxyServer:
         self._get = get
         self._stream = stream
         self._registry = ProxySessionRegistry()
+        self._ad_filter_mode = ad_filter_mode
         self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -419,6 +422,9 @@ class LocalHlsProxyServer:
 
     def set_segment_prefetch_size(self, segment_prefetch_size: int) -> None:
         self._segment_proxy.set_segment_prefetch_size(segment_prefetch_size)
+
+    def set_ad_filter_mode(self, ad_filter_mode: str) -> None:
+        self._ad_filter_mode = ad_filter_mode
 
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
@@ -964,6 +970,7 @@ class LocalHlsProxyServer:
                     content=response.text,
                     session_registry=self._registry,
                     proxy_base_url=f"http://{self.host}:{self.port}",
+                    ad_filter_mode=self._ad_filter_mode,
                 )
                 session.cached_playlist_text = rewritten.text
                 return 200, [("Content-Type", "application/vnd.apple.mpegurl")], rewritten.text.encode("utf-8")
