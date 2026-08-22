@@ -1655,6 +1655,7 @@ class FakeMetadataBindingRepository:
         self.load_calls: list[tuple[str, str]] = []
         self.bindings_by_key = {}
         self.binding = None
+        self.redirects: dict[tuple[str, str], tuple[str, str]] = {}
 
     def load(self, title, year):
         self.load_calls.append((title, year))
@@ -1665,6 +1666,24 @@ class FakeMetadataBindingRepository:
 
     def save(self, title, year, *, provider, provider_id, matched_title="", matched_year="") -> None:
         self.saved.append((title, year, provider, provider_id, matched_title, matched_year))
+
+    def save_query_redirect(self, title, year, redirect_title, redirect_year="") -> None:
+        redirect_title = str(redirect_title or "").strip()
+        if not redirect_title:
+            return
+        self.saved.append(
+            (
+                title,
+                year,
+                "__query_redirect__",
+                redirect_title,
+                redirect_title,
+                str(redirect_year or "").strip(),
+            )
+        )
+
+    def load_query_redirect(self, title, year):
+        return self.redirects.get((str(title or "").strip(), str(year or "").strip()))
 
     def delete(self, title, year) -> None:
         self.deleted.append((title, year))
@@ -2178,7 +2197,202 @@ def test_player_window_metadata_scrape_apply_saves_binding_under_original_query_
 
     qtbot.waitUntil(lambda: "豆瓣简介" in window.metadata_view.toPlainText(), timeout=1000)
     assert service.apply_calls == [("黑袍纠察队", "movie:1")]
-    assert bindings.saved == [("黑袍纠察队第五季", "2026", "tmdb", "movie:1", "深空彼岸", "2026")]
+    # 原始查询 key 仍是主绑定；刮削后标题另存一条别名绑定，供历史重开时按
+    # 历史 vod_name（已被改写成刮削标题）查询命中。
+    assert bindings.saved == [
+        ("黑袍纠察队第五季", "2026", "tmdb", "movie:1", "深空彼岸", "2026"),
+        ("黑袍纠察队", "2026", "tmdb", "movie:1", "深空彼岸", "2026"),
+    ]
+
+
+def test_player_window_metadata_scrape_alias_binding_covers_drive_history_reopen_and_reset(qtbot) -> None:
+    # 网盘资源打开时 media_title 是分享卡片标题；播放中刮削把 vod_name 改写成正确
+    # 标题并上报进播放历史，历史重开会用该标题覆盖 media_title。绑定必须同时存在
+    # 于原始标题与刮削后标题两个 key 下，重开才能命中；重置时两条都要清理。
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="等不到说我爱你（82集）崔秀子＆蒋文琦", vod_content="原始简介"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="https://media.example/1.mp4",
+                media_title="等不到说我爱你（82集）崔秀子＆蒋文琦",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    # 自动水合先把 vod_name 更正为干净标题，随后手动刮削以该标题应用
+    window.session.vod = VodItem(vod_id="v1", vod_name="等不到说我爱你", vod_content="自动简介")
+    window._open_metadata_scrape_dialog()
+    window._rerun_metadata_scrape_search()
+    qtbot.waitUntil(lambda: window._metadata_scrape_result_list.count() == 1, timeout=1000)
+
+    window._apply_selected_metadata_scrape_result()
+
+    qtbot.waitUntil(lambda: "已绑定手动刮削结果" in window.log_view.toPlainText(), timeout=1000)
+    assert bindings.saved == [
+        ("等不到说我爱你（82集）崔秀子＆蒋文琦", "", "tmdb", "movie:1", "深空彼岸", "2026"),
+        ("等不到说我爱你", "", "tmdb", "movie:1", "深空彼岸", "2026"),
+    ]
+
+    window._reset_metadata_scrape_state()
+
+    qtbot.waitUntil(lambda: "已重置元数据缓存与手动绑定" in window.log_view.toPlainText(), timeout=1000)
+    assert ("等不到说我爱你（82集）崔秀子＆蒋文琦", "") in bindings.deleted
+    assert ("等不到说我爱你", "") in bindings.deleted
+
+
+def test_player_window_metadata_scrape_reset_persists_manual_query_as_redirect(qtbot) -> None:
+    # "自动刮削"按手输的修正标题重跑自动水合；修正需持久化为查询重定向，否则重开
+    # 会话后按混淆目录名（如网盘目录 "X 心动的XH9"）搜索又找不到元数据。
+    service = FakeMetadataScrapeService()
+    bindings = FakeMetadataBindingRepository()
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+        playlist=[
+            PlayItem(
+                title="2026.08.18-第3期下",
+                url="https://media.example/1.mp4",
+                media_title="X 心动的XH9",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_scrape_service=service,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(session)
+    window._open_metadata_scrape_dialog()
+    window._metadata_scrape_title_edit.setText("心动的信号 第九季")
+
+    window._reset_metadata_scrape_state()
+
+    redirect_saves = [row for row in bindings.saved if row[2] == "__query_redirect__"]
+    assert redirect_saves == [
+        ("X 心动的XH9", "", "__query_redirect__", "心动的信号 第九季", "心动的信号 第九季", "")
+    ]
+    assert window._metadata_hydration_override_title == "心动的信号 第九季"
+
+
+def test_player_window_danmaku_source_dialog_recomputes_empty_episode(qtbot) -> None:
+    # 网盘替换播放列表等前置流程可能把集数留空且已带候选：对话框打开时兜底重算
+    # 默认集数，保证集数框有值、后续搜索带上集数锚点。
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.resolve_calls: list[tuple[PlayItem, list[PlayItem] | None]] = []
+
+        def resolve_default_danmaku_search_episode(self, item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
+            self.resolve_calls.append((item, playlist))
+            return "20260818 第3期下"
+
+    controller = FakeDanmakuController()
+    item = PlayItem(
+        title="2026.08.18-第3期下",
+        url="https://media.example/1.mp4",
+        media_title="X 心动的XH9",
+        danmaku_search_title="X 心动的XH9",
+        danmaku_search_episode="",
+        danmaku_candidates=[
+            DanmakuSourceGroup(provider="tencent", provider_label="腾讯", options=[])
+        ],
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_episode_edit.text() == "20260818 第3期下"
+    assert item.danmaku_search_query == "X 心动的XH9 20260818 第3期下"
+
+
+def test_player_window_open_session_seeds_danmaku_title_from_query_redirect(qtbot) -> None:
+    # 弹幕搜索用混淆目录名（"X 心动的XH9"）什么都搜不到：打开会话时把查询重
+    # 定向记录的修正标题预填到 danmaku_search_title，自动搜索与弹幕源对话框都
+    # 直接使用修正标题；偏好/手动设置过的其它标题不被覆盖。
+    bindings = FakeMetadataBindingRepository()
+    bindings.redirects[("X 心动的XH9", "")] = ("心动的信号 第九季", "")
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+        playlist=[
+            PlayItem(
+                title="2026.08.18-第3期下",
+                url="https://media.example/1.mp4",
+                media_title="X 心动的XH9",
+                danmaku_search_title="X 心动的XH9",
+            ),
+            PlayItem(
+                title="2026.08.18-第3期上",
+                url="https://media.example/2.mp4",
+                media_title="X 心动的XH9",
+                danmaku_search_title="用户手动指定",
+                danmaku_search_query_overridden=True,
+            ),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_binding_repository=bindings,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session.playlist[0].danmaku_search_title == "心动的信号 第九季"
+    assert window.session.playlist[1].danmaku_search_title == "用户手动指定"
+
+
+def test_player_window_rerun_episode_title_enhancement_forces_refresh(qtbot) -> None:
+    # 右键菜单"重写剧集标题"手动触发：忽略 episode_titles_hydrated 与已保存的
+    # 标题缓存（episode_titles_force_refresh），重新执行增强器。
+    enhancer_calls: list[bool] = []
+
+    def enhancer(current_session) -> list[PlayItem] | None:
+        enhancer_calls.append(bool(current_session.episode_titles_force_refresh))
+        current_session.episode_titles_force_refresh = False
+        return None
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+        playlist=[PlayItem(title="2026.08.18-第3期下", url="https://media.example/1.mp4")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        episode_title_enhancer=enhancer,
+        episode_titles_hydrated=True,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._rerun_episode_title_enhancement()
+
+    qtbot.waitUntil(lambda: bool(enhancer_calls), timeout=2000)
+    assert enhancer_calls == [True]
+    assert window.session.episode_titles_hydrated is True
 
 
 def test_player_window_metadata_scrape_apply_ignores_inflight_auto_hydration_result(qtbot) -> None:
@@ -6792,6 +7006,57 @@ def test_player_window_auto_advance_loads_next_drive_subdirectory(qtbot) -> None
     assert window.current_index == 0
     assert [item.title for item in window.session.playlist] == ["02.mp4"]
     assert window.video.load_calls[-1][0] == "http://baidu/2.mp4"
+
+
+def test_player_window_switch_drive_group_reanchors_metadata_scrape_binding_title(qtbot) -> None:
+    # 网盘合集里每个目录是一部剧：切到某目录后再刮削，绑定应挂在"重开该目录时
+    # 用于查询的标题"（目录清洗名）下，而不是打开合集时的分享标题。
+    first_dir = [
+        PlayItem(
+            title="01.mp4",
+            url="http://baidu/1.mp4",
+            play_source="等不到说我爱你（82集）崔秀子",
+            media_title="等不到说我爱你（82集）崔秀子",
+        )
+    ]
+    second_dir: list[PlayItem] = []
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="等不到说我爱你（82集）崔秀子"),
+        playlist=first_dir,
+        playlists=[first_dir, second_dir],
+        source_groups=[
+            PlaybackSourceGroup(
+                label="等不到说我爱你（82集）崔秀子",
+                sources=[PlaybackSource(label="等不到说我爱你（82集）崔秀子", playlist=first_dir)],
+            ),
+            PlaybackSourceGroup(
+                label="凡人修仙传（126集）",
+                sources=[PlaybackSource(label="凡人修仙传（126集）", playlist=second_dir)],
+                drive_dir_id="dir-2",
+            ),
+        ],
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        drive_resource_id="resource-1",
+        drive_files_loader=lambda resource_id, dir_id: [
+            {"name": "S01E126.mp4", "url": "http://atb/p/token/1@185535", "path": "/凡人修仙传/S01E126.mp4"}
+        ],
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    assert window._metadata_scrape_binding_title == "等不到说我爱你（82集）崔秀子"
+
+    window._change_playlist_group(1)
+
+    assert window.session is not None
+    assert window.session.source_group_index == 1
+    assert window._metadata_scrape_binding_title == "凡人修仙传"
 
 
 def test_player_window_auto_advance_loads_next_nested_drive_subdirectory(qtbot) -> None:
@@ -12743,6 +13008,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "画面调节",
         "弹幕配置",
         "刮削",
+        "重写剧集标题",
         "搜索字幕",
         "弹幕源",
         "弹幕设置",
@@ -13625,6 +13891,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "画面调节",
         "弹幕配置",
         "刮削",
+        "重写剧集标题",
         "搜索字幕",
         "弹幕源",
         "弹幕设置",

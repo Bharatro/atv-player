@@ -40,6 +40,18 @@ def bilibili_season_binding_title(season_id: object) -> str:
     return f"bilibili:season:{text}" if text.isdigit() else ""
 
 
+# 特殊 provider 标记：行不是元数据绑定，而是"查询重定向"——用户在刮削对话框点
+# "自动刮削"时手动修正过查询标题，重开会话后自动水合按原始标题查不到，需要先
+# 重定向到修正后的标题再搜索。
+QUERY_REDIRECT_PROVIDER = "__query_redirect__"
+
+
+def is_query_redirect_binding(binding: MetadataBinding | None) -> bool:
+    if binding is None:
+        return False
+    return str(binding.provider or "") == QUERY_REDIRECT_PROVIDER
+
+
 @dataclass(slots=True)
 class MetadataBinding:
     normalized_title: str
@@ -110,6 +122,28 @@ class MetadataBindingRepository:
         if row is None:
             return None
         return MetadataBinding(*row)
+
+    def save_query_redirect(self, title: object, year: object, redirect_title: object, redirect_year: object = "") -> None:
+        normalized_redirect = str(redirect_title or "").strip()
+        if not normalized_redirect:
+            return
+        self.save(
+            title,
+            year,
+            provider=QUERY_REDIRECT_PROVIDER,
+            provider_id=normalized_redirect,
+            matched_title=normalized_redirect,
+            matched_year=redirect_year,
+        )
+
+    def load_query_redirect(self, title: object, year: object) -> tuple[str, str] | None:
+        binding = self.load(title, year)
+        if not is_query_redirect_binding(binding):
+            return None
+        redirect_title = str(binding.provider_id or "").strip()
+        if not redirect_title:
+            return None
+        return redirect_title, str(binding.matched_year or "").strip()
 
     def save(
         self,

@@ -86,6 +86,8 @@ class PlayerSession:
     metadata_hydrated: bool = False
     episode_title_enhancer: Callable[[object], list[PlayItem] | None] | None = None
     episode_titles_hydrated: bool = False
+    # 手动"重写剧集标题"时置位：跳过已保存的标题缓存，强制重新搜索
+    episode_titles_force_refresh: bool = False
     original_vod: VodItem | None = None
     show_original_metadata: bool = False
     current_metadata_poster_index: int = 0

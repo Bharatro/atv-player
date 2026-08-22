@@ -77,7 +77,10 @@ from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_e
 from atv_player.subtitles.cache import save_subtitle_file
 from atv_player.subtitles.service import build_subtitle_query
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
-from atv_player.metadata.bindings import bilibili_season_binding_title
+from atv_player.metadata.bindings import (
+    bilibili_season_binding_title,
+    normalize_metadata_binding_title,
+)
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.dialog_cache import (
     MetadataScrapeDialogState,
@@ -700,6 +703,7 @@ class _MetadataScrapeApplyResult:
     previous_vod: VodItem
     updated_playlist: list[PlayItem] | None = None
     binding_key: tuple[str, str] | None = None
+    alias_binding_key: tuple[str, str] | None = None
     episode_title_error: str = ""
     binding_error: str = ""
 
@@ -975,6 +979,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_default_year = ""
         self._metadata_scrape_binding_title = ""
         self._metadata_scrape_binding_year = ""
+        self._metadata_scrape_alias_binding_key: tuple[str, str] | None = None
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
         self._metadata_scrape_saved_year = ""
@@ -3499,6 +3504,45 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._restore_video_cursor()
 
+    def _apply_metadata_query_redirects_to_danmaku_titles(self, session) -> None:
+        """用手动修正过的查询重定向预填弹幕搜索标题。
+
+        网盘混淆目录名（如"X 心动的XH9"）作为弹幕搜索标题什么都搜不到；查询重
+        定向行记录了用户在刮削对话框修正过的真实剧名，预填到 danmaku_search_title
+        让自动搜索和弹幕源对话框直接用修正标题。"""
+        repo = getattr(session, "metadata_binding_repository", None)
+        load_redirect = getattr(repo, "load_query_redirect", None)
+        if not callable(load_redirect):
+            return
+        year = str(getattr(session.vod, "vod_year", "") or "").strip()
+        redirected_by_title: dict[str, str] = {}
+        playlists = list(session.playlists or []) or [session.playlist]
+        for playlist in playlists:
+            for item in playlist:
+                if item.danmaku_search_query_overridden:
+                    continue
+                base_title = str(item.media_title or "").strip() or str(session.vod.vod_name or "").strip()
+                if not base_title:
+                    continue
+                if base_title not in redirected_by_title:
+                    try:
+                        redirect = load_redirect(base_title, year)
+                    except Exception:
+                        redirect = None
+                    redirected_by_title[base_title] = redirect[0] if redirect else ""
+                redirect_title = redirected_by_title[base_title]
+                if not redirect_title:
+                    continue
+                current = str(item.danmaku_search_title or "").strip()
+                if (
+                    current
+                    and current != redirect_title
+                    and normalize_metadata_scrape_title(current) != normalize_metadata_scrape_title(base_title)
+                ):
+                    # 已有偏好/手动设置的其它标题，不覆盖
+                    continue
+                item.danmaku_search_title = redirect_title
+
     def open_session(self, session, start_paused: bool = False) -> None:
         self._pending_file_loaded_danmaku_item = None
         self._reset_auto_switched_failure_sources()
@@ -3533,6 +3577,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session.current_metadata_poster_index = 0
         self._metadata_scrape_binding_title = str(getattr(initial_item, "media_title", "") or session.vod.vod_name or "").strip()
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
+        self._metadata_scrape_alias_binding_key = None
+        self._apply_metadata_query_redirects_to_danmaku_titles(session)
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
         self._metadata_scrape_saved_year = ""
@@ -5677,6 +5723,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _rerun_episode_title_enhancement(self) -> None:
+        """手动触发一次剧集标题增强（右键菜单"重写剧集标题"）。
+
+        忽略上次保存的标题缓存，强制按当前（可能已被刮削/重定向修正过的）标题重新
+        搜索官方分集标题。"""
+        if self.session is None:
+            return
+        if self.session.episode_title_enhancer is None:
+            self._append_log("当前来源不支持剧集标题增强")
+            return
+        self._episode_title_request_id += 1
+        self.session.episode_titles_hydrated = False
+        self.session.episode_titles_force_refresh = True
+        self._append_log("重新搜索分集标题...")
+        self._start_episode_title_enhancement()
+
     def _start_episode_title_enhancement(self) -> None:
         if self.session is None or self.session.episode_title_enhancer is None or self.session.episode_titles_hydrated:
             return
@@ -6173,6 +6235,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._save_config()
         self._apply_visibility_state()
 
+    def _reanchor_metadata_scrape_binding_for_drive_group(
+        self,
+        group,
+        playlist: list,
+    ) -> None:
+        # 网盘合集里每个目录是一部剧；切到某目录后再刮削时，绑定应挂在"重新打开该
+        # 目录时用于查询的标题"（目录清洗名）上，而不是打开合集时的分享/卡片标题，
+        # 否则重开后按目录标题查询会 miss。已加载分组的 media_title 若被元数据改写
+        # （等于当前 vod_name），保持原锚点，避免把绑定挂到刮削后的标题上。
+        session = self.session
+        if session is None or not str(getattr(session, "drive_resource_id", "") or "").strip():
+            return
+        title = ""
+        if str(getattr(group, "drive_dir_id", "") or "").strip():
+            title = clean_drive_directory_title(getattr(group, "label", ""))
+        elif playlist:
+            media_title = str(playlist[0].media_title or "").strip()
+            vod_name = str(session.vod.vod_name or "").strip()
+            if media_title and media_title != vod_name:
+                title = media_title
+        title = title.strip()
+        current_anchor = self._metadata_scrape_binding_title
+        if not title or normalize_metadata_binding_title(title) == normalize_metadata_binding_title(current_anchor):
+            return
+        self._metadata_scrape_binding_title = title
+
     def _switch_active_source(
         self,
         source_group_index: int,
@@ -6224,6 +6312,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.session.source_index = source_index
         self.session.playlist_index = mapping[(source_group_index, source_index)]
         self.session.playlist = target_playlist
+        self._reanchor_metadata_scrape_binding_for_drive_group(
+            active_group,
+            target_playlist,
+        )
         self._playlist_sort_state.apply(target_playlist)
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
@@ -6313,6 +6405,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             target = subgroup.sources[0].playlist
             if target:
                 self._switch_active_playlist(target, subgroup.label)
+                self._reanchor_metadata_scrape_binding_for_drive_group(subgroup, target)
         self._render_playlist_source_combos()
 
     def _ensure_drive_subgroup_loaded(self, subgroup: PlaybackSourceGroup) -> None:
@@ -9045,6 +9138,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
         menu.addAction("刮削", self._open_metadata_scrape_dialog)
+        menu.addAction("重写剧集标题", self._rerun_episode_title_enhancement)
         menu.addAction("搜索字幕", self._open_subtitle_search_dialog)
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
@@ -9824,7 +9918,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._remember_metadata_scrape_query_state()
         binding_title = self._metadata_scrape_binding_title or str(self.session.vod.vod_name or "").strip()
-        binding_year = self._metadata_scrape_binding_year or str(self.session.vod.vod_year or "").strip()
+        # 与保存侧一致：年份取锚点快照，不用当前 vod_year（刮削应用后已被改写）。
+        binding_year = str(self._metadata_scrape_binding_year or "").strip()
         if binding_title.startswith("bilibili:season:"):
             binding_year = ""
         bound_provider = ""
@@ -9878,6 +9973,29 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             season_binding_title, season_binding_year = self._bilibili_season_binding_key()
             if season_binding_title and (season_binding_title, season_binding_year) != (binding_title, binding_year):
                 bindings.delete(season_binding_title, season_binding_year)
+            if self._metadata_scrape_alias_binding_key:
+                alias_title, alias_year = self._metadata_scrape_alias_binding_key
+                bindings.delete(alias_title, alias_year)
+            self._metadata_scrape_alias_binding_key = None
+        # "自动刮削"用手动修正过的查询重跑自动水合：把修正持久化为查询重定向，重开
+        # 会话后自动水合先跳到修正标题，否则混淆的网盘目录名每次都从零搜索且搜不到。
+        default_title = str(self._metadata_scrape_default_title or "").strip()
+        default_year = str(self._metadata_scrape_default_year or "").strip()
+        query_corrected = bool(reset_title) and bool(default_title) and (
+            reset_title != default_title or (reset_year != default_year and bool(reset_year))
+        )
+        if (
+            query_corrected
+            and bindings is not None
+            and hasattr(bindings, "save_query_redirect")
+            and not binding_title.startswith("bilibili:season:")
+        ):
+            bindings.save_query_redirect(
+                binding_title,
+                binding_year,
+                reset_title,
+                reset_year,
+            )
         self._restore_original_metadata_for_reset()
         self._reset_metadata_scrape_search_query()
         self._metadata_hydration_override_title = reset_title
@@ -9915,15 +10033,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         selected_category = self._metadata_scrape_selected_category_name()
         bindings = self.session.metadata_binding_repository
         binding_key = None
+        alias_binding_key: tuple[str, str] | None = None
         if bindings is not None and hasattr(bindings, "save"):
             binding_title = self._metadata_scrape_binding_title or str(previous_vod.vod_name or "").strip()
-            binding_year = self._metadata_scrape_binding_year or str(previous_vod.vod_year or "").strip()
+            # 年份用打开会话时的锚点快照（即重开时重新解析会返回的年份），不用
+            # previous_vod 的当前值——自动水合可能已把 vod_year 改成元数据年份，
+            # 保存/查询两侧 key 会错位。
+            binding_year = str(self._metadata_scrape_binding_year or "").strip()
             season_binding_title, season_binding_year = self._bilibili_season_binding_key()
             save_title = season_binding_title or binding_title
             save_year = season_binding_year if season_binding_title else binding_year
             binding_key = (save_title, save_year)
 
         def run() -> None:
+            nonlocal alias_binding_key
             try:
                 updated_vod = service.apply(previous_vod, candidate)
                 if selected_category:
@@ -9986,6 +10109,37 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     )
                 except Exception as exc:
                     binding_error = str(exc)
+                # 播放中 vod_name 会变成刮削后的标题并写入播放历史，历史重开时
+                # media_title 被历史标题覆盖，查询 key 就不再是原始标题了。按刮削后
+                # 的标题额外存一条别名绑定，让"按历史重开"也能命中手动刮削结果。
+                alias_title = str(updated_vod.vod_name or "").strip()
+                alias_differs = (
+                    normalize_metadata_binding_title(alias_title)
+                    != normalize_metadata_binding_title(save_title)
+                )
+                if (
+                    not binding_error
+                    and alias_title
+                    and alias_differs
+                    and not save_title.startswith("bilibili:season:")
+                ):
+                    try:
+                        bindings.save(
+                            alias_title,
+                            save_year,
+                            provider=getattr(candidate, "provider", ""),
+                            provider_id=getattr(candidate, "provider_id", ""),
+                            matched_title=getattr(candidate, "title", ""),
+                            matched_year=getattr(candidate, "year", ""),
+                        )
+                        alias_binding_key = (alias_title, save_year)
+                    except Exception as exc:
+                        logger.warning(
+                            "Metadata scrape alias binding save failed title=%s",
+                            alias_title,
+                            exc_info=exc,
+                            extra={"log_category": "metadata", "log_source": "app"},
+                        )
             if self._is_window_alive():
                 self._metadata_scrape_signals.apply_succeeded.emit(
                     request_id,
@@ -9995,6 +10149,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         previous_vod=previous_vod,
                         updated_playlist=updated_playlist,
                         binding_key=binding_key,
+                        alias_binding_key=alias_binding_key,
                         episode_title_error=episode_title_error,
                         binding_error=binding_error,
                     ),
@@ -10039,6 +10194,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             save_title, save_year = result.binding_key
             self._metadata_scrape_binding_title = save_title
             self._metadata_scrape_binding_year = save_year
+            self._metadata_scrape_alias_binding_key = result.alias_binding_key
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()
@@ -10268,6 +10424,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and hasattr(self.session.danmaku_controller, "load_cached_danmaku_sources")
         ):
             loaded_cached_sources = bool(self.session.danmaku_controller.load_cached_danmaku_sources(current_item))
+        if (
+            not current_item.danmaku_search_query_overridden
+            and not str(current_item.danmaku_search_episode or "").strip()
+            and self.session is not None
+            and self.session.danmaku_controller is not None
+        ):
+            # 前置流程可能把集数留空（如网盘替换播放列表）；已有候选时不走缓存加载，
+            # 这里兜底重算默认集数，保证搜索带上集数锚点。
+            resolve_episode = getattr(
+                self.session.danmaku_controller,
+                "resolve_default_danmaku_search_episode",
+                None,
+            )
+            if callable(resolve_episode):
+                try:
+                    episode = str(
+                        resolve_episode(current_item, self.session.playlist) or ""
+                    ).strip()
+                except Exception:
+                    episode = ""
+                if episode:
+                    current_item.danmaku_search_episode = episode
+                    search_title = str(current_item.danmaku_search_title or "").strip()
+                    if search_title:
+                        current_item.danmaku_search_query = " ".join(
+                            part for part in (search_title, episode) if part
+                        ).strip()
         dialog = self._ensure_danmaku_source_dialog()
         if self._danmaku_source_title_edit is not None:
             self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)

@@ -6678,7 +6678,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.danmaku_controller is None
             and self._danmaku_controller_factory is not None
-            and request.source_kind in {"telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
         ):
             request.danmaku_controller = self._danmaku_controller_factory(
                 request=request,

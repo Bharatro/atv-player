@@ -1988,6 +1988,23 @@ def test_search_danmu_falls_back_to_other_when_builtin_and_douban_miss() -> None
     assert results[0].url == "https://v.qq.com/x/cover/xyz/abc.html"
 
 
+def test_search_danmu_skips_other_fallback_for_drive_share_links() -> None:
+    from atv_player.danmaku.providers.other import OtherDanmakuProvider
+
+    other = OtherDanmakuProvider(get=lambda *a, **k: None, server="https://dmku.hls.one/")
+    service = DanmakuService(
+        {"tencent": _EmptySearchTencent()},
+        provider_order=["tencent"],
+        douban_discovery=_EmptyDiscovery(),
+        other_provider=other,
+    )
+
+    # 回归：网盘分享链接不是播放页，弹幕库没有按它索引的弹幕；合成 other 候选只会
+    # 产生必败下载并把结果污染进源搜索缓存（"爱是愤怒 9794集" 循环失败）。
+    assert service.search_danmu("爱是愤怒 9794集", "https://pan.baidu.com/s/1ZuAV-E16fxFHXPpExkkHpw?pwd=9527") == []
+    assert service.search_danmu("冷门剧", "https://pan.quark.cn/s/abc123") == []
+
+
 def test_resolve_danmu_routes_to_other_when_selected() -> None:
     from atv_player.danmaku.models import DanmakuSourceOption
     from atv_player.danmaku.providers.other import OtherDanmakuProvider

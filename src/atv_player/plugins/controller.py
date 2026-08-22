@@ -38,11 +38,14 @@ from atv_player.danmaku.utils import (
     has_explicit_episode_marker,
     has_variety_issue_marker,
     infer_playlist_episode_number,
+    is_other_fallback_only_result,
+    is_stale_other_fallback_result,
     is_variety_collection,
     match_provider,
     normalize_name,
     strip_episode_suffix,
 )
+from atv_player.drive_links import DRIVE_SHARE_DOMAINS, looks_like_drive_share_link
 from atv_player.controllers.browse_controller import _map_vod_item, build_drive_grouped_sources
 from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.douban_controller import _coerce_category_id
@@ -244,8 +247,17 @@ def _should_omit_default_episode_label(item: PlayItem, playlist: list[PlayItem] 
 
 
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
-    if has_variety_issue_marker(item.title) or is_variety_collection(item.type_name, item.category_name):
-        return extract_variety_episode_label(item.title)
+    variety_marker_in_filename = has_variety_issue_marker(item.title)
+    if variety_marker_in_filename or is_variety_collection(item.type_name, item.category_name):
+        variety_label = extract_variety_episode_label(item.title)
+        if variety_label:
+            return variety_label
+        if variety_marker_in_filename:
+            # 文件名只有花絮提示词（纯享/加更/直拍…）而无期号/日期：按播放位置推集数
+            # 会指错期，保持标题-only 搜索。
+            return ""
+        # 分类为综艺但集名是常规命名（"第N集"、数字集名）：回退到常规集数解析，
+        # 否则集数为空会让弹幕搜索退化为纯标题查询，候选被时长过滤清空。
     if _looks_like_calendar_episode_title(item.title):
         return _strip_trailing_title_size_suffix(item.title)
     if _should_omit_default_episode_label(item, playlist):
@@ -497,27 +509,7 @@ def _normalize_headers(raw_headers) -> dict[str, str]:
     return {}
 
 
-_SUPPORTED_DRIVE_DOMAINS = (
-    "alipan.com",
-    "aliyundrive.com",
-    "mypikpak.com",
-    "xunlei.com",
-    "123pan.com",
-    "123pan.cn",
-    "123684.com",
-    "123865.com",
-    "123912.com",
-    "123592.com",
-    "quark.cn",
-    "139.com",
-    "uc.cn",
-    "115.com",
-    "115cdn.com",
-    "anxia.com",
-    "189.cn",
-    "baidu.com",
-    "guangyapan.com",
-)
+_SUPPORTED_DRIVE_DOMAINS = DRIVE_SHARE_DOMAINS
 
 _DRIVE_PROVIDER_LABELS = {
     "alipan.com": "阿里",
@@ -543,14 +535,7 @@ _DRIVE_PROVIDER_LABELS = {
 
 
 def _looks_like_drive_share_link(value: str) -> bool:
-    candidate = value.strip()
-    url = candidate.lower()
-    if not url.startswith(("http://", "https://")):
-        return False
-    if url.endswith((".m3u8", ".mkv", ".mp4", ".flv")):
-        return False
-    hostname = (urlparse(candidate).hostname or "").lower()
-    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
+    return looks_like_drive_share_link(value)
 
 
 def _detect_drive_provider_label(value: str) -> str:
@@ -1547,6 +1532,18 @@ class SpiderPluginController:
     ) -> str:
         return item.danmaku_search_episode.strip() or _extract_episode_label(item, playlist).strip()
 
+    def resolve_default_danmaku_search_episode(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> str:
+        """Dialog-facing recompute of the default episode label.
+
+        前置流程（网盘替换播放列表、自动搜索等）可能把集数留空；弹幕源对话框打开
+        时用它兜底重算，保证集数框有值、搜索带集数锚点。
+        """
+        return _extract_episode_label(item, playlist).strip()
+
     def _save_danmaku_search_title_preference(self, item: PlayItem) -> None:
         if self._danmaku_preference_store is None or not item.danmaku_series_key:
             return
@@ -1982,7 +1979,7 @@ class SpiderPluginController:
             if inflight_search is not None and owns_inflight_search:
                 inflight_search.event.set()
                 self._release_inflight_danmaku_source_search(inflight_search_key, inflight_search)
-        if not provider_filter:
+        if not provider_filter and not is_other_fallback_only_result(result):
             for cache_query_name in _danmaku_cache_query_names(item, requested_query_name, playlist):
                 _save_cached_danmaku_source_search_result_variants(cache_query_name, reg_src, result)
         self._apply_danmaku_source_search_result(item, result)
@@ -2091,6 +2088,9 @@ class SpiderPluginController:
         cached_result = _load_cached_danmaku_source_search_result_variants(query_name, reg_src)
         if cached_result is None:
             cached_result = _load_series_level_cached_danmaku_source_result(item, reg_src)
+        if cached_result is not None and is_stale_other_fallback_result(cached_result, reg_src):
+            # 历史污染条目：other 兜底候选指向别的 reg_src，直接弃用，走新搜索。
+            cached_result = None
         logger.info(
             "Spider plugin load cached danmaku sources plugin=%s title=%s query=%s reg_src=%s cache_hit=%s",
             self._plugin_name,

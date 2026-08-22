@@ -159,6 +159,30 @@ def test_generic_danmaku_controller_delegates_episode_offset(tmp_path: Path) -> 
     assert item.danmaku_offset_seconds == -2.5
 
 
+def test_generic_danmaku_default_episode_label_falls_back_for_variety_collection() -> None:
+    # 综艺合集按"第N集"命名（无期号/完整日期）时，集数标签要回退到常规集数解析，
+    # 否则弹幕源对话框填不出集数、搜索退化为纯标题查询。
+    playlist = [
+        PlayItem(
+            title=f"第{index:02d}集",
+            url=f"https://media.example/{index}.m3u8",
+            media_title="奔跑吧",
+            type_name="综艺",
+            index=index - 1,
+        )
+        for index in range(1, 4)
+    ]
+
+    assert generic_danmaku_module._default_episode_label(playlist[0], playlist) == "1集"
+
+
+def test_generic_danmaku_default_episode_label_keeps_hint_only_variety_without_episode() -> None:
+    item = PlayItem(title="纯享版", url="https://media.example/1.m3u8", media_title="奔跑吧", type_name="综艺")
+    playlist = [item, PlayItem(title="第2期", url="https://media.example/2.m3u8", media_title="奔跑吧", type_name="综艺")]
+
+    assert generic_danmaku_module._default_episode_label(item, playlist) == ""
+
+
 def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episode(monkeypatch, tmp_path: Path) -> None:
     class RecordingDanmakuService:
         def __init__(self) -> None:
@@ -517,3 +541,85 @@ def test_generic_danmaku_controller_switch_emits_log_events(monkeypatch, tmp_pat
         "弹幕下载中: 腾讯 - 成何体统 第1集",
         "弹幕下载成功: 1 条弹幕",
     ]
+
+
+def test_generic_danmaku_controller_skips_caching_other_fallback_only_result(monkeypatch) -> None:
+    class OtherFallbackService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del name, reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="other",
+                        provider_label="other",
+                        options=[DanmakuSourceOption(provider="other", name="冷门剧 1集", url="https://v.qq.com/x/cover/xyz/abc.html")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/x/cover/xyz/abc.html",
+                default_provider="other",
+            )
+
+    saved: list[str] = []
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "save_cached_danmaku_source_search_result",
+        lambda name, reg_src, result: saved.append(name),
+    )
+    controller = GenericDanmakuController(OtherFallbackService())
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="item-1", media_title="冷门剧", index=0)
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    # 纯 other 兜底结果不写共享缓存，但当前条目仍可兜底展示候选。
+    assert saved == []
+    assert [group.provider for group in item.danmaku_candidates] == ["other"]
+
+
+def test_generic_danmaku_controller_rejects_stale_other_fallback_cache(monkeypatch) -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    poisoned = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="other",
+                provider_label="other",
+                options=[DanmakuSourceOption(provider="other", name="冷门剧 1集", url="https://pan.baidu.com/s/1ZuAV?pwd=9527")],
+            )
+        ],
+        default_option_url="https://pan.baidu.com/s/1ZuAV?pwd=9527",
+        default_provider="other",
+    )
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_source_search_result", lambda *_args: poisoned)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_source_search_result", lambda *_args: None)
+    service = RecordingService()
+    controller = GenericDanmakuController(service)
+    item = PlayItem(title="第1集", url="https://media.example/1.m3u8", vod_id="item-1", media_title="冷门剧", index=0)
+
+    controller.refresh_danmaku_sources(item, playlist=[item])
+
+    # 历史污染缓存（other 候选指向别的 reg_src）被拒用，回退到新搜索。
+    assert service.search_calls == ["冷门剧 1集", "冷门剧"]

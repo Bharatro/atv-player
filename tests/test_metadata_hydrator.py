@@ -594,6 +594,62 @@ def test_metadata_hydrator_cleans_noisy_current_item_media_title_for_query(tmp_p
     assert updated.vod_content == "豆瓣简介"
 
 
+def test_metadata_hydrator_applies_saved_query_redirect(tmp_path: Path) -> None:
+    # 网盘目录名常被混淆（"X 心动的XH9"）搜不到元数据；用户在刮削对话框点"自动
+    # 刮削"修正查询后，重定向持久化在绑定表，重开自动水合先跳到修正标题再搜索。
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "bindings.db")
+    bindings.save_query_redirect("X 心动的XH9", "", "心动的信号 第九季", "2026")
+    provider = FakeProvider(
+        "local_douban",
+        matches=[MetadataMatch(provider="local_douban", provider_id="36514978", title="心动的信号 第九季")],
+        record=MetadataRecord(
+            provider="local_douban",
+            provider_id="36514978",
+            title="心动的信号 第九季",
+            year="2026",
+            overview="综艺简介",
+        ),
+    )
+    hydrator = MetadataHydrator(cache=cache, providers=[provider], binding_repository=bindings)
+
+    updated = hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+            source_kind="telegram",
+            current_item=PlayItem(
+                title="2026.08.18-第3期下",
+                url="https://media.example/1.m3u8",
+                media_title="X 心动的XH9",
+            ),
+        )
+    )
+
+    assert provider.search_queries[0].title == "心动的信号 第九季"
+    assert provider.search_queries[0].year == "2026"
+    assert updated.vod_name == "心动的信号 第九季"
+    assert updated.vod_content == "综艺简介"
+
+
+def test_metadata_hydrator_keeps_query_redirect_row_without_real_binding(tmp_path: Path) -> None:
+    # 重定向行不是元数据绑定：没有真实 provider 绑定时不能被当作失效绑定删除。
+    cache = MetadataCache(tmp_path)
+    bindings = MetadataBindingRepository(tmp_path / "bindings.db")
+    bindings.save_query_redirect("X 心动的XH9", "", "心动的信号 第九季", "")
+    provider = FakeProvider("local_douban", matches=[])
+    hydrator = MetadataHydrator(cache=cache, providers=[provider], binding_repository=bindings)
+
+    hydrator.hydrate(
+        MetadataContext(
+            vod=VodItem(vod_id="v1", vod_name="X 心动的XH9"),
+            source_kind="telegram",
+            current_item=PlayItem(title="第3期下", url="https://media.example/1.m3u8", media_title="X 心动的XH9"),
+        )
+    )
+
+    assert bindings.load_query_redirect("X 心动的XH9", "") == ("心动的信号 第九季", "")
+
+
 def test_metadata_hydrator_displays_cleaned_quality_suffix_title_after_enrichment(tmp_path: Path) -> None:
     cache = MetadataCache(tmp_path)
     provider = FakeProvider(

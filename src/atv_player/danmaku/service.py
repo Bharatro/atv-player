@@ -47,6 +47,7 @@ from atv_player.danmaku.discovery.bangumi_data import BangumiDataDiscovery
 from atv_player.danmaku.discovery.douban import DoubanDiscovery, vendor_to_page_url
 from atv_player.danmaku.processing import clean_records
 from atv_player.danmaku.providers.other import OtherDanmakuProvider
+from atv_player.drive_links import looks_like_drive_share_link
 
 
 logger = logging.getLogger(__name__)
@@ -649,6 +650,9 @@ class DanmakuService:
             elif (
                 "other" in self._providers
                 and reg_src.startswith("http")
+                # 网盘分享链接不是播放页，弹幕库不可能有按它索引的弹幕，
+                # 合成该候选只会产生必败下载并污染源搜索缓存。
+                and not looks_like_drive_share_link(reg_src)
                 and not provider_filter
             ):
                 results = [

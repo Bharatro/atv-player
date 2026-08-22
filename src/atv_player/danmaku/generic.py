@@ -28,6 +28,8 @@ from atv_player.danmaku.utils import (
     has_explicit_episode_marker,
     has_variety_issue_marker,
     infer_playlist_episode_number,
+    is_other_fallback_only_result,
+    is_stale_other_fallback_result,
     is_variety_collection,
 )
 from atv_player.models import PlayItem
@@ -65,8 +67,18 @@ def _default_episode_label(item: PlayItem, playlist: list[PlayItem] | None = Non
     title = str(item.title or "").strip()
     if not title:
         return ""
-    if has_variety_issue_marker(title) or is_variety_collection(item.type_name, item.category_name):
-        return extract_variety_episode_label(title)
+    variety_marker_in_filename = has_variety_issue_marker(title)
+    variety_collection = is_variety_collection(item.type_name, item.category_name)
+    if variety_marker_in_filename or variety_collection:
+        variety_label = extract_variety_episode_label(title)
+        if variety_label:
+            return variety_label
+        if variety_marker_in_filename:
+            # 文件名只有花絮提示词（纯享/加更/直拍…）而无期号/日期：按播放位置推
+            # 集数会指错期，保持标题-only 搜索。
+            return ""
+        # 分类为综艺但集名是常规命名（"第N集"、数字集名）：回退到常规集数解析，
+        # 保证弹幕搜索带上集数锚点。
     episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
@@ -146,6 +158,14 @@ class GenericDanmakuController:
     def _search_episode(self, item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
         return item.danmaku_search_episode.strip() or _default_episode_label(item, playlist).strip()
 
+    def resolve_default_danmaku_search_episode(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+    ) -> str:
+        """Dialog-facing recompute of the default episode label (see plugin controller)."""
+        return _default_episode_label(item, playlist).strip()
+
     def _search_query(self, item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
         if item.danmaku_search_query_overridden and item.danmaku_search_query.strip():
             return item.danmaku_search_query.strip()
@@ -169,9 +189,12 @@ class GenericDanmakuController:
 
     def _load_source_search_result(self, query_name: str, reg_src: str) -> DanmakuSourceSearchResult | None:
         cached = load_cached_danmaku_source_search_result(query_name, reg_src)
-        if cached is not None or not reg_src:
-            return cached
-        return load_cached_danmaku_source_search_result(query_name, "")
+        if cached is None and reg_src:
+            cached = load_cached_danmaku_source_search_result(query_name, "")
+        if cached is not None and is_stale_other_fallback_result(cached, reg_src):
+            # 历史污染条目：other 兜底候选指向别的 reg_src，直接弃用，走新搜索。
+            return None
+        return cached
 
     def _apply_source_search_result(self, item: PlayItem, result: DanmakuSourceSearchResult) -> None:
         item.danmaku_candidates = result.groups
@@ -327,7 +350,7 @@ class GenericDanmakuController:
                 reg_src=reg_src,
                 media_duration_seconds=media_duration_seconds,
             )
-        if not provider_filter:
+        if not provider_filter and not is_other_fallback_only_result(result):
             self._save_source_search_result(query_name, reg_src, result)
         self._apply_source_search_result(item, result)
         candidate_count = sum(len(group.options) for group in item.danmaku_candidates)

@@ -8,7 +8,10 @@ from urllib.parse import urlparse
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.async_runner import run_provider_detail, run_provider_searches
 from atv_player.metadata.base import MetadataProvider
-from atv_player.metadata.bindings import bilibili_season_binding_title
+from atv_player.metadata.bindings import (
+    bilibili_season_binding_title,
+    is_query_redirect_binding,
+)
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
 from atv_player.metadata.matching import is_confident_match, normalize_match_title, score_match, strip_match_season_suffix
@@ -463,16 +466,22 @@ class MetadataHydrator:
             season_binding_title = bilibili_season_binding_title(_bilibili_season_id_from_vod(context.vod))
             if season_binding_title:
                 binding = self._binding_repository.load(season_binding_title, "")
+                if is_query_redirect_binding(binding):
+                    binding = None
                 if binding is not None:
                     binding_key = (season_binding_title, "")
         if binding is None:
             binding = self._binding_repository.load(query.title, query.year)
+            if is_query_redirect_binding(binding):
+                binding = None
             if binding is not None:
                 binding_key = (query.title, query.year)
         if binding is None and query.source_kind == "bilibili" and not str(query.year or "").strip():
             load_by_title = getattr(self._binding_repository, "load_by_title", None)
             if callable(load_by_title):
                 binding = load_by_title(query.title)
+                if is_query_redirect_binding(binding):
+                    binding = None
                 if binding is not None:
                     binding_key = (binding.normalized_title, binding.normalized_year)
         if binding is None:
@@ -633,9 +642,36 @@ class MetadataHydrator:
             category_name=str(vod.category_name or "").strip() or query.category_name,
         )
 
+    def _apply_saved_query_redirect(self, query):
+        # 用户在刮削对话框点"自动刮削"修正过查询标题时，会存一条查询重定向；自动
+        # 水合按原始标题（如网盘混淆目录名）搜不到任何东西，先跳到修正后的标题。
+        if self._binding_repository is None:
+            return query
+        load_redirect = getattr(self._binding_repository, "load_query_redirect", None)
+        if not callable(load_redirect):
+            return query
+        redirect_title = str(query.title or "").strip()
+        if not redirect_title:
+            return query
+        try:
+            redirect = load_redirect(query.title, query.year)
+        except Exception:
+            return query
+        if redirect is None:
+            return query
+        new_title, new_year = redirect
+        new_title = str(new_title or "").strip()
+        new_year = str(new_year or "").strip()
+        if not new_title:
+            return query
+        if new_title == redirect_title and new_year == str(query.year or "").strip():
+            return query
+        return replace(query, title=new_title, year=new_year or query.year)
+
     def hydrate(self, context: MetadataContext) -> VodItem:
         vod = replace(context.vod)
         query = self._prepare_search_query(context, context.to_query())
+        query = self._apply_saved_query_redirect(query)
         bound_record = self._load_bound_record(context, query)
         if bound_record is not None:
             merge_metadata_record(vod, bound_record, provider_priority=[item.name for item in self._providers])

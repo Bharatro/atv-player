@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QTimer
 
 logger = logging.getLogger(__name__)
 
-# 多端播放记录同步:周期性 PUSH 本地 Tier-B 记录 + PULL 服务端变更。
+# 多端播放记录同步:周期性 PUSH 本地有播放进度的 Tier-B 记录 + PULL 服务端变更。
 # 本服务覆盖本地播放历史；TvBox 站点 key 与 atv-player source_kind 在边界处互转。
 # 鉴权复用 ApiClient 的 session 令牌(Authorization),服务端 resolveUid 解析为 uid。
 INITIAL_DELAY_MS = 30_000
@@ -236,7 +236,9 @@ class PlaybackHistorySyncService(QObject):
             [
                 record
                 for record in self._repo.list_histories()
-                if record.source_kind in SYNC_SOURCE_KINDS
+                # 仅本地创建、但尚未实际播放的记录(position=0)不应写入服务端。
+                # 保留在本地后，首次产生进度时会因 updated_at 变化正常被 PUSH。
+                if record.source_kind in SYNC_SOURCE_KINDS and int(record.position or 0) > 0
             ],
             key=lambda record: int(record.create_time or 0),
             reverse=True,

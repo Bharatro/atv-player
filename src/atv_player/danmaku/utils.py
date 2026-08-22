@@ -6,7 +6,7 @@ from html import escape
 from typing import Sequence
 from urllib.parse import urlparse
 
-from atv_player.danmaku.models import DanmakuRecord
+from atv_player.danmaku.models import DanmakuRecord, DanmakuSourceSearchResult
 from atv_player.models import PlayItem
 
 _NOISE_PATTERNS = (
@@ -277,6 +277,35 @@ def _path_basename(value: str) -> str:
     return re.split(r"[\\/]", text)[-1]
 
 
+_MEDIA_FILE_BASENAME_RE = re.compile(
+    r"\.(?:mkv|mp4|avi|mov|m4v|ts|flv|mpg|mpeg|wmv|webm|rmvb)$",
+    re.IGNORECASE,
+)
+_WEB_PAGE_BASENAME_RE = re.compile(r"\.(?:html?|php|asp|aspx|jsp)(?:[?#].*)?$", re.IGNORECASE)
+# 至少两字母的 scheme（"site:"、"https:"），单字母的 "C:" 是 Windows 盘符，不算。
+_SCHEME_LIKE_PATH_RE = re.compile(r"^[a-zA-Z]{2,}[a-zA-Z0-9+.\-]*:")
+
+
+def _episode_path_basename(value: str) -> str:
+    """取 path 的 basename 作为集数来源，先排除不可能携带集数的值。
+
+    网盘占位条目用站点详情 ID 充当 path（如 ``site:duoduo:/index.php/vod/detail/id/9794.html``），
+    其 basename 里的数字是页面编号而非集数；网页扩展名、scheme 形式的路径一律不作数，
+    只有媒体文件名的 basename（含直链 URL 里的）才可信。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    basename = _path_basename(text)
+    if not basename:
+        return ""
+    if _MEDIA_FILE_BASENAME_RE.search(basename):
+        return basename
+    if _WEB_PAGE_BASENAME_RE.search(basename) or _SCHEME_LIKE_PATH_RE.match(text):
+        return ""
+    return basename
+
+
 def _episode_number_from_candidate(name: str) -> int | None:
     technical_filename = _looks_like_technical_media_filename(name)
     direct = extract_episode_number(name)
@@ -287,7 +316,7 @@ def _episode_number_from_candidate(name: str) -> int | None:
 
 def _play_item_episode_number(item: PlayItem) -> int | None:
     candidates: list[str] = []
-    for value in (item.original_title, item.title, _path_basename(item.path)):
+    for value in (item.original_title, item.title, _episode_path_basename(item.path)):
         candidate = str(value or "").strip()
         if not candidate or candidate in candidates:
             continue
@@ -375,6 +404,32 @@ def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[Pla
         if seq_like >= max(1, len(aligned) // 2):
             return current_index + 1 if current_index >= 0 else None
     return current_index + 1 if current_index >= 0 else None
+
+
+def _result_other_option_urls(result: DanmakuSourceSearchResult) -> list[str]:
+    return [option.url for group in result.groups for option in group.options]
+
+
+def is_other_fallback_only_result(result: DanmakuSourceSearchResult) -> bool:
+    """搜索结果是否只含 other 兜底合成的候选。
+
+    ``DanmakuService.search_danmu`` 在内置源与豆瓣发现全部落空、且 reg_src 是
+    http 链接时，会把 reg_src 本身伪装成一个 "other" 候选。这类结果可以给当前
+    条目兜底展示，但不能写入共享的源搜索缓存——标题级缓存对纯标题查询一律放行，
+    必败候选会把后续新搜索挡到缓存过期为止。
+    """
+    urls = _result_other_option_urls(result)
+    if not urls or not result.groups:
+        return False
+    return all(group.provider == "other" for group in result.groups)
+
+
+def is_stale_other_fallback_result(result: DanmakuSourceSearchResult, reg_src: str) -> bool:
+    """缓存里的 other-only 结果是否不属于当前 reg_src（历史污染条目）。"""
+    if not is_other_fallback_only_result(result):
+        return False
+    normalized = str(reg_src or "").strip()
+    return any(url.strip() != normalized for url in _result_other_option_urls(result))
 
 
 def strip_episode_suffix(name: str) -> str:

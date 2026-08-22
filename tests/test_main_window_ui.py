@@ -11613,7 +11613,7 @@ def test_main_window_does_not_prepare_metadata_for_loading_placeholder(qtbot) ->
     assert hydrator_calls == ["低智商犯罪"]
 
 
-@pytest.mark.parametrize("source_kind", ["telegram", "telegram_channel", "emby", "jellyfin", "feiniu"])
+@pytest.mark.parametrize("source_kind", ["browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"])
 def test_main_window_prepares_metadata_and_danmaku_for_supported_media_sources(qtbot, source_kind: str) -> None:
     hydrator = object()
     scrape_service = object()

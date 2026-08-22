@@ -7171,6 +7171,32 @@ def test_extract_episode_label_keeps_episode_numbering_for_dated_drama_files() -
     assert controller_module._extract_episode_label(item, [item]) == "4集"
 
 
+def test_extract_episode_label_falls_back_to_regular_numbering_for_variety_collection() -> None:
+    # 综艺合集用常规集命名（"第N集"，无期号/完整日期）时集数不能为空：空集数会把
+    # 弹幕搜索退化成纯标题查询，候选被时长过滤清空，弹幕源对话框也填不出集数。
+    playlist = [
+        PlayItem(
+            title=f"第{index:02d}集",
+            url=f"http://host/{index}",
+            media_title="奔跑吧",
+            type_name="综艺",
+            index=index - 1,
+        )
+        for index in range(1, 4)
+    ]
+
+    assert controller_module._extract_episode_label(playlist[0], playlist) == "1集"
+
+
+def test_extract_episode_label_keeps_hint_only_variety_titles_without_episode() -> None:
+    # 文件名只有花絮提示词（纯享/加更/直拍…）而无期号/日期：保持无集数标签，
+    # 按播放位置硬推集数会指错期。
+    item = PlayItem(title="纯享版", url="http://host/1", media_title="奔跑吧", type_name="综艺")
+    playlist = [item, PlayItem(title="第2期", url="http://host/2", media_title="奔跑吧", type_name="综艺")]
+
+    assert controller_module._extract_episode_label(item, playlist) == ""
+
+
 def test_metadata_danmaku_preference_pins_provider_from_official_link() -> None:
     controller = SpiderPluginController(DanmakuEnabledFakeSpider(), plugin_name="p", search_enabled=True)
     item = PlayItem(
@@ -7200,3 +7226,105 @@ def test_metadata_danmaku_preference_returns_none_without_usable_url() -> None:
 
     assert controller._metadata_danmaku_preference(bare, "k") is None
     assert controller._metadata_danmaku_preference(unknown, "k") is None
+
+
+def test_controller_does_not_cache_other_fallback_only_danmaku_search(monkeypatch) -> None:
+    class OtherFallbackService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            del name, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="other",
+                        provider_label="other",
+                        options=[DanmakuSourceOption(provider="other", name="冷门剧 1集", url=reg_src)],
+                    )
+                ],
+                default_option_url=reg_src,
+                default_provider="other",
+            )
+
+    saved: list[str] = []
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(
+        controller_module,
+        "_save_cached_danmaku_source_search_result_variants",
+        lambda name, reg_src, result: saved.append(name),
+    )
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="网盘资源",
+        search_enabled=True,
+        danmaku_service=OtherFallbackService(),
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/play/1.m3u8",
+        media_title="冷门剧",
+        vod_id="https://v.qq.com/x/cover/xyz/abc.html",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item])
+
+    # 纯 other 兜底结果不写共享缓存，但当前条目仍可兜底展示候选。
+    assert saved == []
+    assert [group.provider for group in item.danmaku_candidates] == ["other"]
+
+
+def test_controller_rejects_stale_other_fallback_cached_danmaku_sources(monkeypatch) -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ):
+            del reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    poisoned = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="other",
+                provider_label="other",
+                options=[DanmakuSourceOption(provider="other", name="冷门剧 1集", url="https://pan.baidu.com/s/1ZuAV?pwd=9527")],
+            )
+        ],
+        default_option_url="https://pan.baidu.com/s/1ZuAV?pwd=9527",
+        default_provider="other",
+    )
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda *_args: poisoned)
+    monkeypatch.setattr(controller_module, "_save_cached_danmaku_source_search_result_variants", lambda *_args: None)
+    service = RecordingService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="网盘资源",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/play/1.m3u8",
+        media_title="冷门剧",
+        vod_id="/play/1",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item])
+
+    # 历史污染缓存（other 候选指向别的 reg_src）被拒用，回退到新搜索。
+    assert service.search_calls == ["冷门剧 1集"]

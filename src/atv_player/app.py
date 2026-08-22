@@ -85,6 +85,7 @@ from atv_player.metadata import (
     resolve_episode_title_source_priority,
 )
 from atv_player.metadata.discovery import TMDBDiscoveryService
+from atv_player.metadata.bindings import is_query_redirect_binding
 from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.models import MetadataMatch
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
@@ -988,7 +989,7 @@ class AppCoordinator(QObject):
     def _build_danmaku_controller_factory(self):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
-            if source_kind not in {"telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}:
+            if source_kind not in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}:
                 return None
             if vod is not None and is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
                 return None
@@ -1582,6 +1583,9 @@ class AppCoordinator(QObject):
                     str(binding.matched_title or "").strip(),
                     str(binding.matched_year or "").strip(),
                 )
+                if is_query_redirect_binding(binding):
+                    # 查询重定向行不是元数据绑定，交给 _session_query_redirect 处理
+                    return None
                 candidate = MetadataMatch(
                     provider=provider_name,
                     provider_id=provider_id,
@@ -1630,6 +1634,37 @@ class AppCoordinator(QObject):
                             return candidate
                 return candidate
 
+            def _session_query_redirect(session_vod, current_item=None):
+                """Resolves a saved 查询重定向 (manual query correction) for this title.
+
+                与 _bound_episode_candidate 用同一组 binding 查询 key；重定向行只提供
+                修正后的搜索标题/年份（如网盘混淆目录名 → 真实剧名），不提供 provider。
+                """
+                bindings = self._metadata_binding_repository
+                if bindings is None:
+                    return None
+                binding_queries = []
+                if current_item is not None:
+                    binding_queries.append(
+                        MetadataContext(
+                            vod=session_vod,
+                            source_kind=source_kind,
+                            current_item=current_item,
+                        ).to_query()
+                    )
+                binding_queries.append(MetadataContext(vod=session_vod, source_kind=source_kind).to_query())
+                for candidate_query in binding_queries:
+                    try:
+                        binding = bindings.load(candidate_query.title, candidate_query.year)
+                    except Exception:
+                        continue
+                    if not is_query_redirect_binding(binding):
+                        continue
+                    redirect_title = str(binding.provider_id or "").strip()
+                    if redirect_title and redirect_title != candidate_query.title:
+                        return redirect_title, str(binding.matched_year or "").strip()
+                return None
+
             def enhance(session) -> list | None:
                 session_vod = getattr(session, "vod", None) or vod
                 current_playlist = list(getattr(session, "playlist", []) or [])
@@ -1637,7 +1672,13 @@ class AppCoordinator(QObject):
                     return None
                 preserve_playlist_order = _is_variety_playlist(session_vod, current_playlist)
                 playlist = seed_original_titles([replace(item) for item in current_playlist])
-                cached_playlist = _restore_cached_episode_title_playlist(source_kind, session_vod, current_playlist)
+                force_refresh = bool(getattr(session, "episode_titles_force_refresh", False))
+                if force_refresh:
+                    # 手动"重写剧集标题"：一次性消费，忽略上次保存的标题缓存
+                    session.episode_titles_force_refresh = False
+                cached_playlist = None
+                if not force_refresh:
+                    cached_playlist = _restore_cached_episode_title_playlist(source_kind, session_vod, current_playlist)
                 if cached_playlist is not None:
                     logger.info(
                         "Episode title enhancer restored cached titles mapped_count=%s",
@@ -1689,7 +1730,17 @@ class AppCoordinator(QObject):
                 search_title = _strip_search_season_suffix(session_vod.vod_name)
                 playlist_search_title = _infer_series_title_from_playlist(playlist)
                 playlist_search_year = _infer_series_year_from_playlist(playlist)
-                has_season_marker = _title_has_season_marker(session_vod.vod_name)
+                # 季标记要看完整标题（search_title 已剥离季后缀），重定向时以修正标题为准
+                season_marker_source = session_vod.vod_name
+                query_redirect = _session_query_redirect(session_vod, current_item)
+                if query_redirect is not None:
+                    # 手动修正过的查询优先：混淆目录名（如"X 心动的XH9"）搜不到任何 provider
+                    redirect_title, redirect_year = query_redirect
+                    search_title = _strip_search_season_suffix(redirect_title)
+                    season_marker_source = redirect_title
+                    if redirect_year:
+                        year = redirect_year
+                has_season_marker = _title_has_season_marker(season_marker_source)
                 search_year = "" if has_season_marker else year
                 search_results = _search_tv_cached(tmdb_client, search_title, year=search_year)
                 if not search_results and search_title != session_vod.vod_name and not has_season_marker:
@@ -1713,6 +1764,18 @@ class AppCoordinator(QObject):
                         session_vod,
                         vod_name=playlist_search_title,
                         vod_year=year or playlist_search_year,
+                    )
+                candidate_vods: list[VodItem] = []
+                if query_redirect is not None:
+                    # 修正标题的候选排在最前，让官方平台（腾讯/爱奇艺等）按真实剧名
+                    # 匹配分集标题
+                    redirect_title, redirect_year = query_redirect
+                    candidate_vods.append(
+                        replace(
+                            session_vod,
+                            vod_name=redirect_title,
+                            vod_year=year or redirect_year,
+                        )
                     )
                 requested_seasons: set[int] = set()
                 for pair in season_episode_pairs:

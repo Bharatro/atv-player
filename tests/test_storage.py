@@ -239,6 +239,29 @@ def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_p
     assert history.source_name == "Emby"
 
 
+def test_local_playback_history_keeps_version_when_progress_is_unchanged(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    payload = {
+        "vodName": "Movie",
+        "vodRemarks": "Episode 1",
+        "episode": 0,
+        "episodeUrl": "1.m3u8",
+        "position": 45_000,
+        "duration": 120_000,
+        "speed": 1.0,
+        "createTime": 100,
+    }
+    repo.save_history("emby", "movie-1", payload, source_name="Emby")
+
+    repo.save_history("emby", "movie-1", {**payload, "createTime": 200}, source_name="Emby")
+
+    history = repo.get_history("emby", "movie-1")
+    assert history is not None
+    assert history.create_time == 100
+
+
 def test_local_playback_history_repository_lists_and_deletes_jellyfin_records(tmp_path: Path) -> None:
     from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 

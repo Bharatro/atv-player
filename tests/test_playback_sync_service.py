@@ -20,6 +20,7 @@ def _record(
     source_kind: str = "emby",
     source_name: str = "",
     updated_at: int,
+    position: int = 100,
 ) -> HistoryRecord:
     return HistoryRecord(
         id=0,
@@ -29,7 +30,7 @@ def _record(
         vod_remarks="",
         episode=1,
         episode_url="url",
-        position=100,
+        position=position,
         opening=0,
         ending=0,
         speed=1.0,
@@ -186,6 +187,18 @@ def test_push_versions_are_tracked_per_record() -> None:
 
     pushed_ids = [[payload["vodId"] for payload in batch] for batch in api.pushed]
     assert pushed_ids == [["second"]]
+
+
+def test_push_skips_local_records_without_playback_progress() -> None:
+    not_started = _record(key="not-started", updated_at=200, position=0)
+    progressed = _record(key="progressed", updated_at=100, position=1)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([not_started, progressed]))
+
+    service._push()
+
+    assert [[payload["vodId"] for payload in batch] for batch in api.pushed] == [["progressed"]]
+    assert ("site", "csp_Emby", "not-started") not in service._pushed_versions
 
 
 def test_push_only_uploads_latest_100_records() -> None:

@@ -335,6 +335,25 @@ class LocalPlaybackHistoryRepository:
                     drive_share_key = excluded.drive_share_key,
                     drive_path = excluded.drive_path,
                     updated_at = excluded.updated_at
+                WHERE source_name <> excluded.source_name
+                   OR vod_name <> excluded.vod_name
+                   OR vod_pic <> excluded.vod_pic
+                   OR vod_remarks <> excluded.vod_remarks
+                   OR episode <> excluded.episode
+                   OR episode_url <> excluded.episode_url
+                   OR position <> excluded.position
+                   OR duration <> excluded.duration
+                   OR opening <> excluded.opening
+                   OR ending <> excluded.ending
+                   OR speed <> excluded.speed
+                   OR playlist_index <> excluded.playlist_index
+                   OR source_group_index <> excluded.source_group_index
+                   OR source_index <> excluded.source_index
+                   OR source_subgroup_index <> excluded.source_subgroup_index
+                   OR source_subgroup_name <> excluded.source_subgroup_name
+                   OR drive_dir_id <> excluded.drive_dir_id
+                   OR drive_share_key <> excluded.drive_share_key
+                   OR drive_path <> excluded.drive_path
                 """,
                 (
                     self._account_namespace,

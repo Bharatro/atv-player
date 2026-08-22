@@ -1,4 +1,9 @@
-from atv_player.danmaku.models import DanmakuRecord
+from atv_player.danmaku.models import (
+    DanmakuRecord,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
 from atv_player.danmaku.utils import (
     build_xml,
     episode_matches_request,
@@ -10,6 +15,8 @@ from atv_player.danmaku.utils import (
     has_variety_issue_marker,
     infer_playlist_episode_number,
     is_likely_variety_title,
+    is_other_fallback_only_result,
+    is_stale_other_fallback_result,
     is_variety_collection,
     match_provider,
     normalize_name,
@@ -435,3 +442,85 @@ def test_build_xml_strips_xml_illegal_control_characters() -> None:
     nodes = root.findall(".//d")
     assert len(nodes) == 1
     assert nodes[0].text == "护照上不是吗"
+
+
+def test_play_item_episode_number_ignores_spider_site_id_paths() -> None:
+    from atv_player.danmaku.utils import _play_item_episode_number
+
+    # 回归：网盘占位条目把站点详情 ID 存在 path 里，"9794.html" 的页面编号被当成集数，
+    # 搜索词变成 "爱是愤怒 9794集"。
+    item = PlayItem(
+        title="百度",
+        url="https://pan.baidu.com/s/1demo?pwd=9527",
+        media_title="爱是愤怒",
+        path="site:duoduo:/index.php/vod/detail/id/9794.html",
+    )
+
+    assert _play_item_episode_number(item) is None
+
+
+def test_play_item_episode_number_ignores_web_page_basenames_in_path() -> None:
+    from atv_player.danmaku.utils import _play_item_episode_number
+
+    item = PlayItem(title="百度", url="https://pan.baidu.com/s/1demo", path="/cache/detail/id/1204.html")
+
+    assert _play_item_episode_number(item) is None
+
+
+def test_play_item_episode_number_keeps_media_url_path_basenames() -> None:
+    from atv_player.danmaku.utils import _play_item_episode_number
+
+    item = PlayItem(title="选集", url="https://m.example/1.m3u8", path="https://cdn.example/show/EP05.mp4")
+
+    assert _play_item_episode_number(item) == 5
+
+
+def test_infer_playlist_episode_number_falls_back_to_position_for_site_id_path() -> None:
+    playlist = [
+        PlayItem(
+            title="百度",
+            url="https://pan.baidu.com/s/1demo",
+            path="site:duoduo:/index.php/vod/detail/id/9794.html",
+            index=0,
+        ),
+        PlayItem(
+            title="夸克",
+            url="https://pan.quark.cn/s/_demo",
+            path="site:duoduo:/index.php/vod/detail/id/9794.html",
+            index=1,
+        ),
+    ]
+
+    # 修复前：第二项从 path 的 "9794.html" 解析出集数 9794。
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+
+
+def _source_search_result(provider: str, url: str) -> DanmakuSourceSearchResult:
+    return DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider=provider,
+                provider_label=provider,
+                options=[DanmakuSourceOption(provider=provider, name="冷门剧 1集", url=url)],
+            )
+        ],
+        default_option_url=url,
+        default_provider=provider,
+    )
+
+
+def test_is_other_fallback_only_result_detects_synthetic_candidate() -> None:
+    assert is_other_fallback_only_result(_source_search_result("other", "https://v.qq.com/x/1")) is True
+    assert is_other_fallback_only_result(_source_search_result("tencent", "https://v.qq.com/x/1")) is False
+    assert is_other_fallback_only_result(DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")) is False
+
+
+def test_is_stale_other_fallback_result_flags_foreign_reg_src_entries() -> None:
+    poisoned = _source_search_result("other", "https://pan.baidu.com/s/1demo?pwd=9527")
+
+    # 候选 URL 指向别的 reg_src（含系列级缓存里 reg_src 为空的情形）→ 过期污染，拒用。
+    assert is_stale_other_fallback_result(poisoned, "/我的百度分享/爱是愤怒/file.mp4") is True
+    assert is_stale_other_fallback_result(poisoned, "") is True
+    # 候选 URL 与当前 reg_src 一致 → 自洽条目，保留。
+    assert is_stale_other_fallback_result(poisoned, "https://pan.baidu.com/s/1demo?pwd=9527") is False
+    assert is_stale_other_fallback_result(_source_search_result("tencent", "https://v.qq.com/x/1"), "") is False

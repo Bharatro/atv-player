@@ -6224,6 +6224,27 @@ def test_app_coordinator_show_main_wires_following_controller(monkeypatch) -> No
     assert captured["window_kwargs"]["following_update_service"] is not None
 
 
+def test_app_danmaku_controller_factory_supports_browse_source(monkeypatch) -> None:
+    # 文件浏览（browse）此前不在弹幕控制器工厂的白名单里：会话没有弹幕控制器，
+    # 对话框集数无人计算、搜索无法执行。browse 与 telegram 等一样按标题+集数搜索，
+    # 应当获得 GenericDanmakuController。
+    class FakeRepo(_FakeRepoBase):
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    coordinator = AppCoordinator(FakeRepo())
+    coordinator._danmaku_service = object()
+    factory = coordinator._build_danmaku_controller_factory()
+
+    controller = factory(
+        source_kind="browse",
+        vod=VodItem(vod_id="1$190089$1", vod_name="X 心动的XH9"),
+    )
+
+    assert isinstance(controller, app_module.GenericDanmakuController)
+    assert factory(source_kind="youtube", vod=VodItem(vod_id="yt:1", vod_name="视频")) is None
+
+
 def test_app_coordinator_show_main_wires_danmaku_controller_factory(monkeypatch) -> None:
     class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
@@ -6449,6 +6470,65 @@ def test_app_coordinator_episode_title_enhancer_maps_shuffled_playlist_by_episod
     assert updated is not None
     assert [item.episode_display_title for item in updated] == ["第1集 星门初启", "第2集 星火初燃"]
     assert [item.original_title for item in updated] == ["S01E01.mkv", "S01E02.mkv"]
+
+
+def test_app_coordinator_episode_title_enhancer_uses_query_redirect_title(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    # 网盘混淆目录名（"X 心动的XH9"）在 TMDB 搜不到分集标题；保存的查询重定向
+    # （用户在刮削对话框修正过标题）应当把增强器的搜索标题换成修正后的剧名，
+    # 且重定向行本身不能被当作 provider 绑定候选。
+    class FakeRepo(_FakeRepoBase):
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            del api_key, proxy_decider
+            self.queries: list[tuple[str, str]] = []
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            self.queries.append((title, year))
+            if title == "心动的信号":
+                return [{"id": 42, "name": "心动的信号 第九季", "first_air_date": "2026-01-01"}]
+            return []
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "心动开局"},
+                    {"episode_number": 2, "name": "初次约会"},
+                ]
+            }
+
+    monkeypatch.setattr(app_module, "TMDBClient", FakeTMDBClient)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    bindings = MetadataBindingRepository(tmp_path / "bindings.db")
+    bindings.save_query_redirect("X 心动的XH9", "", "心动的信号 第九季", "")
+    monkeypatch.setattr(coordinator, "_metadata_binding_repository", bindings)
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    vod = VodItem(vod_id="v1", vod_name="X 心动的XH9")
+    enhance = factory(source_kind="plugin", vod=vod)
+
+    updated = enhance(
+        SimpleNamespace(
+            vod=vod,
+            playlist=[
+                PlayItem(title="S01E01.mkv", url="http://m/1.mp4", original_title="S01E01.mkv"),
+                PlayItem(title="S01E02.mkv", url="http://m/2.mp4", original_title="S01E02.mkv"),
+            ],
+        )
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == ["第1集 心动开局", "第2集 初次约会"]
 
 
 def test_app_coordinator_episode_title_enhancer_preserves_variety_playlist_order(
