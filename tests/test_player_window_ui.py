@@ -26244,3 +26244,126 @@ def test_player_window_recovery_cancels_pending_hydration_loader(qtbot) -> None:
     assert window._pending_playback_loader.hydrate_only is False
 
     _spin_until(lambda: len(loader_calls) == 1)
+
+
+class PauseStateVideo(RecordingVideo):
+    """Mirrors mpv's pause property so tests can compare UI state vs actual state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.paused = True
+        self.load_pause_flags: list[bool] = []
+
+    def load(
+        self, url: str, pause: bool = False, start_seconds: int = 0, **_kwargs
+    ) -> None:
+        super().load(url, start_seconds=start_seconds)
+        self.paused = pause
+        self.load_pause_flags.append(pause)
+
+    def pause(self) -> None:
+        super().pause()
+        self.paused = True
+
+    def resume(self) -> None:
+        super().resume()
+        self.paused = False
+
+
+class GatedPrepareAdFilter:
+    """prepare() blocks until released, simulating a slow stream resolve on restore."""
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.error: Exception | None = None
+
+    def should_prepare(self, url: str) -> bool:
+        return self.enabled
+
+    def prepare(self, url: str, headers=None, **_kwargs) -> str:
+        self.entered.set()
+        self.release.wait(timeout=5)
+        if self.error is not None:
+            raise self.error
+        return url
+
+
+def _open_playing_session(
+    qtbot, ad_filter=None
+) -> tuple[PlayerWindow, PauseStateVideo]:
+    config = AppConfig()
+    window = PlayerWindow(
+        FakePlayerController(), config=config, m3u8_ad_filter=ad_filter
+    )
+    qtbot.addWidget(window)
+    video = PauseStateVideo()
+    window.video = video
+    window.open_session(make_player_session())
+    _spin_until(lambda: bool(video.load_pause_flags))
+    return window, video
+
+
+def test_player_window_restore_prepare_keeps_toggled_pause(qtbot) -> None:
+    ad_filter = GatedPrepareAdFilter()
+    window, video = _open_playing_session(qtbot, ad_filter=ad_filter)
+    assert window.is_playing is True
+    assert video.paused is False
+
+    window._return_to_main()
+    assert window.is_playing is False
+    assert video.paused is True
+
+    ad_filter.enabled = True
+    window.resume_from_main()
+    _spin_until(ad_filter.entered.is_set)
+    # The user pauses while the restore reload is still resolving in the background.
+    window.toggle_playback()
+    assert window.is_playing is False
+    assert video.paused is True
+
+    ad_filter.release.set()
+    _spin_until(lambda: len(video.load_pause_flags) >= 2)
+
+    assert video.paused is True, "deferred load honors the pause toggled while pending"
+    assert window.is_playing == (not video.paused)
+
+
+def test_player_window_restore_prepare_failure_fallback_keeps_pause(qtbot) -> None:
+    ad_filter = GatedPrepareAdFilter()
+    window, video = _open_playing_session(qtbot, ad_filter=ad_filter)
+
+    window._return_to_main()
+    ad_filter.enabled = True
+    ad_filter.error = RuntimeError("boom")
+    window.resume_from_main()
+    _spin_until(ad_filter.entered.is_set)
+    window.toggle_playback()
+    ad_filter.release.set()
+    # Prepare fails; the original URL fallback still loads and must stay paused.
+    _spin_until(lambda: len(video.load_pause_flags) >= 2)
+
+    assert video.paused is True
+    assert window.is_playing == (not video.paused)
+
+
+def test_player_window_playback_failure_resets_play_button_state(qtbot) -> None:
+    window, video = _open_playing_session(qtbot)
+    assert window.is_playing is True
+
+    window._handle_playback_failed("播放失败: 网络中断")
+
+    assert window._startup_state.stage.value == "failed"
+    assert window.is_playing is False, "nothing is playing after the failure"
+
+
+def test_player_window_syncs_play_button_from_mpv_pause_state(qtbot) -> None:
+    window, video = _open_playing_session(qtbot)
+    assert window.is_playing is True
+
+    window.video_widget.pause_state_changed.emit(True)
+    assert window.is_playing is False
+
+    window.video_widget.pause_state_changed.emit(False)
+    assert window.is_playing is True

@@ -441,8 +441,11 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
             if name == "chapter-list":
                 self._chapter_list_observer = handler
                 return
-            assert name == "eof-reached"
-            self._eof_reached_observer = handler
+            if name == "eof-reached":
+                self._eof_reached_observer = handler
+                return
+            assert name == "pause"
+            self._pause_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -1493,8 +1496,11 @@ def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) 
             if name == "chapter-list":
                 self._chapter_list_observer = handler
                 return
-            assert name == "eof-reached"
-            self._eof_reached_observer = handler
+            if name == "eof-reached":
+                self._eof_reached_observer = handler
+                return
+            assert name == "pause"
+            self._pause_observer = handler
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
             self.loadfile_calls.append((url, options))
@@ -1844,6 +1850,7 @@ def test_mpv_widget_registers_property_observers_on_windows(qtbot, monkeypatch) 
         "chapter-list",
         "video-out-params",
         "eof-reached",
+        "pause",
     ]
 
 
@@ -2016,8 +2023,11 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
             if name == "chapter-list":
                 self._chapter_list_observer = handler
                 return
-            assert name == "eof-reached"
-            self._eof_reached_observer = handler
+            if name == "eof-reached":
+                self._eof_reached_observer = handler
+                return
+            assert name == "pause"
+            self._pause_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -2875,8 +2885,11 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
             if name == "chapter-list":
                 self._chapter_list_observer = handler
                 return
-            assert name == "eof-reached"
-            self._eof_reached_observer = handler
+            if name == "eof-reached":
+                self._eof_reached_observer = handler
+                return
+            assert name == "pause"
+            self._pause_observer = handler
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)

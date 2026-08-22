@@ -325,6 +325,7 @@ class MpvWidget(QWidget):
     playback_failed = Signal(str)
     file_loaded = Signal()
     video_picture_state_changed = Signal(str)
+    pause_state_changed = Signal(bool)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     chapters_changed = Signal()
@@ -737,6 +738,14 @@ class MpvWidget(QWidget):
 
         observe_property("eof-reached", handle_eof_reached)
         self._eof_reached_handler = handle_eof_reached
+
+        def handle_pause_changed(_property_name, paused) -> None:
+            if paused is None:
+                return
+            self.pause_state_changed.emit(bool(paused))
+
+        observe_property("pause", handle_pause_changed)
+        self._pause_changed_handler = handle_pause_changed
 
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:

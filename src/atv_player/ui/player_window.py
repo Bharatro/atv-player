@@ -724,6 +724,7 @@ class _PendingPlayItemLoad:
     pause: bool
     wait_for_load: bool
     vod_snapshot: object | None = None
+    intent_generation: int = 0
 
 
 @dataclass(slots=True)
@@ -738,6 +739,7 @@ class _PendingPlaybackPrepare:
     previous_url: str = ""
     previous_original_url: str = ""
     previous_selected_playback_quality_id: str = ""
+    intent_generation: int = 0
 
 
 @dataclass(slots=True)
@@ -752,6 +754,7 @@ class _PendingPlaybackLoader:
     playback_started_audio_url: str = ""
     playback_started_headers: dict[str, str] | None = None
     playback_started_quality_id: str = ""
+    intent_generation: int = 0
 
 
 class _PlayerToolDialog(ThemedDialogBase):
@@ -877,6 +880,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.current_index = 0
         self.current_speed = 1.0
         self.is_playing = True
+        self._playback_intent_generation = 0
         self._is_muted = bool(getattr(self.config, "player_muted", False))
         self._subtitle_delay = 0.0
         self._audio_delay = 0.0
@@ -1134,6 +1138,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
+        self.video_widget.pause_state_changed.connect(self._handle_pause_state_changed)
         self.video = self.video_widget
         self.controls = PlayerControls(self)
         self.controls.bind(config=self.config)
@@ -2156,6 +2161,36 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _update_play_button_icon(self) -> None:
         icon_name = "pause.svg" if self.is_playing else "play.svg"
         self.play_button.setIcon(load_icon(self._icons_dir / icon_name))
+
+    def _resolve_pending_pause(
+        self, pending_pause: bool, intent_generation: int
+    ) -> bool:
+        # 延迟加载完成时,发起时刻捕获的 pause 可能已过期(用户在解析期间
+        # 按了暂停/播放)。出现过 toggle 就以最新意图为准,否则沿用捕获值
+        # (如"下一集"在暂停状态下仍自动播放)。
+        if intent_generation == self._playback_intent_generation:
+            return pending_pause
+        return not self.is_playing
+
+    def _handle_pause_state_changed(self, paused: bool) -> None:
+        # mpv 的 pause 属性是播放状态的事实来源;按钮此前只反映乐观更新的
+        # is_playing,任何一侧自行变化(延迟加载、失败、脚本)都会漂移,
+        # 这里用事件把 UI 拉回真实状态。
+        if self.session is None:
+            return
+        playing = not paused
+        if playing == self.is_playing:
+            return
+        self.is_playing = playing
+        self._set_last_player_paused(paused)
+        self._update_play_button_icon()
+
+    def _mark_playback_stopped(self) -> None:
+        if not self.is_playing:
+            return
+        self.is_playing = False
+        self._set_last_player_paused(True)
+        self._update_play_button_icon()
 
     def _default_window_title(self) -> str:
         return "alist-tvbox 播放器"
@@ -4071,6 +4106,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause=pause,
             hydrate_only=hydrate_only,
             youtube_detail_parse=youtube_detail_parse,
+            intent_generation=self._playback_intent_generation,
         )
         if hydrate_only:
             # Snapshot the playing state so a failed quality upgrade can roll back.
@@ -4516,6 +4552,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._try_auto_switch_source_after_failure():
                 return
             self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            self._mark_playback_stopped()
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         self._refresh_parse_combo_enabled_state()
@@ -5102,6 +5139,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._try_auto_switch_source_after_failure():
             return
         self._show_failed_startup_state(message)
+        self._mark_playback_stopped()
         self._append_log(message)
         self._video_surface_ready = False
         pixmap = self.video_poster_overlay.pixmap()
@@ -5344,6 +5382,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             pause=pause,
             wait_for_load=wait_for_load,
             vod_snapshot=session.vod,
+            intent_generation=self._playback_intent_generation,
         )
 
         def run() -> None:
@@ -5398,6 +5437,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             previous_url=previous_url,
             previous_original_url=previous_original_url,
             previous_selected_playback_quality_id=previous_selected_playback_quality_id,
+            intent_generation=self._playback_intent_generation,
         )
 
         def prepare() -> None:
@@ -5534,19 +5574,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._try_auto_switch_source_after_failure():
                 return
             self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            self._mark_playback_stopped()
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         try:
+            resume_pause = self._resolve_pending_pause(
+                pending_load.pause, pending_load.intent_generation
+            )
             if self._start_playback_prepare(
                 previous_index=pending_load.previous_index,
                 start_position_seconds=pending_load.start_position_seconds,
-                pause=pending_load.pause,
+                pause=resume_pause,
             ):
                 return
             self._start_current_item_playback(
                 start_position_seconds=pending_load.start_position_seconds,
-                pause=pending_load.pause,
+                pause=resume_pause,
             )
         except Exception as exc:
             self._restore_current_index(pending_load.previous_index)
@@ -5561,6 +5605,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._try_auto_switch_source_after_failure():
                 return
             self._show_failed_startup_state(f"播放失败: {message}")
+            self._mark_playback_stopped()
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: {message}")
             return
@@ -5625,19 +5670,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._try_auto_switch_source_after_failure():
                 return
             self._show_failed_startup_state(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            self._mark_playback_stopped()
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         try:
+            resume_pause = self._resolve_pending_pause(
+                pending_loader.pause, pending_loader.intent_generation
+            )
             if self._start_playback_prepare(
                 previous_index=pending_loader.previous_index,
                 start_position_seconds=pending_loader.start_position_seconds,
-                pause=pending_loader.pause,
+                pause=resume_pause,
             ):
                 return
             self._start_current_item_playback(
                 start_position_seconds=pending_loader.start_position_seconds,
-                pause=pending_loader.pause,
+                pause=resume_pause,
             )
         except Exception as exc:
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
@@ -5656,6 +5705,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self._try_auto_switch_source_after_failure():
             return
         self._show_failed_startup_state(f"播放失败: {message}")
+        self._mark_playback_stopped()
         self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
         self._append_log(f"播放失败: {message}")
 
@@ -6087,7 +6137,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         try:
             self._start_current_item_playback(
                 start_position_seconds=pending_prepare.start_position_seconds,
-                pause=pending_prepare.pause,
+                pause=self._resolve_pending_pause(
+                    pending_prepare.pause, pending_prepare.intent_generation
+                ),
             )
         except Exception as exc:
             self._restore_current_index(pending_prepare.previous_index)
@@ -6116,6 +6168,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if self._try_auto_switch_source_after_failure():
                 return
             self._show_failed_startup_state(f"播放失败: {message}")
+            self._mark_playback_stopped()
             self._append_log(f"播放失败: {message}")
             self._restore_current_index(pending_prepare.previous_index)
             return
@@ -6126,7 +6179,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         try:
             self._start_current_item_playback(
                 start_position_seconds=pending_prepare.start_position_seconds,
-                pause=pending_prepare.pause,
+                pause=self._resolve_pending_pause(
+                    pending_prepare.pause, pending_prepare.intent_generation
+                ),
             )
         except Exception as exc:
             self._restore_current_index(pending_prepare.previous_index)
@@ -12076,6 +12131,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._return_to_main()
 
     def toggle_playback(self) -> None:
+        self._playback_intent_generation += 1
         if self.is_playing:
             self.controls.pause()
         else:
@@ -12141,6 +12197,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 return
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
+            self._mark_playback_stopped()
             return
         self.play_next()
 
