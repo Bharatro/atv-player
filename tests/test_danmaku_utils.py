@@ -9,9 +9,11 @@ from atv_player.danmaku.utils import (
     episode_matches_request,
     extract_episode_number,
     extract_official_link_url,
+    extract_part_number,
     extract_variety_episode_label,
     extract_variety_issue_key,
     extract_variety_part,
+    has_explicit_episode_marker,
     has_variety_issue_marker,
     infer_playlist_episode_number,
     is_likely_variety_title,
@@ -21,6 +23,7 @@ from atv_player.danmaku.utils import (
     match_provider,
     normalize_name,
     should_filter_name,
+    strip_episode_suffix,
     strip_variety_issue_suffix,
 )
 from atv_player.models import (
@@ -87,6 +90,57 @@ def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> Non
 
 def test_extract_episode_number_supports_chinese_numerals() -> None:
     assert extract_episode_number("第十二集") == 12
+
+
+def test_extract_episode_number_maps_movie_part_markers() -> None:
+    # 电影分上中下:分部标记映射 1/2/3(腾讯真实片源标题, cid mzc00200s0ntzpo)
+    assert extract_episode_number("上集：喜迁新居，竟遇“诡”邻") == 1
+    assert extract_episode_number("中集：双面丈夫，究竟谁在说谎？") == 2
+    assert extract_episode_number("下集：终极反转！全员恶人互搏") == 3
+    assert extract_episode_number("流浪地球上集") == 1
+    assert extract_episode_number("X电影 中部") == 2
+    assert extract_episode_number("X电影 下篇 1080p") == 3
+    assert extract_episode_number("X电影（上）") == 1
+    assert extract_episode_number("X电影 上") == 1
+    assert extract_episode_number("上部") == 1
+    assert extract_part_number("X电影 上卷") == 1
+
+
+def test_extract_episode_number_ignores_part_marker_false_positives() -> None:
+    # 裸"上/中/下"两侧必须是非汉字边界;带单位时单位后不能接汉字
+    assert extract_episode_number("上海堡垒") is None
+    assert extract_episode_number("碟中谍") is None
+    assert extract_episode_number("史上最强") is None
+    assert extract_episode_number("网上集结") is None
+    assert extract_episode_number("上部城市") is None
+    assert extract_episode_number("X电影 中英双字") is None
+    assert extract_episode_number("午夜凶铃 上映版") is None
+    # "期上/期 上"是综艺分部(第2期上),归 variety 逻辑,集数仍是期号
+    assert extract_episode_number("奔跑吧 第2期上") == 2
+    assert extract_episode_number("2026-08-10 第2期 上") == 2
+
+
+def test_strip_episode_suffix_strips_part_markers() -> None:
+    assert strip_episode_suffix("电影 上集") == "电影"
+    assert strip_episode_suffix("流浪地球上集") == "流浪地球"
+    assert strip_episode_suffix("电影（下）") == "电影"
+    assert strip_episode_suffix("电影 上") == "电影"
+    # 组合查询叠了数字集标也能剥干净
+    assert strip_episode_suffix("电影 上集 1集") == "电影"
+
+
+def test_has_explicit_episode_marker_recognizes_part_markers() -> None:
+    assert has_explicit_episode_marker("电影 上集") is True
+    assert has_explicit_episode_marker("电影 上") is True
+    assert has_explicit_episode_marker("上海堡垒") is False
+    assert has_explicit_episode_marker("碟中谍") is False
+
+
+def test_episode_matches_request_accepts_part_markered_movie_episodes() -> None:
+    # 分部命名的候选("上集：副标题")以分部开头,无剧名前缀,按集数匹配
+    assert episode_matches_request("上集：喜迁新居，竟遇“诡”邻", 1, "诡邻 1集") is True
+    assert episode_matches_request("中集：双面丈夫，究竟谁在说谎？", 2, "诡邻 2集") is True
+    assert episode_matches_request("下集：终极反转！全员恶人互搏", 1, "诡邻 1集") is False
 
 
 def test_episode_matches_request_accepts_subtitle_only_episode_name() -> None:

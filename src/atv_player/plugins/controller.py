@@ -34,6 +34,7 @@ from atv_player.danmaku.utils import (
     episode_title_matches,
     extract_episode_number,
     extract_official_link_url,
+    extract_part_number,
     extract_variety_episode_label,
     has_explicit_episode_marker,
     has_variety_issue_marker,
@@ -239,6 +240,11 @@ def _should_omit_default_episode_label(item: PlayItem, playlist: list[PlayItem] 
     normalized_title = normalize_name(item.title)
     if normalized_title in _SINGLE_VIDEO_GENERIC_TITLES:
         return True
+    if extract_part_number(normalized_title) is not None:
+        # "上集/中部/（下）"这类分部标记本身就是集数锚点:电影分上中下的场景
+        # 若因电影分类丢掉锚点,三个分段的弹幕就无从区分了。注意只认分部标记,
+        # "第1集"这类数字集标仍按电影分类省略(单条目电影带集标会错配剧集)。
+        return False
     if _looks_like_movie_category(item):
         return True
     if _looks_like_movie_title(item):

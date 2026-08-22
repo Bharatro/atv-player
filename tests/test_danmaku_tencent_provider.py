@@ -834,6 +834,115 @@ def test_tencent_provider_search_expands_episode_list_from_page_data_api() -> No
     ]
 
 
+def test_tencent_provider_search_keeps_part_marked_movie_episodes_from_page_data() -> None:
+    # 电影分上中下(腾讯 cid mzc00200s0ntzpo 真实数据):分集标题是
+    # "上集：副标题"形式,必须被 PageData 展开保留并映射集数 1/2/3,
+    # 搜索词不能带上"上集"后缀(regression: 冒号副标题曾被当花絮整集丢弃)。
+    search_queries: list[str] = []
+
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            search_queries.append(params["query"])
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "诡邻",
+                                        "url": "https://v.qq.com/x/cover/mzc00200s0ntzpo/w4102gwub5o.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == (
+            "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+            "?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "ret": 0,
+                "data": {
+                    "module_list_datas": [
+                        {
+                            "module_datas": [
+                                {
+                                    "item_data_lists": {
+                                        "item_datas": [
+                                            {
+                                                "item_params": {
+                                                    "vid": "w4102gwub5o",
+                                                    "title": "上集：喜迁新居，竟遇“诡”邻",
+                                                    "play_title": "上集：喜迁新居，竟遇“诡”邻",
+                                                    "union_title": "上集",
+                                                    "is_trailer": "0",
+                                                    "duration": "3896",
+                                                }
+                                            },
+                                            {
+                                                "item_params": {
+                                                    "vid": "o4102lcgfsf",
+                                                    "title": "中集：双面丈夫，究竟谁在说谎？",
+                                                    "play_title": "中集：双面丈夫，究竟谁在说谎？",
+                                                    "union_title": "中集",
+                                                    "is_trailer": "0",
+                                                    "duration": "3803",
+                                                }
+                                            },
+                                            {
+                                                "item_params": {
+                                                    "vid": "e4102g09wgl",
+                                                    "title": "下集：终极反转！全员恶人互搏",
+                                                    "play_title": "下集：终极反转！全员恶人互搏",
+                                                    "union_title": "下集",
+                                                    "is_trailer": "0",
+                                                    "duration": "3770",
+                                                }
+                                            },
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+            },
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("诡邻 上集")
+
+    found = {(item.name, item.url) for item in items}
+    assert ("上集：喜迁新居，竟遇“诡”邻", "https://v.qq.com/x/cover/mzc00200s0ntzpo/w4102gwub5o.html") in found
+    assert ("中集：双面丈夫，究竟谁在说谎？", "https://v.qq.com/x/cover/mzc00200s0ntzpo/o4102lcgfsf.html") in found
+    assert ("下集：终极反转！全员恶人互搏", "https://v.qq.com/x/cover/mzc00200s0ntzpo/e4102g09wgl.html") in found
+    assert search_queries == ["诡邻"]
+
+
 def test_tencent_provider_search_uses_original_name_to_expand_stripped_query_to_requested_episode() -> None:
     page_contexts: list[str] = []
 

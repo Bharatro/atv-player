@@ -50,7 +50,26 @@ _EXPLICIT_EPISODE_PATTERNS = (
     r"\bS\d+\s*E0*([0-9]+)\b",
     r"\bEP\s*0*([0-9]+)\b",
     r"\bE\s*0*([0-9]+)\b",
+    r"(?<!期)(?<!期\s)[上中下]\s*[集部篇卷](?![一-鿿])",
+    r"(?<![一-鿿\w])[上中下](?![一-鿿\w])",
 )
+
+# 电影分部标记:"上/中/下"映射 1/2/3,可带 集/部/篇/卷 单位("上集/中部/下篇")
+# 或括号形式("电影(上)"),也允许紧跟标题("流浪地球上集")。裸标记两侧必须是
+# 非汉字/字母数字的边界,避免"史上/晚上/上线/碟中谍/中字"误报;带单位时单位后
+# 不能再接汉字("网上集结/上部城市"排除)。"期上/期 上"是综艺分部(第2期上),
+# 归 variety 专用逻辑(extract_variety_part)处理,这里让开。
+_PART_MARKER_NUMBERS = {"上": 1, "中": 2, "下": 3}
+_SUFFIXED_PART_MARKER_RE = re.compile(r"(?<!期)(?<!期\s)[上中下][集部篇卷](?![一-鿿])")
+_BARE_PART_MARKER_RE = re.compile(r"(?<![一-鿿\w])(?<!期\s)[上中下](?![一-鿿\w])")
+
+
+def extract_part_number(name: str) -> int | None:
+    value = normalize_name(name)
+    match = _SUFFIXED_PART_MARKER_RE.search(value) or _BARE_PART_MARKER_RE.search(value)
+    if match is None:
+        return None
+    return _PART_MARKER_NUMBERS.get(match.group(0)[0])
 
 # Matches an episode title that LEADS with its episode marker (no show-name
 # prefix), e.g. "第十三集 <剧情>" / "13集 ..." / "EP13 ...". Platforms such as
@@ -58,13 +77,16 @@ _EXPLICIT_EPISODE_PATTERNS = (
 # against the query cannot judge relevance — such candidates must be kept and
 # matched by episode number instead. Variety episodes often lead with their
 # air date, e.g. "2026-08-10 第2期上：<subtitle>", so a full date is also
-# accepted as a leading marker.
+# accepted as a leading marker. Part-split movies lead with "上集/中部/下" —
+# same treatment.
 _LEADING_EPISODE_MARKER = re.compile(
     r"^\s*(?:第\s*[0-9零一二两三四五六七八九十百]+\s*[集话期部回]"
     r"|0*[0-9]+\s*[集话期]"
     r"|S\d+\s*E\s*0*[0-9]+"
     r"|EP\s*0*[0-9]+"
     r"|E\s*0*[0-9]+"
+    r"|[上中下][集部篇卷](?![一-鿿])"
+    r"|[上中下](?![一-鿿\w])"
     r"|(?:19|20)\d{2}[\s._/-]?(?:0[1-9]|1[0-2])[\s._/-]?(?:0[1-9]|[12]\d|3[01])\b"
     r"|[0-9]+\s*$)",
     re.IGNORECASE,
@@ -194,6 +216,11 @@ def extract_episode_number(name: str) -> int | None:
     value = normalize_name(name)
     if _looks_like_numeric_x_suffix_filename(value):
         return None
+    # 分部标记("上集/中部/（下）")是显式词语,优先于结尾裸数字("X 上部 2"的 2
+    # 更可能是分段文件序号),且请求侧/候选侧共用本函数,映射自洽。
+    part = extract_part_number(value)
+    if part is not None:
+        return part
     for pattern in _EPISODE_PATTERNS:
         match = re.search(pattern, value, re.IGNORECASE)
         if match is None:
@@ -441,12 +468,20 @@ def strip_episode_suffix(name: str) -> str:
         r"\s+S\d+\s*E\d+\s*$",
         r"\s+EP?\s*\d+\s*$",
         r"\s+E\s*\d+\s*$",
+        r"\s*[（(]\s*[上中下]\s*[)）]\s*$",
+        r"[上中下]\s*[集部篇卷]\s*$",
+        r"\s+[上中下]\s*$",
     )
-    for pattern in patterns:
-        stripped = re.sub(pattern, "", value, flags=re.IGNORECASE)
-        if stripped != value:
-            return stripped.strip()
-    return value
+    # 组合查询可能叠多个后缀("标题 上集 1集"),循环剥到不动为止;每轮至少
+    # 消费一个字符,必然终止。
+    while True:
+        for pattern in patterns:
+            stripped = re.sub(pattern, "", value, flags=re.IGNORECASE)
+            if stripped != value:
+                value = stripped.strip()
+                break
+        else:
+            return value
 
 
 def _extract_variety_date_key(name: str) -> str | None:

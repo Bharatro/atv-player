@@ -2866,6 +2866,59 @@ def test_controller_refresh_danmaku_sources_omits_episode_for_movie_category() -
     assert item.danmaku_search_query == "孤注一掷"
 
 
+def test_controller_refresh_danmaku_sources_keeps_part_marker_for_movie_category() -> None:
+    # 电影分上中下:即使分类是电影,"上集/中集/下集"分部标记也是集数锚点,
+    # 不能按电影分类省略,否则三个分段的弹幕无从区分(regression: 曾统一省略)。
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="诡邻",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    titles = ("上集", "中集", "下集")
+    playlist = [
+        PlayItem(
+            title=title,
+            url=f"https://stream.example/{index + 1}.m3u8",
+            media_title="诡邻",
+            category_name="多多电影",
+        )
+        for index, title in enumerate(titles)
+    ]
+
+    controller.refresh_danmaku_sources(playlist[2], playlist=playlist)
+
+    assert service.calls == ["诡邻 3集"]
+    assert playlist[2].danmaku_search_episode == "3集"
+    assert playlist[2].danmaku_search_query == "诡邻 3集"
+
+
 def test_controller_preserves_movie_category_for_drive_replacement_items() -> None:
     class MovieDriveSpider(FakeSpider):
         def danmaku(self):

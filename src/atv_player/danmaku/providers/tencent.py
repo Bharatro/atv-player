@@ -497,8 +497,9 @@ class TencentDanmakuProvider:
     def _is_page_data_preview_candidate(self, params: dict, title: str) -> bool:
         if str(params.get("is_trailer") or "").strip() == "1":
             return True
-        if title and not self._is_main_content_title(title):
-            return True
+        # 剧集级判定只能用 _EPISODE_PREVIEW_KEYWORDS(不含"："#"'"这类结构标点):
+        # "上集：喜迁新居…"、"第2期上：<副标题>"的冒号是分隔符不是花絮信号,
+        # 走 show 级的 _is_main_content_title 会把正片整集丢掉。
         return self._is_preview_episode_candidate(
             {
                 "title": title,
@@ -610,6 +611,10 @@ class TencentDanmakuProvider:
         stripped = re.sub(r"\s+S\d+\s*E\d+(?:[\s._-].*)?$", "", stripped, flags=re.IGNORECASE)
         stripped = re.sub(r"\s+EP?\d+(?:[\s._-].*)?$", "", stripped, flags=re.IGNORECASE)
         stripped = re.sub(r"\s+E\d+(?:[\s._-].*)?$", "", stripped, flags=re.IGNORECASE)
+        # 分部标记("X 上集/流浪地球上集/X(上)")不进搜索词,否则 MbSearch 搜不到
+        stripped = re.sub(r"\s*[（(]\s*[上中下]\s*[)）]\s*$", "", stripped)
+        stripped = re.sub(r"[上中下]\s*[集部篇卷]\s*$", "", stripped)
+        stripped = re.sub(r"\s+[上中下]\s*$", "", stripped)
         return stripped.strip() or candidate
 
     def _search_keyword(self, name: str) -> str:
