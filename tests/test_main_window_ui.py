@@ -307,6 +307,7 @@ class FakePlayerController:
         source_index: int = 0,
         source_kind: str = "",
         source_key: str = "",
+        source_display_name: str = "",
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
@@ -317,7 +318,9 @@ class FakePlayerController:
         detail_field_runner=None,
         metadata_hydrator=None,
         metadata_scrape_service=None,
+        subtitle_search_service=None,
         metadata_binding_repository=None,
+        episode_title_override_repository=None,
         episode_title_enhancer=None,
         danmaku_controller=None,
         playback_progress_reporter=None,
@@ -326,6 +329,8 @@ class FakePlayerController:
         playback_history_saver=None,
         initial_log_message="",
         is_placeholder=False,
+        drive_resource_id: str = "",
+        drive_files_loader=None,
     ):
         return {
             "vod": vod,
@@ -338,6 +343,7 @@ class FakePlayerController:
             "source_index": source_index,
             "source_kind": source_kind,
             "source_key": source_key,
+            "source_display_name": source_display_name,
             "restore_history": restore_history,
             "async_playback_loader": async_playback_loader,
             "detail_action_runner": detail_action_runner,
@@ -3002,6 +3008,100 @@ def test_main_window_plugin_restore_opens_placeholder_player_while_restore_reque
     assert window.player_window.opened[1][0]["is_placeholder"] is False
     assert window.player_window.opened[1][0]["vod"].vod_name == "插件电影"
     assert window.player_window.opened[1][1] is True
+
+
+def test_main_window_return_to_main_discards_placeholder_and_cancels_pending_restore(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class SlowRestorePluginController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self._event = threading.Event()
+
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            self.calls.append(vod_id)
+            assert self._event.wait(timeout=5), "restore request was never released"
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+        def release(self) -> None:
+            self._event.set()
+
+    controller = SlowRestorePluginController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+        plugin_manager=WidthAwarePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(
+        lambda: (
+            window.player_window is not None
+            and len(window.player_window.opened) == 1
+            and window.isHidden() is True
+        )
+    )
+    assert window.player_window.opened[0][0]["is_placeholder"] is True
+
+    # 用户在占位播放窗口点击"返回主窗口": 播放窗口隐藏并发出 closed_to_main
+    window._show_main_again()
+    assert window.isHidden() is False
+
+    # 几秒后后台恢复链路完成,不得再把用户拉回播放窗口
+    controller.release()
+    qtbot.wait(500)
+
+    assert window.player_window is None
+    assert controller.calls == ["vod-1"]
 
 
 def test_main_window_defers_plugin_player_restore_until_async_startup_load_finishes(qtbot, monkeypatch) -> None:
@@ -8704,6 +8804,7 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             source_index: int = 0,
             source_kind: str = "",
             source_key: str = "",
+            source_display_name: str = "",
             detail_resolver=None,
             resolved_vod_by_id=None,
             use_local_history=True,
@@ -8714,7 +8815,9 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             detail_field_runner=None,
             metadata_hydrator=None,
             metadata_scrape_service=None,
+            subtitle_search_service=None,
             metadata_binding_repository=None,
+            episode_title_override_repository=None,
             episode_title_enhancer=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
@@ -8723,6 +8826,8 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             playback_history_saver=None,
             initial_log_message="",
             is_placeholder=False,
+            drive_resource_id: str = "",
+            drive_files_loader=None,
         ):
             time.sleep(0.15)
             return super().create_session(
@@ -8734,6 +8839,9 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 source_groups=source_groups,
                 source_group_index=source_group_index,
                 source_index=source_index,
+                source_kind=source_kind,
+                source_key=source_key,
+                source_display_name=source_display_name,
                 detail_resolver=detail_resolver,
                 resolved_vod_by_id=resolved_vod_by_id,
                 use_local_history=use_local_history,
@@ -10908,6 +11016,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             source_index: int = 0,
             source_kind: str = "",
             source_key: str = "",
+            source_display_name: str = "",
             detail_resolver=None,
             resolved_vod_by_id=None,
             use_local_history=True,
@@ -10918,7 +11027,9 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             detail_field_runner=None,
             metadata_hydrator=None,
             metadata_scrape_service=None,
+            subtitle_search_service=None,
             metadata_binding_repository=None,
+            episode_title_override_repository=None,
             episode_title_enhancer=None,
             danmaku_controller=None,
             playback_progress_reporter=None,
@@ -10927,6 +11038,8 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             playback_history_saver=None,
             initial_log_message="",
             is_placeholder=False,
+            drive_resource_id: str = "",
+            drive_files_loader=None,
         ):
             del (
                 vod,
@@ -10939,6 +11052,7 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 source_index,
                 source_kind,
                 source_key,
+                source_display_name,
                 detail_resolver,
                 resolved_vod_by_id,
                 use_local_history,
@@ -10949,7 +11063,9 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 detail_field_runner,
                 metadata_hydrator,
                 metadata_scrape_service,
+                subtitle_search_service,
                 metadata_binding_repository,
+                episode_title_override_repository,
                 episode_title_enhancer,
                 danmaku_controller,
                 playback_progress_reporter,
@@ -10958,6 +11074,8 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
                 playback_history_saver,
                 initial_log_message,
                 is_placeholder,
+                drive_resource_id,
+                drive_files_loader,
             )
             raise RuntimeError("session failed")
 

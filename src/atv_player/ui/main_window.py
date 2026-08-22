@@ -1732,6 +1732,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
+        self._returning_to_main = False
         self._main_window_geometry_before_player = QRect()
         self._main_window_was_maximized_before_player = False
         self._open_request_signals = _AsyncRequestSignals()
@@ -6893,14 +6894,30 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.show_error(message)
 
     def _show_main_again(self) -> None:
-        if self.player_window is not None and getattr(self.player_window, "session", None) is None:
-            self.player_window = None
-        self.config.last_active_window = "main"
-        self._save_config()
-        self._restore_main_window_after_player()
-        self._refresh_media_home_if_active()
-        self.raise_()
-        self.activateWindow()
+        # close() 占位窗口会触发 closeEvent 再次 emit closed_to_main,重入时直接忽略。
+        if self._returning_to_main:
+            return
+        self._returning_to_main = True
+        try:
+            if self._current_player_session_is_placeholder():
+                # 返回主窗口即放弃恢复:作废在途恢复/开会话请求,否则迟到的后台
+                # 恢复链路会重新弹出播放窗口并把用户拉离主窗口。
+                self._restore_request_id += 1
+                self._next_player_session_request_id()
+                close_player = getattr(self.player_window, "close", None) if self.player_window is not None else None
+                if callable(close_player):
+                    close_player()
+                self.player_window = None
+            elif self.player_window is not None and getattr(self.player_window, "session", None) is None:
+                self.player_window = None
+            self.config.last_active_window = "main"
+            self._save_config()
+            self._restore_main_window_after_player()
+            self._refresh_media_home_if_active()
+            self.raise_()
+            self.activateWindow()
+        finally:
+            self._returning_to_main = False
 
     def _remember_main_window_state_for_player(self) -> None:
         self._main_window_was_maximized_before_player = self.isMaximized()
