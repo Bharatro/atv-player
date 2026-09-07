@@ -5586,6 +5586,43 @@ def test_app_coordinator_prompts_admin_to_choose_vod_token_after_login(monkeypat
     assert coordinator._vod_token_is_admin is True
 
 
+def test_app_coordinator_admin_skips_token_dialog_when_single_token(monkeypatch) -> None:
+    class FakeRepo(_FakeRepoBase):
+        def __init__(self) -> None:
+            self.config = AppConfig(base_url="http://demo", username="admin", token="auth-123")
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+    class FakeApiClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.closed = False
+
+        def get_vod_token_info(self) -> dict[str, object]:
+            return {"tokens": ["web"], "role": "ADMIN"}
+
+        def close(self) -> None:
+            self.closed = True
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    coordinator.login_window = object()
+    monkeypatch.setattr(app_module, "ApiClient", FakeApiClient)
+
+    def _fail_get_item(*_args, **_kwargs):
+        raise AssertionError("QInputDialog.getItem should not be called for a single token")
+
+    monkeypatch.setattr(app_module.QInputDialog, "getItem", _fail_get_item)
+
+    assert coordinator._select_vod_token_after_login() is True
+    assert repo.config.vod_token == "web"
+    assert coordinator._vod_token_options == ["web"]
+    assert coordinator._vod_token_is_admin is True
+
+
 def test_advanced_settings_dialog_allows_admin_to_change_vod_token(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 

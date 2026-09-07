@@ -824,6 +824,10 @@ class AppCoordinator(QObject):
             return True
         if not options:
             raise ApiError("服务器未返回可用的 VOD token")
+        if len(options) == 1:
+            config.vod_token = options[0]
+            self.repo.save_config(config)
+            return True
         current_index = (
             options.index(config.vod_token) if config.vod_token in options else 0
         )
