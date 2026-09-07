@@ -1464,6 +1464,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             drive_detail_loader=None,
             drive_resolver=None,
             drive_files_loader=None,
+            drive_link_loader=None,
             offline_download_detail_loader=None,
             direct_parse_detail_loader=None,
             direct_parse_danmaku_loader=None,
@@ -1524,6 +1525,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._drive_detail_loader = drive_detail_loader
         self._drive_resolver = drive_resolver
         self._drive_files_loader = drive_files_loader
+        self._drive_link_loader = drive_link_loader
         self._offline_download_detail_loader = offline_download_detail_loader
         self._direct_parse_detail_loader = direct_parse_detail_loader
         self._direct_parse_danmaku_loader = direct_parse_danmaku_loader
@@ -6823,6 +6825,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "app_log_service": self._app_log_service,
             "m3u8_ad_filter": self._m3u8_ad_filter,
             "playback_parser_service": self._playback_parser_service,
+            "drive_link_loader": self._drive_link_loader,
             "default_video_cover_loader": self._default_video_cover_loader,
             "favorite_is_active": self._player_item_is_favorited,
             "favorite_toggle": self._toggle_player_item_favorite,
@@ -7162,6 +7165,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             request = controller.build_request(vod_id)
             request.source_kind = "plugin"
             request.source_key = self.config.last_playback_source_key
+            return self._apply_request_playback_history_title(request)
+        if source == "msub":
+            # 服务端追剧:msub:{id} 不能走 browse 兜底(后端 /vod 详情不识别 msub 前缀,直接 500)。
+            if self.msub_controller is None:
+                raise ValueError("服务端追剧不可用")
+            request = self.msub_controller.build_request(vod_id)
             return self._apply_request_playback_history_title(request)
         request = self.browse_controller.build_request_from_detail(vod_id)
         return self._apply_request_playback_history_title(request)

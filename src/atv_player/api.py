@@ -224,6 +224,15 @@ class ApiClient:
             return list(payload.get("files") or [])
         return []
 
+    def resolve_drive_link(self, resource_id: str, path: str) -> dict[str, Any]:
+        # 网盘文件直链解析(供客户端多线程 Range 代理):返回 {url, header, type, name, multiUrls}。
+        # 旧版服务端无此端点会抛异常,调用方须回退后端代理地址播放。
+        return self._request(
+            "POST",
+            "/api/drive/link",
+            json={"resourceId": resource_id, "path": path},
+        )
+
     def search_telegram_items(self, keyword: str, page: int) -> dict[str, Any]:
         params: dict[str, Any] = {"web": True, "wd": keyword}
         if page > 1:

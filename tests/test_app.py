@@ -9925,6 +9925,75 @@ def test_main_window_restore_last_player_routes_youtube_detail_to_youtube_contro
     assert window.player_window.opened[0][1] is True
 
 
+def test_main_window_restore_last_player_routes_msub_detail_to_msub_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request_from_detail(self, vod_id: str):
+            self.calls.append(vod_id)
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class FakeMsubController:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build_request(self, vod_id: str, start_episode: int = 0):
+            self.calls.append(vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="服务端追剧"),
+                playlist=[PlayItem(title="第01集", url="", vod_id=vod_id)],
+                clicked_index=0,
+                source_kind="msub",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    browse_controller = RestoreBrowseController()
+    msub_controller = FakeMsubController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="msub",
+        last_playback_mode="detail",
+        last_playback_vod_id="msub:67",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=browse_controller,
+        msub_controller=msub_controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert msub_controller.calls == ["msub:67"]
+    assert browse_controller.calls == []
+    assert window.player_window.opened[0][0]["vod"].vod_name == "服务端追剧"
+    assert window.player_window.opened[0][1] is True
+
+
 def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:
     class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:

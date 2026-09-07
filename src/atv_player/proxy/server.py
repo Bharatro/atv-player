@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+from hashlib import sha256
 from html import unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import errno
 import logging
 import math
+import queue
 import socket
 import re
 import threading
@@ -25,6 +27,16 @@ from atv_player.player.bluray_iso import (
 from atv_player.proxy.ad_filter import MODE_MARKERS
 from atv_player.proxy.cenc import CencRangeReader
 from atv_player.proxy.m3u8 import rewrite_playlist
+from atv_player.proxy.range_proxy import (
+    ClientDisconnectError,
+    RangeProxyRegistry,
+    RangeProxySource,
+    RangeProxyTask,
+    ensure_probed,
+    open_sequential_stream,
+    parse_range_header,
+    serve_parallel_range,
+)
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
 from atv_player.request_headers import normalize_media_request_headers
@@ -34,6 +46,7 @@ logger = logging.getLogger(__name__)
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_STREAM_CHUNK_SIZE = 256 * 1024
 _CENC_STREAM_CHUNK_SIZE = 256 * 1024
+_RANGE_PROXY_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
 _TLS_PROTOCOL_MISMATCH_MARKERS = (
     "wrong version number",
@@ -49,6 +62,79 @@ def _is_client_disconnect_error(exc: BaseException) -> bool:
     if isinstance(exc, socket.error):
         return True
     return False
+
+
+def _summarize_range_proxy_url(url: str) -> str:
+    parsed = urlparse(url or "")
+    if not parsed.netloc:
+        return url
+    path = parsed.path or "/"
+    return f"{parsed.scheme}://{parsed.netloc}{path[:96]}"
+
+
+class _RangeProxyChunkChannel:
+    """并行分片生产者线程 → 响应线程的有界字节通道。
+
+    有界队列提供背压;`first()` 是提交门限——拿到首块之前播放器 socket 未写,
+    并行失败可整体降级顺序重发;一旦首块已写出,中途失败只能断流让播放器重试。
+    """
+
+    _SENTINEL = None
+
+    def __init__(self, maxsize: int = 8) -> None:
+        self._chunks: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._failure: Exception | None = None
+        self._closed = False
+
+    def put(self, chunk: bytes) -> None:
+        while not self._closed:
+            try:
+                self._chunks.put(chunk, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        while True:
+            try:
+                self._chunks.put(self._SENTINEL, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def fail(self, exc: Exception) -> None:
+        self._failure = exc
+        self.close()
+
+    def abort(self) -> None:
+        self.fail(ClientDisconnectError("client disconnected"))
+
+    @property
+    def failure(self) -> Exception | None:
+        return self._failure
+
+    def first(self) -> bytes | None:
+        item = self._chunks.get()
+        return None if item is self._SENTINEL else item
+
+    def iter_after(self):
+        """首块已由调用方单独写出,这里只继续吐后续块(勿重复 yield 首块)。"""
+        while True:
+            item = self._chunks.get()
+            if item is self._SENTINEL:
+                return
+            yield item
+
+    def drain(self) -> None:
+        self._closed = True
+        while True:
+            try:
+                self._chunks.get(timeout=0.1)
+            except queue.Empty:
+                return
 
 
 def _is_dash_data_uri(url: str) -> bool:
@@ -388,6 +474,7 @@ class LocalHlsProxyServer:
         self._get = get
         self._stream = stream
         self._registry = ProxySessionRegistry()
+        self._range_registry = RangeProxyRegistry()
         self._ad_filter_mode = ad_filter_mode
         self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
         self._server: ThreadingHTTPServer | None = None
@@ -543,6 +630,332 @@ class LocalHlsProxyServer:
                 selected_video_id=selected_video_id,
             )
         return f"http://{self.host}:{self.port}/dash/{quote(token)}.mpd"
+
+    def create_range_proxy_url(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        *,
+        drive_type: str = "",
+        concurrency: int = 0,
+        chunk_size: int = 0,
+        sources: list[RangeProxySource] | None = None,
+        task_id: str = "",
+        file_name: str = "",
+        content_type: str = "",
+    ) -> str | None:
+        """注册客户端多线程 Range 代理任务,返回本地代理 URL。
+
+        返回 None 表示该盘类型未配置并发规则(或不支持并行),调用方应继续用原地址播放。
+        """
+        resolved_task_id = task_id or sha256(url.encode("utf-8")).hexdigest()[:16]
+        task = RangeProxyTask(
+            resolved_task_id,
+            url,
+            headers,
+            drive_type=drive_type,
+            concurrency=concurrency,
+            chunk_size=chunk_size,
+            sources=sources,
+            content_type=content_type,
+            file_name=file_name,
+        )
+        if not task.enabled:
+            return None
+        self.start()
+        self._range_registry.register(task)
+        return f"http://{self.host}:{self.port}/driver/{quote(resolved_task_id, safe='')}"
+
+    def close_range_task(self, task_id: str) -> None:
+        self._range_registry.remove(task_id)
+
+    def _range_session(self, path: str) -> RangeProxyTask | None:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/driver/"):
+            return None
+        task_id = unquote(parsed.path[len("/driver/") :])
+        return self._range_registry.get(task_id)
+
+    @staticmethod
+    def _range_proxy_headers(
+        task: RangeProxyTask,
+        probe,
+        start: int,
+        end: int,
+        total: int,
+        is_partial: bool,
+    ) -> list[tuple[str, str]]:
+        headers = [
+            ("Content-Type", probe.content_type or "application/octet-stream"),
+            ("Accept-Ranges", "bytes"),
+        ]
+        if is_partial and total > 0:
+            headers.append(("Content-Range", f"bytes {start}-{end}/{total}"))
+        if end >= start:
+            headers.append(("Content-Length", str(end - start + 1)))
+        if task.file_name:
+            # http.server 的 send_header 按 latin-1 严格编码,中文文件名会直接抛异常;
+            # 非 ASCII 名走 RFC 5987 filename* 编码(纯 ASCII)。
+            safe_name = (
+                task.file_name.replace('"', "").replace("\r", "").replace("\n", "")
+            )
+            try:
+                safe_name.encode("ascii")
+                headers.append(
+                    ("Content-Disposition", f'attachment; filename="{safe_name}"')
+                )
+            except UnicodeEncodeError:
+                encoded = quote(safe_name)
+                headers.append(
+                    ("Content-Disposition", f"attachment; filename*=UTF-8''{encoded}")
+                )
+        return headers
+
+    def _resolve_range_proxy_span(
+        self,
+        task: RangeProxyTask,
+        request_headers: dict[str, str],
+    ) -> tuple[object, int, int, int, bool] | tuple[int, bytes, list[tuple[str, str]]]:
+        """探测 + Range 解析。返回 ("ok", probe, start, end, total, is_partial) 或 ("error", payload, headers)。"""
+        try:
+            probe = ensure_probed(task, get=self._get)
+        except Exception as exc:
+            logger.warning(
+                "Range proxy probe failed task=%s url=%s error=%s",
+                task.task_id,
+                _summarize_range_proxy_url(task.url),
+                exc,
+                extra={"log_category": "network", "log_source": "app"},
+            )
+            return 502, f"range proxy probe failed: {exc}".encode("utf-8"), []
+        total = probe.total_length
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = parse_range_header(range_header, total) if range_header else None
+        if range_header and parsed_range is None and total > 0:
+            return (
+                416,
+                b"invalid range",
+                [("Content-Range", f"bytes */{total}")],
+            )
+        if parsed_range is not None:
+            start, end = parsed_range
+            return "ok", probe, start, end, total, True
+        if total > 0:
+            return "ok", probe, 0, total - 1, total, False
+        return "ok", probe, 0, -1, -1, False
+
+    def _send_range_proxy_error(
+        self,
+        handler: BaseHTTPRequestHandler,
+        status: int,
+        payload: bytes,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
+        handler.send_response(status)
+        if extra_headers:
+            for key, value in extra_headers:
+                handler.send_header(key, value)
+        handler.send_header("Content-Length", str(len(payload)))
+        handler.end_headers()
+        try:
+            handler.wfile.write(payload)
+        except Exception as exc:
+            if not _is_client_disconnect_error(exc):
+                raise
+
+    def _stream_range_proxy_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/driver/"):
+            return False
+        self._range_registry.expire()
+        task = self._range_session(path)
+        if task is None:
+            self._send_range_proxy_error(handler, 404, b"missing range proxy task")
+            return True
+        task.refresh_access()
+        task.active_sessions += 1
+        try:
+            resolved = self._resolve_range_proxy_span(task, request_headers)
+            if resolved[0] != "ok":
+                _status, payload, extra_headers = resolved
+                self._send_range_proxy_error(handler, _status, payload, extra_headers)
+                return True
+            _tag, probe, start, end, total, is_partial = resolved
+            if task.state != "ready_parallel" or end < start or task.should_use_sequential_fallback():
+                return self._serve_range_proxy_sequential(handler, task, probe, start, end, total, is_partial)
+            return self._serve_range_proxy_parallel(handler, task, probe, start, end, total, is_partial)
+        finally:
+            task.active_sessions -= 1
+
+    def _serve_range_proxy_parallel(
+        self,
+        handler: BaseHTTPRequestHandler,
+        task: RangeProxyTask,
+        probe,
+        start: int,
+        end: int,
+        total: int,
+        is_partial: bool,
+    ) -> bool:
+        channel = _RangeProxyChunkChannel()
+        stop_event = threading.Event()
+
+        def produce() -> None:
+            try:
+                serve_parallel_range(task, start, end, channel.put, get=self._get, stop_event=stop_event)
+                channel.close()
+            except ClientDisconnectError:
+                channel.abort()
+            except Exception as exc:  # noqa: BLE001 - 首块给出前可整体降级,之后只能断流
+                channel.fail(exc)
+
+        producer = threading.Thread(
+            target=produce,
+            daemon=True,
+            name=f"range-proxy-producer-{task.task_id}",
+        )
+        producer.start()
+        try:
+            first = channel.first()
+        except BaseException:
+            stop_event.set()
+            channel.drain()
+            raise
+        if first is None:
+            # 尚未向播放器写出任何字节:并行失败可整体降级为顺序流式重发。
+            stop_event.set()
+            channel.drain()
+            failure = channel.failure
+            logger.info(
+                "Range proxy parallel fetch failed, fallback to sequential task=%s url=%s failure=%s",
+                task.task_id,
+                _summarize_range_proxy_url(task.url),
+                failure,
+                extra={"log_category": "network", "log_source": "app"},
+            )
+            return self._serve_range_proxy_sequential(handler, task, probe, start, end, total, is_partial)
+        status = 206 if is_partial else 200
+        handler.send_response(status)
+        for key, value in self._range_proxy_headers(task, probe, start, end, total, is_partial):
+            handler.send_header(key, value)
+        handler.end_headers()
+        try:
+            handler.wfile.write(first)
+            for chunk in channel.iter_after():
+                handler.wfile.write(chunk)
+        except Exception as exc:
+            stop_event.set()
+            channel.drain()
+            if not _is_client_disconnect_error(exc):
+                # 响应头已提交:只能断开连接,绝不能往同一 socket 补写 502
+                # (否则一个响应里出现两个状态行/Content-Length,Chromium 报
+                # ERR_RESPONSE_HEADERS_MULTIPLE_CONTENT_LENGTH)。
+                logger.warning(
+                    "Range proxy stream write failed task=%s error=%s",
+                    task.task_id,
+                    exc,
+                    extra={"log_category": "network", "log_source": "app"},
+                )
+            return True
+        stop_event.set()
+        channel.drain()
+        if channel.failure is not None:
+            # 响应已部分写出,无法重新开始;中断连接让播放器重试(后续请求自动降级顺序模式)。
+            logger.warning(
+                "Range proxy stream interrupted after commit task=%s failure=%s",
+                task.task_id,
+                channel.failure,
+                extra={"log_category": "network", "log_source": "app"},
+            )
+        return True
+
+    def _serve_range_proxy_sequential(
+        self,
+        handler: BaseHTTPRequestHandler,
+        task: RangeProxyTask,
+        probe,
+        start: int,
+        end: int,
+        total: int,
+        is_partial: bool,
+    ) -> bool:
+        stream_end = end if end >= start else None
+        try:
+            response, _translated_start = open_sequential_stream(task, start, stream_end, stream=self._stream)
+        except Exception as exc:
+            self._send_range_proxy_error(handler, 502, f"range proxy upstream failed: {exc}".encode("utf-8"))
+            return True
+        with response:
+            try:
+                response.raise_for_status()
+            except Exception as exc:
+                response.close()
+                self._send_range_proxy_error(handler, 502, f"range proxy upstream failed: {exc}".encode("utf-8"))
+                return True
+            upstream_headers = {
+                str(name).lower(): str(value)
+                for name, value in response.headers.items()
+            }
+            status = 206 if is_partial or response.status_code == 206 else 200
+            handler.send_response(status)
+            local_headers = dict(self._range_proxy_headers(task, probe, start, end, total, is_partial))
+            if "Content-Length" not in local_headers and "content-length" in upstream_headers:
+                local_headers["Content-Length"] = upstream_headers["content-length"]
+            for key, value in local_headers.items():
+                handler.send_header(key, value)
+            handler.end_headers()
+            try:
+                for chunk in response.iter_bytes(chunk_size=_RANGE_PROXY_STREAM_CHUNK_SIZE):
+                    if chunk:
+                        handler.wfile.write(chunk)
+            except Exception as exc:
+                if not _is_client_disconnect_error(exc):
+                    logger.warning(
+                        "Range proxy sequential stream failed task=%s error=%s",
+                        task.task_id,
+                        exc,
+                        extra={"log_category": "network", "log_source": "app"},
+                    )
+                # 响应头已提交:断开连接即可,不得补写错误响应。
+        return True
+
+    def _send_range_proxy_head_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        if not urlparse(path).path.startswith("/driver/"):
+            return False
+        task = self._range_session(path)
+        if task is None:
+            handler.send_response(404)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return True
+        task.refresh_access()
+        resolved = self._resolve_range_proxy_span(task, request_headers)
+        if resolved[0] != "ok":
+            _status, _payload, extra_headers = resolved
+            handler.send_response(_status)
+            for key, value in extra_headers:
+                handler.send_header(key, value)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return True
+        _tag, probe, start, end, total, is_partial = resolved
+        handler.send_response(206 if is_partial else 200)
+        for key, value in self._range_proxy_headers(task, probe, start, end, total, is_partial):
+            handler.send_header(key, value)
+        if end < start:
+            handler.send_header("Content-Length", "0")
+        handler.end_headers()
+        return True
 
     def _dash_session_for_url(self, dash_url: str) -> ProxySession | None:
         parsed = urlparse(dash_url)
@@ -1193,6 +1606,8 @@ class LocalHlsProxyServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 try:
+                    if parent._stream_range_proxy_response(self.path, dict(self.headers.items()), self):
+                        return
                     if parent._stream_dash_asset_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._stream_iso_response(self.path, dict(self.headers.items()), self):
@@ -1228,6 +1643,8 @@ class LocalHlsProxyServer:
 
             def do_HEAD(self) -> None:
                 try:
+                    if parent._send_range_proxy_head_response(self.path, dict(self.headers.items()), self):
+                        return
                     if parent._send_dash_asset_head_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._send_iso_head_response(self.path, dict(self.headers.items()), self):

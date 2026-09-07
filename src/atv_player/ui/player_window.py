@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import html
 import inspect
 import json
@@ -119,6 +120,11 @@ from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.controls import PlayerControls
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
+from atv_player.proxy.range_proxy import (
+    RangeProxySource,
+    normalize_drive_type,
+    parse_drive_type_from_url,
+)
 from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack, _render_profile_requires_shutdown
 from atv_player.player.startup import PlaybackStartupCoordinator, PlaybackStartupStage, PlaybackStartupState
 from atv_player.paths import app_cache_dir
@@ -848,6 +854,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         following_toggle=None,
         following_progress_reporter=None,
         heat_controller=None,
+        drive_link_loader=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -873,6 +880,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             lambda *_args, **_kwargs: None
         )
         self._heat_controller = heat_controller
+        self._drive_link_loader = drive_link_loader
         self._heat_summary_request_id = 0
         self._heat_summary_text = ""
         self._default_video_cover_source: str | None = None
@@ -5442,6 +5450,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         def prepare() -> None:
             try:
+                drive_prepared_url = self._prepare_drive_parallel_url(current_item, source_url)
+            except Exception:
+                drive_prepared_url = ""
+                logger.warning(
+                    "网盘直链解析失败,回退原地址播放 url=%s",
+                    _summarize_media_url(source_url),
+                    exc_info=True,
+                )
+            if drive_prepared_url:
+                if not self._is_window_alive():
+                    return
+                self._playback_prepare_signals.succeeded.emit(request_id, drive_prepared_url)
+                return
+            try:
                 if requested_dash_video_id:
                     try:
                         prepared_url = self._m3u8_ad_filter.prepare(
@@ -5465,6 +5487,88 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         self._enqueue_controller_task("播放地址预处理失败", prepare)
         return True
+
+    def _prepare_drive_parallel_url(self, current_item: PlayItem, source_url: str) -> str:
+        """网盘播放:后端代理地址 → 客户端多线程直链代理地址。
+
+        解析失败/服务端不支持/未配置并行规则的盘类型一律返回空串,由调用方回退原地址,
+        播放行为与旧版(后端代理)完全一致。
+        """
+        if not _is_backend_proxy_url(source_url):
+            return ""
+        loader = self._drive_link_loader
+        if loader is None:
+            return ""
+        drive_path = str(current_item.path or "").strip()
+        if not drive_path or drive_path.lower().endswith(".iso"):
+            # 蓝光 ISO 仍走本地 ISO 检查流程(上游为后端代理地址)
+            return ""
+        resource_id = str(getattr(self.session, "drive_resource_id", "") or "")
+        try:
+            payload = loader(resource_id, drive_path)
+        except Exception as exc:
+            # 旧版服务端无 /api/drive/link 端点等场景:回退后端代理地址播放。
+            logger.info(
+                "网盘直链解析不可用,回退后端代理 resource_id=%s error=%s",
+                resource_id or "-",
+                exc,
+            )
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        direct_url = str(payload.get("url") or "").strip()
+        if not direct_url.startswith(("http://", "https://")):
+            return ""
+        # PowerList 直链可能带 #proxy=0 / #x-referer=raw 标记片段,对上游请求无意义,剥掉。
+        for marker in ("#proxy=0", "#x-referer=raw"):
+            index = direct_url.find(marker)
+            if index >= 0:
+                direct_url = direct_url[:index]
+        headers = payload.get("header")
+        normalized_headers = {
+            str(key): str(value)
+            for key, value in (headers.items() if isinstance(headers, dict) else [])
+            if value is not None
+        }
+        drive_type = normalize_drive_type(
+            str(payload.get("type") or "") or parse_drive_type_from_url(direct_url)
+        )
+        sources: list[RangeProxySource] | None = None
+        multi_urls = payload.get("multiUrls")
+        if isinstance(multi_urls, list):
+            candidates = [
+                RangeProxySource(
+                    str(entry.get("url") or "").strip(),
+                    {
+                        str(key): str(value)
+                        for key, value in (entry["header"].items() if isinstance(entry.get("header"), dict) else [])
+                        if value is not None
+                    },
+                )
+                for entry in multi_urls
+                if isinstance(entry, dict) and str(entry.get("url") or "").strip()
+            ]
+            if len(candidates) >= 2:
+                sources = candidates
+        proxy_server = getattr(self._m3u8_ad_filter, "proxy_server", None)
+        if proxy_server is None:
+            return ""
+        local_url = proxy_server.create_range_proxy_url(
+            direct_url,
+            normalized_headers,
+            drive_type=drive_type,
+            sources=sources,
+            task_id=hashlib.sha1(direct_url.encode("utf-8")).hexdigest()[:16],
+            file_name=str(payload.get("name") or current_item.original_title or current_item.title or ""),
+        )
+        if local_url:
+            logger.info(
+                "网盘播放启用客户端并行代理 type=%s sources=%s path=%s",
+                drive_type or "unknown",
+                len(sources) if sources else 1,
+                drive_path,
+            )
+        return local_url or ""
 
     def _should_skip_playback_prepare(self, current_item: PlayItem) -> bool:
         resolved_url = (current_item.url or "").strip()

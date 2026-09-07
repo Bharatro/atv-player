@@ -208,6 +208,11 @@ class M3U8AdFilter:
             return True
         return _is_remote_proxy_candidate_url(url)
 
+    @property
+    def proxy_server(self) -> LocalHlsProxyServer:
+        """底层本地代理服务器(网盘多线程 Range 代理等复用同一实例/端口)。"""
+        return self._proxy_server
+
     def prepare(
         self,
         url: str,

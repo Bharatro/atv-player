@@ -2179,6 +2179,7 @@ class AppCoordinator(QObject):
         drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
         drive_resolver = getattr(self._api_client, "resolve_drive", None)
         drive_files_loader = getattr(self._api_client, "list_drive_files", None)
+        drive_link_loader = getattr(self._api_client, "resolve_drive_link", None)
         offline_download_detail_loader = getattr(self._api_client, "get_offline_download_detail", None)
         prioritized_plugin_ids = self._startup_prioritized_plugin_ids(config)
         def plugin_loader_task():
@@ -2493,6 +2494,7 @@ class AppCoordinator(QObject):
             drive_detail_loader=drive_detail_loader,
             drive_resolver=drive_resolver,
             drive_files_loader=drive_files_loader,
+            drive_link_loader=drive_link_loader,
             offline_download_detail_loader=offline_download_detail_loader,
             direct_parse_detail_loader=load_direct_parse_detail,
             direct_parse_danmaku_loader=lambda url: load_direct_parse_danmaku(
