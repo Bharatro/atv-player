@@ -69,6 +69,11 @@ def test_collect_system_info_entries_adds_links_for_all_non_platform_rows(
     monkeypatch.setattr(
         diagnostics, "_read_command_version", lambda command, parser: next(versions)
     )
+    monkeypatch.setattr(
+        diagnostics,
+        "active_mpv_library_description",
+        lambda: ("系统", "/usr/lib/x86_64-linux-gnu/libmpv.so.2"),
+    )
 
     entries = diagnostics.collect_system_info_entries()
 
@@ -88,6 +93,9 @@ def test_collect_system_info_entries_adds_links_for_all_non_platform_rows(
             "Node.js", "20.11.1", "https://nodejs.org/en/download"
         ),
         diagnostics.SystemInfoEntry("mpv", "0.39", "https://mpv.io/installation/"),
+        diagnostics.SystemInfoEntry(
+            "libmpv", "系统 /usr/lib/x86_64-linux-gnu/libmpv.so.2"
+        ),
         diagnostics.SystemInfoEntry(
             "ffmpeg", "7.1", "https://www.ffmpeg.org/download.html"
         ),
