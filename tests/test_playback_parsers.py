@@ -7,13 +7,61 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
-from atv_player.playback_parsers import BuiltInPlaybackParserService
+from atv_player.playback_parsers import BuiltInPlaybackParserService, coerce_media_url
 from atv_player.player.resolve_cache import PlaybackResolveCache
 
 
 def _encrypt_xm_payload(text: str, key: str, iv: str) -> str:
     cipher = AES.new(key.encode("utf-8"), AES.MODE_CBC, iv.encode("utf-8"))
     return base64.b64encode(cipher.encrypt(pad(text.encode("utf-8"), AES.block_size))).decode("utf-8")
+
+
+def test_coerce_media_url_passes_plain_string_through() -> None:
+    assert coerce_media_url("  https://media.example/real.m3u8  ") == "https://media.example/real.m3u8"
+    assert coerce_media_url("") == ""
+
+
+def test_coerce_media_url_extracts_from_array_of_strings() -> None:
+    assert coerce_media_url(["https://media.example/real.m3u8", "https://media.example/alt.mp4"]) == (
+        "https://media.example/real.m3u8"
+    )
+
+
+def test_coerce_media_url_prefers_media_url_over_leading_junk_entries() -> None:
+    assert coerce_media_url(["1080P", "https://media.example/real.m3u8"]) == "https://media.example/real.m3u8"
+
+
+def test_coerce_media_url_falls_back_to_first_non_empty_when_no_media_extension() -> None:
+    assert coerce_media_url(["https://backend.example/api/proxy?sign=1"]) == "https://backend.example/api/proxy?sign=1"
+
+
+def test_coerce_media_url_extracts_from_array_of_mappings() -> None:
+    assert coerce_media_url([{"label": "1080P", "url": "https://media.example/real.m3u8"}]) == (
+        "https://media.example/real.m3u8"
+    )
+
+
+def test_coerce_media_url_decodes_json_string_array() -> None:
+    assert coerce_media_url('["https://media.example/real.m3u8"]') == "https://media.example/real.m3u8"
+
+
+def test_coerce_media_url_returns_empty_for_unusable_payloads() -> None:
+    assert coerce_media_url(None) == ""
+    assert coerce_media_url(123) == ""
+    assert coerce_media_url([]) == ""
+    assert coerce_media_url(["", "   "]) == ""
+    assert coerce_media_url("[not json") == "[not json"
+
+
+def test_parser_service_extracts_media_url_from_array_payload() -> None:
+    def fake_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: float, follow_redirects: bool):
+        return httpx.Response(200, json={"parse": 0, "jx": 0, "url": ["标清", "https://media.example/real.m3u8"]})
+
+    service = BuiltInPlaybackParserService(get=fake_get)
+
+    result = service.resolve("qq", "https://site.example/play?id=2", preferred_key="fish")
+
+    assert result.url == "https://media.example/real.m3u8"
 
 
 def test_parser_service_tries_saved_parser_first_and_falls_back() -> None:

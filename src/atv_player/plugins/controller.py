@@ -74,6 +74,7 @@ from atv_player.models import (
     VodItem,
 )
 from atv_player.paths import app_cache_dir
+from atv_player.playback_parsers import coerce_media_url
 from atv_player.player.resume import resolve_resume_index
 from atv_player.plugins.category_overrides import apply_category_overrides, parse_category_overrides_json
 
@@ -1152,7 +1153,7 @@ class SpiderPluginController:
 
     def _build_grouped_play_item(self, detail: VodItem, raw_media: Mapping[object, object]) -> PlayItem | None:
         display_name = str(raw_media.get("name") or "").strip()
-        raw_url = str(raw_media.get("url") or "").strip()
+        raw_url = coerce_media_url(raw_media.get("url"))
         if not raw_url:
             return None
         title = display_name or raw_url
@@ -2556,7 +2557,14 @@ class SpiderPluginController:
         cover_source = str(payload.get("cover") or "").strip()
         parse_required = int(payload.get("parse") or 0) == 1
         item.parse_required = parse_required
-        url = str(payload.get("url") or "").strip()
+        raw_url = payload.get("url")
+        url = coerce_media_url(raw_url)
+        if not isinstance(raw_url, str) and url:
+            logger.info(
+                "playerContent returned array-format url, extracted media url plugin=%s source=%s",
+                self._plugin_name,
+                item.vod_id,
+            )
         if _looks_like_offline_download_link(url):
             if self._offline_download_detail_loader is None:
                 raise ValueError("当前插件未配置磁力链接解析")

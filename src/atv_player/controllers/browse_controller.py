@@ -6,6 +6,7 @@ from collections.abc import Callable
 from urllib.parse import urlparse
 
 from atv_player.models import ExternalSubtitleOption, OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
+from atv_player.playback_parsers import coerce_media_url
 from atv_player.playlist_sorting import parse_size_bytes
 from atv_player.share_types import get_share_type_name
 from atv_player.time_utils import format_local_datetime
@@ -87,7 +88,7 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
     return PlayItem(
         title=title,
         original_title=original_title,
-        url=str(payload.get("url") or ""),
+        url=coerce_media_url(payload.get("url")),
         path=str(payload.get("path") or ""),
         index=index,
         size=parse_size_bytes(payload.get("size")),
@@ -111,7 +112,7 @@ def map_drive_video_to_play_item(
     return PlayItem(
         title=title or "未命名",
         original_title=str(payload.get("name") or title or ""),
-        url=str(payload.get("url") or ""),
+        url=coerce_media_url(payload.get("url")),
         path=str(payload.get("path") or ""),
         index=index,
         size=parse_size_bytes(payload.get("size")),

@@ -21,6 +21,36 @@ def _looks_like_media_url(value: str) -> bool:
     return bool(re.search(r"\.(m3u8|mp4|rmvb|avi|wmv|flv|mkv|webm|mov|m3u)(?!\w)", value.strip(), re.IGNORECASE))
 
 
+def _media_url_candidates(raw: object) -> list[str]:
+    if isinstance(raw, Mapping):
+        return _media_url_candidates(raw.get("url"))
+    if isinstance(raw, (list, tuple)):
+        candidates: list[str] = []
+        for entry in raw:
+            candidates.extend(_media_url_candidates(entry))
+        return candidates
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if candidate.startswith("["):
+            try:
+                decoded = json.loads(candidate)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, list):
+                return _media_url_candidates(decoded)
+        return [candidate] if candidate else []
+    return []
+
+
+def coerce_media_url(raw: object) -> str:
+    """部分采集源把播放地址返回为数组/JSON 字符串,直接 str() 会得到垃圾串导致黑屏。"""
+    candidates = _media_url_candidates(raw)
+    for candidate in candidates:
+        if _looks_like_media_url(candidate):
+            return candidate
+    return candidates[0] if candidates else ""
+
+
 def _normalize_media_url(value: str) -> str:
     candidate = value.strip()
     parsed = urlsplit(candidate)
@@ -190,7 +220,7 @@ class BuiltInPlaybackParserService:
             **build_httpx_kwargs_for_url(self._proxy_decider, parser.api),
         )
         payload = response.json()
-        media_url = _normalize_media_url(str(payload.get("url") or ""))
+        media_url = _normalize_media_url(coerce_media_url(payload.get("url")))
         if payload.get("parse") == 0 or payload.get("jx") == 0 or _looks_like_media_url(media_url):
             if not _looks_like_media_url(media_url):
                 raise ValueError("返回地址不可播放")
@@ -270,7 +300,7 @@ class BuiltInPlaybackParserService:
         start = decrypted.find("{")
         if start != -1:
             payload = json.loads(decrypted[start:])
-            return _normalize_media_url(str(payload.get("url") or "")), _normalize_headers(
+            return _normalize_media_url(coerce_media_url(payload.get("url"))), _normalize_headers(
                 payload.get("header") or payload.get("headers")
             )
         if _looks_like_media_url(value):
