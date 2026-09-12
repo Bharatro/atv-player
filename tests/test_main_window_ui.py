@@ -11606,6 +11606,34 @@ def test_main_window_prepares_metadata_hydrator_for_browse_request(qtbot) -> Non
     assert prepared.metadata_hydrator is marker
 
 
+def test_main_window_prepares_metadata_services_for_msub_request(qtbot) -> None:
+    hydrator_marker = object()
+    scrape_marker = object()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=SimpleNamespace(load_items=lambda: [], refresh=lambda: None),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        metadata_hydrator_factory=lambda **_: hydrator_marker,
+        metadata_scrape_service_factory=lambda **_: scrape_marker,
+    )
+    qtbot.addWidget(window)
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="msub:36", vod_name="凡人修仙传"),
+        playlist=[PlayItem(title="第1集", url="msubep-36-1")],
+        clicked_index=0,
+        source_kind="msub",
+        source_mode="detail",
+        source_vod_id="msub:36",
+    )
+
+    prepared = window._prepare_request_for_open(request)
+
+    assert prepared.metadata_hydrator is hydrator_marker
+    assert prepared.metadata_scrape_service is scrape_marker
+
+
 def test_main_window_telegram_open_preserves_list_title_as_media_title(qtbot, monkeypatch) -> None:
     class RecordingPlayerWindow:
         def __init__(self, controller, config, save_config) -> None:

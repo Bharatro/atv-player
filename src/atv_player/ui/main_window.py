@@ -6693,7 +6693,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_hydrator is None
             and self._metadata_hydrator_factory is not None
-            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "bilibili", "msub"}
         ):
             request.metadata_hydrator = self._metadata_hydrator_factory(
                 request=request,
@@ -6704,7 +6704,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.metadata_scrape_service is None
             and self._metadata_scrape_service_factory is not None
-            and request.source_kind in {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "msub"}
         ):
             request.metadata_scrape_service = self._metadata_scrape_service_factory(
                 request=request,

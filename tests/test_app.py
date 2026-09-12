@@ -9503,6 +9503,24 @@ def test_app_coordinator_metadata_factories_support_bilibili_season_id_detail_fi
     assert scrape_service is not None
 
 
+def test_app_coordinator_metadata_factories_support_msub_source(tmp_path, monkeypatch) -> None:
+    class FakeRepo(_FakeRepoBase):
+        def load_config(self) -> AppConfig:
+            return AppConfig(metadata_enhancement_enabled=True)
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    hydrator_factory = coordinator._build_metadata_hydrator_factory(object())
+    scrape_factory = coordinator._build_metadata_scrape_service_factory(object())
+    vod = VodItem(vod_id="msub:36", vod_name="凡人修仙传", vod_year="2020")
+
+    hydrate = hydrator_factory(source_kind="msub", vod=vod)
+    scrape_service = scrape_factory(source_kind="msub", vod=vod)
+
+    assert callable(hydrate)
+    assert scrape_service is not None
+
+
 def test_app_coordinator_metadata_factories_support_telegram_source(monkeypatch, tmp_path) -> None:
     class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:

@@ -954,7 +954,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_hydrator_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "msub"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request
@@ -1000,7 +1000,7 @@ class AppCoordinator(QObject):
 
     def _build_metadata_scrape_service_factory(self, api_client: ApiClient):
         cache = MetadataCache(app_cache_dir() / "metadata")
-        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili"}
+        supported_sources = {"browse", "telegram", "telegram_channel", "plugin", "emby", "jellyfin", "feiniu", "bilibili", "msub"}
 
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key
