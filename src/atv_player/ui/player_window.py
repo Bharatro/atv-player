@@ -1914,7 +1914,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.skip_banner.setStyleSheet(
             f"""
             QWidget#skipConfirmBanner {{
-                background-color: {player_tokens.player_scrim};
+                background-color: {player_tokens.player_overlay_bg};
                 border: 1px solid {player_tokens.player_button_border};
                 border-radius: 16px;
             }}
