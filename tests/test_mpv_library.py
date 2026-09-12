@@ -486,6 +486,47 @@ def test_prepare_prefers_system_library_over_builtin(search_dirs, monkeypatch) -
     assert loads == [str(system_library)]
 
 
+def test_prepare_overrides_find_library_for_mpv(search_dirs, monkeypatch) -> None:
+    """预载胜出后 find_library('mpv') 必须指向胜者,防止 python-mpv 绑到别处。"""
+    import ctypes.util
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    system_library = search_dirs[0].parent / "system" / "libmpv.so.2"
+    system_library.parent.mkdir(parents=True, exist_ok=True)
+    system_library.write_bytes(b"")
+    monkeypatch.setattr(
+        mpv_library, "resolve_system_mpv_library", lambda: system_library
+    )
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+    monkeypatch.delenv("PATH", raising=False)
+
+    assert prepare_custom_mpv_library() == system_library
+    assert ctypes.util.find_library("mpv") == str(system_library)
+    # 其它库名委托原始实现,不受覆写影响
+    assert ctypes.util.find_library("c")
+
+
+def test_reset_restores_original_find_library(search_dirs, monkeypatch) -> None:
+    import ctypes.util
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    system_library = search_dirs[0].parent / "system" / "libmpv.so.2"
+    system_library.parent.mkdir(parents=True, exist_ok=True)
+    system_library.write_bytes(b"")
+    monkeypatch.setattr(
+        mpv_library, "resolve_system_mpv_library", lambda: system_library
+    )
+    monkeypatch.setattr(ctypes, "CDLL", FakeCDLL)
+    monkeypatch.delenv("PATH", raising=False)
+
+    original = ctypes.util.find_library
+    prepare_custom_mpv_library()
+    assert ctypes.util.find_library is not original
+
+    mpv_library._reset_custom_mpv_library_state()
+    assert ctypes.util.find_library is original
+
+
 def test_prepare_falls_back_to_builtin_when_system_library_broken(
     search_dirs, monkeypatch
 ) -> None:

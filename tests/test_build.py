@@ -97,6 +97,39 @@ def test_find_libmpv_uses_repo_local_windows_runtime_dir(monkeypatch, tmp_path) 
     assert build.find_libmpv("windows") == [(dll_path, ".")]
 
 
+def test_find_libmpv_linux_prefers_local_build_over_distro(monkeypatch) -> None:
+    local_dir = "/usr/local/lib/x86_64-linux-gnu"
+    distro_dir = "/usr/lib/x86_64-linux-gnu"
+    versioned = Path(f"{local_dir}/libmpv.so.2")
+
+    def fake_glob(self, pattern):
+        full = str(self / pattern)
+        if full.startswith(f"{local_dir}/libmpv.so"):
+            # 目录里同时有无版本后缀的开发链接与带版本的真实库,应选后者
+            return [Path(f"{local_dir}/libmpv.so"), versioned]
+        if full.startswith(f"{distro_dir}/libmpv.so"):
+            return [Path(f"{distro_dir}/libmpv.so.2")]
+        return []
+
+    monkeypatch.setattr(Path, "glob", fake_glob)
+
+    assert build.find_libmpv("linux") == [(versioned, ".")]
+
+
+def test_find_libmpv_linux_falls_back_to_distro_without_local(monkeypatch) -> None:
+    distro = Path("/usr/lib/x86_64-linux-gnu/libmpv.so.2")
+
+    def fake_glob(self, pattern):
+        full = str(self / pattern)
+        if full.startswith("/usr/lib/x86_64-linux-gnu/libmpv.so"):
+            return [distro]
+        return []
+
+    monkeypatch.setattr(Path, "glob", fake_glob)
+
+    assert build.find_libmpv("linux") == [(distro, ".")]
+
+
 def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_path) -> None:
     libmpv = tmp_path / "libmpv.so.2"
     libmpv.write_bytes(b"so")

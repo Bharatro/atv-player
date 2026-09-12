@@ -151,6 +151,12 @@ def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
 
     if platform_id == "linux":
         search_patterns = [
+            # 优先本地构建的新版(scripts/build_mpv.sh 安装到 /usr/local),
+            # 发行版 /usr/lib 里的版本往往过旧(如 noble 的 0.37 不支持
+            # deinterlace=auto)。
+            "/usr/local/lib/x86_64-linux-gnu/libmpv.so*",
+            "/usr/local/lib64/libmpv.so*",
+            "/usr/local/lib/libmpv.so*",
             "/usr/lib/x86_64-linux-gnu/libmpv.so*",
             "/usr/lib64/libmpv.so*",
             "/usr/lib/libmpv.so*",
@@ -158,7 +164,8 @@ def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
         for pattern in search_patterns:
             matches = sorted(Path("/").glob(pattern.lstrip("/")))
             if matches:
-                return [(matches[0], ".")]
+                versioned = [m for m in matches if m.name == "libmpv.so.2"]
+                return [(versioned[0] if versioned else matches[0], ".")]
         raise FileNotFoundError("libmpv was not found on Linux")
 
     if platform_id == "macos":

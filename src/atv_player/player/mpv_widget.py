@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QCoreApplication, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -409,7 +409,6 @@ class MpvWidget(QWidget):
         options = dict(
             wid=str(int(self.winId())),
             hwdec="auto-safe",
-            deinterlace="auto",
             force_window="yes",
             audio_spdif="no",
             ad="ffmpeg",
@@ -596,7 +595,31 @@ class MpvWidget(QWidget):
             raise original_exc
         if sys.platform.startswith("win"):
             self._log_windows_mpv_runtime_diagnostics("after-create", mpv_module=mpv)
+        # mpv 0.27~0.38 只接受 yes/no,构造参数里带 auto 会让整个实例化失败,
+        # 因此延后到实例存活后再按能力设置。
+        self._apply_deinterlace_preference(player)
         return player
+
+    def _apply_deinterlace_preference(self, player: Any | None = None) -> None:
+        target = self._player if player is None else player
+        if target is None or getattr(target, "core_shutdown", False):
+            return
+        for value in ("auto", "no"):
+            try:
+                if hasattr(type(target), "__setitem__"):
+                    target["deinterlace"] = value
+                else:
+                    target.deinterlace = value
+            except Exception:
+                continue
+            if target is self._player:
+                self._player_property_cache["deinterlace"] = value
+            if value != "auto":
+                logger.info(
+                    "当前 libmpv 不支持 deinterlace=auto,已回退为 no",
+                    extra={"log_category": "player", "log_source": "app"},
+                )
+            return
 
     def _ensure_player(self) -> None:
         if self._player is not None and not getattr(self._player, "core_shutdown", False):
@@ -926,7 +949,7 @@ class MpvWidget(QWidget):
         if sys.platform.startswith("win") and hwdec == "auto-copy":
             hwdec = "auto-safe"
         self._set_player_property("hwdec", hwdec)
-        self._set_player_property("deinterlace", "auto")
+        self._apply_deinterlace_preference()
 
     def _is_missing_mpv_property_error(self, exc: Exception) -> bool:
         return "property does not exist" in str(exc)

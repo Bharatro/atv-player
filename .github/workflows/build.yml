@@ -46,6 +46,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl libmpv-dev libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
 
+      - name: Cache libmpv build workspace
+        if: matrix.platform == 'linux'
+        uses: actions/cache@v4
+        with:
+          path: build/mpv-build
+          key: libmpv-build-${{ runner.os }}-v1-${{ hashFiles('scripts/build_mpv.sh') }}
+          restore-keys: |
+            libmpv-build-${{ runner.os }}-v1-
+
+      - name: Build libmpv (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get install -y git python3-meson meson ninja-build pkg-config nasm \
+            liblua5.2-dev libxml2-dev libva-dev libvdpau-dev libxpresent-dev
+          scripts/build_mpv.sh --jobs "$(nproc)"
+
       - name: Install Linux AppImage tool
         if: matrix.platform == 'linux'
         run: |

@@ -54,6 +54,40 @@ _PYTHON_MPV_WINDOWS_LOOKUP_NAMES = ("mpv-2.dll", "libmpv-2.dll", "mpv-1.dll")
 _PREPARED_STATE: dict[str, object] = {}
 
 
+def _install_find_library_override(path: Path) -> None:
+    """让 `ctypes.util.find_library('mpv')` 返回已预载库的绝对路径。
+
+    python-mpv 导入时按 `find_library` 的结果 CDLL 后端。冻结环境下
+    LD_LIBRARY_PATH 指向 _internal,较新 Python 3.12 的 gcc/ld 回退链会搜
+    LD_LIBRARY_PATH 并返回内置库的绝对路径;按绝对路径 dlopen 不做 soname
+    匹配,不会命中已预载的胜者,新者胜预载因此失效。固定返回胜者绝对路径
+    后,python-mpv 与预载使用同一参数,dlopen 直接复用同一对象。
+    """
+    global _ORIGINAL_FIND_LIBRARY
+    if not _is_linux():
+        return
+    import ctypes.util
+
+    prepared = str(path)
+    if getattr(ctypes.util.find_library, "__atv_prepared_mpv__", None) == prepared:
+        return
+
+    if _ORIGINAL_FIND_LIBRARY is None:
+        _ORIGINAL_FIND_LIBRARY = ctypes.util.find_library
+    original = _ORIGINAL_FIND_LIBRARY
+
+    def find_library_with_prepared_mpv(name, _original=original, _prepared=prepared):
+        if name in ("mpv", "mpv.so", "libmpv.so"):
+            return _prepared
+        return _original(name)
+
+    find_library_with_prepared_mpv.__atv_prepared_mpv__ = prepared
+    ctypes.util.find_library = find_library_with_prepared_mpv
+
+
+_ORIGINAL_FIND_LIBRARY = None
+
+
 def _is_windows() -> bool:
     return sys.platform.startswith("win")
 
@@ -378,6 +412,7 @@ def _activate_custom_mpv_library(resolved: Path) -> Path:
         resolved,
         extra={"log_category": "player", "log_source": "app"},
     )
+    _install_find_library_override(resolved)
     _PREPARED_STATE["path"] = resolved
     _PREPARED_STATE["source"] = "custom"
     return resolved
@@ -448,6 +483,7 @@ def _load_preferred_mpv_library(
             note,
             extra={"log_category": "player", "log_source": "app"},
         )
+        _install_find_library_override(path)
         _PREPARED_STATE["path"] = path
         _PREPARED_STATE["source"] = source
         return path
@@ -535,4 +571,10 @@ def custom_mpv_library_diagnostics() -> dict[str, object]:
 
 
 def _reset_custom_mpv_library_state() -> None:
+    global _ORIGINAL_FIND_LIBRARY
+    if _ORIGINAL_FIND_LIBRARY is not None:
+        import ctypes.util
+
+        ctypes.util.find_library = _ORIGINAL_FIND_LIBRARY
+        _ORIGINAL_FIND_LIBRARY = None
     _PREPARED_STATE.clear()

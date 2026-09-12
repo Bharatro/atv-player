@@ -181,7 +181,8 @@ def test_mpv_widget_uses_configured_base_playback_settings(qtbot, monkeypatch) -
     widget._create_player()
 
     assert captured["hwdec"] == "no"
-    assert captured["deinterlace"] == "auto"
+    # deinterlace 延后到实例存活后设置,避免旧 libmpv 拒绝 auto 导致构造失败
+    assert "deinterlace" not in captured
     assert captured["demuxer_max_bytes"] == "768M"
     assert captured["network_timeout"] == 22
     assert captured["demuxer_readahead_secs"] == 45
@@ -363,6 +364,53 @@ def test_mpv_widget_refreshes_runtime_render_profile_on_existing_player(qtbot, m
 
     assert fake_player.options["hwdec"] == "auto-copy"
     assert fake_player.options["deinterlace"] == "auto"
+
+
+def test_mpv_widget_sets_deinterlace_auto_after_player_created(qtbot, monkeypatch) -> None:
+    recorded: list[tuple[str, object]] = []
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def __setitem__(self, key: str, value: object) -> None:
+            recorded.append((key, value))
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+
+    widget._create_player()
+
+    assert ("deinterlace", "auto") in recorded
+
+
+def test_mpv_widget_falls_back_to_no_when_deinterlace_auto_rejected(qtbot, monkeypatch) -> None:
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.deinterlace = None
+
+        def __setitem__(self, key: str, value: object) -> None:
+            if key == "deinterlace" and value == "auto":
+                # mpv 0.27~0.38 只接受 yes/no,auto 会返回 OPTION_ERROR(-7)
+                raise ValueError("Invalid value for mpv option", -7)
+            if key == "deinterlace":
+                self.deinterlace = value
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+
+    player = widget._create_player()
+    assert player.deinterlace == "no"
+
+    # 运行时刷新走同一条受保护的路径,且回退值进属性缓存
+    widget._player = player
+    widget._player_property_cache.clear()
+    widget.apply_runtime_video_output_settings()
+    assert player.deinterlace == "no"
+    assert widget._player_property_cache["deinterlace"] == "no"
 
 
 @pytest.mark.parametrize(
@@ -1333,7 +1381,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
     assert "cache_secs" not in captured
-    assert captured["deinterlace"] == "auto"
+    assert "deinterlace" not in captured
     assert captured["demuxer_max_bytes"] == "512M"
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"
