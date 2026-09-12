@@ -58,7 +58,7 @@ jobs:
       - name: Build libmpv (Linux)
         if: matrix.platform == 'linux'
         run: |
-          sudo apt-get install -y git python3-meson meson ninja-build pkg-config nasm \
+          sudo apt-get install -y git meson ninja-build pkg-config nasm \
             liblua5.2-dev libxml2-dev libva-dev libvdpau-dev libxpresent-dev
           scripts/build_mpv.sh --jobs "$(nproc)"
 
