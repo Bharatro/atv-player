@@ -13054,6 +13054,46 @@ def test_player_window_updates_telemetry_badge_from_video_snapshot(qtbot) -> Non
     assert window.telemetry_label.isHidden() is True
 
 
+def test_player_window_telemetry_toggle_hides_badge_and_persists(qtbot) -> None:
+    saved: list[bool] = []
+
+    class FakeVideo:
+        def telemetry_snapshot(self):
+            return {"video_width": 1920, "video_height": 1080}
+
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.append(True))
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    assert window._telemetry_visible is True
+
+    window._update_telemetry_badge()
+    assert window.telemetry_label.text() == "1920×1080"
+
+    window._set_telemetry_visible(False)
+
+    assert config.player_telemetry_visible is False
+    assert saved == [True]
+    assert window.telemetry_label.text() == ""
+    assert window.telemetry_label.isHidden() is True
+    window._update_telemetry_badge()
+    assert window.telemetry_label.text() == ""
+
+    window._set_telemetry_visible(True)
+
+    assert config.player_telemetry_visible is True
+    window._update_telemetry_badge()
+    assert window.telemetry_label.text() == "1920×1080"
+    assert window.telemetry_label.isHidden() is False
+
+
+def test_player_window_respects_persisted_telemetry_visibility(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(player_telemetry_visible=False))
+    qtbot.addWidget(window)
+
+    assert window._telemetry_visible is False
+
+
 def test_player_window_shader_menu_lists_presets_and_persists_choice(qtbot) -> None:
     applied: list[str] = []
     saved: list[bool] = []
@@ -13179,6 +13219,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "弹幕源",
         "弹幕设置",
         "视频信息",
+        "播放遥测",
         "播放时置顶",
         "退出播放",
     ]
@@ -14067,6 +14108,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "弹幕源",
         "弹幕设置",
         "视频信息",
+        "播放遥测",
         "播放时置顶",
         "退出播放",
     ]

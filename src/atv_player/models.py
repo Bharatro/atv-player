@@ -87,6 +87,7 @@ class AppConfig:
     player_muted: bool = False
     player_wide_mode: bool = False
     player_log_visible: bool = True
+    player_telemetry_visible: bool = True
     preferred_parse_key: str = ""
     preferred_danmaku_enabled: bool = True
     preferred_danmaku_line_count: int = 1

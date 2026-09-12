@@ -1389,6 +1389,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.telemetry_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.telemetry_label.setStyleSheet("font-family: monospace;")
         self.telemetry_label.hide()
+        self._telemetry_visible = bool(getattr(self.config, "player_telemetry_visible", True))
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
         self.progress.set_hover_tooltip_formatter(self._format_progress_tooltip)
         self.progress.setFixedHeight(24)
@@ -9568,6 +9569,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
+        telemetry_action = menu.addAction("播放遥测")
+        telemetry_action.setCheckable(True)
+        telemetry_action.setChecked(self._telemetry_visible)
+        telemetry_action.toggled.connect(self._set_telemetry_visible)
         always_on_top_action = menu.addAction("播放时置顶")
         always_on_top_action.setCheckable(True)
         always_on_top_action.toggled.connect(
@@ -12081,12 +12086,23 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._recent_user_seek_target_seconds = target_seconds
 
     def _update_telemetry_badge(self) -> None:
+        if not self._telemetry_visible:
+            return
         snapshot = self.video.telemetry_snapshot() if hasattr(self.video, "telemetry_snapshot") else {}
         text = _format_telemetry_text(snapshot if isinstance(snapshot, dict) else {})
         if text == self.telemetry_label.text():
             return
         self.telemetry_label.setText(text)
         self.telemetry_label.setVisible(bool(text))
+
+    def _set_telemetry_visible(self, visible: bool) -> None:
+        self._telemetry_visible = visible
+        if not visible:
+            self.telemetry_label.setText("")
+            self.telemetry_label.hide()
+        if self.config is not None and self.config.player_telemetry_visible != visible:
+            self.config.player_telemetry_visible = visible
+            self._save_config()
 
     def _sync_progress_slider(self) -> None:
         if self._slider_dragging:
