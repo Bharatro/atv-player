@@ -30,6 +30,73 @@ class FakeAlivePlayer:
         self.options[key] = value
 
 
+class FakeRuntimePlayer:
+    core_shutdown = False
+
+    def __init__(self) -> None:
+        self.frame_drop_count = 3
+        self.cache_buffering_state = 100
+        self.video_bitrate = None
+        self.audio_bitrate = 69533.0
+        self.audio_codec = "AAC (Advanced Audio Coding)"
+        self.demuxer_cache_state = {"raw-input-rate": 7_201_569, "cache-duration": 3.64}
+
+
+def test_mpv_widget_telemetry_snapshot_combines_cached_and_runtime_values(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = FakeRuntimePlayer()
+    widget._telemetry = {
+        "video-params": {"w": 1920, "h": 1080},
+        "video-format": "h264",
+        "hwdec-current": "nvdec",
+        "container-fps": 23.976,
+    }
+
+    snapshot = widget.telemetry_snapshot()
+
+    assert snapshot["video_width"] == 1920
+    assert snapshot["video_height"] == 1080
+    assert snapshot["video_format"] == "h264"
+    assert snapshot["hwdec_current"] == "nvdec"
+    assert snapshot["container_fps"] == 23.976
+    assert snapshot["frame_drop_count"] == 3
+    assert snapshot["cache_buffering_state"] == 100
+    assert snapshot["video_bitrate"] is None
+    assert snapshot["audio_bitrate"] == 69533.0
+    assert snapshot["audio_codec"] == "AAC (Advanced Audio Coding)"
+    assert snapshot["input_rate_bytes"] == 7_201_569
+    assert snapshot["cache_duration"] == 3.64
+
+
+def test_mpv_widget_telemetry_snapshot_returns_empty_without_player(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = FakeDeadPlayer()
+
+    assert widget.telemetry_snapshot() == {}
+
+
+def test_mpv_widget_telemetry_snapshot_tolerates_missing_runtime_attrs(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class BarePlayer:
+        core_shutdown = False
+
+    widget._player = BarePlayer()
+
+    snapshot = widget.telemetry_snapshot()
+
+    assert snapshot == {
+        "frame_drop_count": None,
+        "cache_buffering_state": None,
+        "video_bitrate": None,
+        "audio_bitrate": None,
+        "audio_codec": None,
+    }
+
+
 def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
@@ -549,6 +616,8 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
                 return
             if name == "eof-reached":
                 self._eof_reached_observer = handler
+                return
+            if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
                 return
             assert name == "pause"
             self._pause_observer = handler
@@ -1605,6 +1674,8 @@ def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) 
             if name == "eof-reached":
                 self._eof_reached_observer = handler
                 return
+            if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
+                return
             assert name == "pause"
             self._pause_observer = handler
 
@@ -1957,6 +2028,10 @@ def test_mpv_widget_registers_property_observers_on_windows(qtbot, monkeypatch) 
         "video-out-params",
         "eof-reached",
         "pause",
+        "video-params",
+        "video-format",
+        "hwdec-current",
+        "container-fps",
     ]
 
 
@@ -2131,6 +2206,8 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
                 return
             if name == "eof-reached":
                 self._eof_reached_observer = handler
+                return
+            if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
                 return
             assert name == "pause"
             self._pause_observer = handler
@@ -2993,6 +3070,8 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
                 return
             if name == "eof-reached":
                 self._eof_reached_observer = handler
+                return
+            if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
                 return
             assert name == "pause"
             self._pause_observer = handler

@@ -11,6 +11,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -345,6 +346,8 @@ class MpvWidget(QWidget):
         self._player: Any | None = None
         self._video_picture_state = "idle"
         self._video_out_params: dict[str, object] = {}
+        self._telemetry: dict[str, object] = {}
+        self._telemetry_handlers: list[object] = []
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
@@ -729,6 +732,7 @@ class MpvWidget(QWidget):
 
         @event_callback("file-loaded")
         def handle_file_loaded(*_args) -> None:
+            self._telemetry.clear()
             self._post_to_widget_thread(self.file_loaded.emit)
 
         self._file_loaded_handler = handle_file_loaded
@@ -783,6 +787,15 @@ class MpvWidget(QWidget):
 
         observe_property("pause", handle_pause_changed)
         self._pause_changed_handler = handle_pause_changed
+
+        self._telemetry_handlers = []
+        for telemetry_property in ("video-params", "video-format", "hwdec-current", "container-fps"):
+            def handle_telemetry_property(_property_name, value, _key=telemetry_property) -> None:
+                # 只写缓存不碰 GUI;徽章由播放器窗口的 1Hz 定时器组装刷新。
+                self._telemetry[_key] = value
+
+            observe_property(telemetry_property, handle_telemetry_property)
+            self._telemetry_handlers.append(handle_telemetry_property)
 
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:
@@ -1466,6 +1479,52 @@ class MpvWidget(QWidget):
         if self._player is None:
             return 0
         return self._seconds_property_value(self._player_property("demuxer-cache-duration", None))
+
+    def telemetry_snapshot(self) -> dict[str, object]:
+        """播放遥测快照,供徽章 1Hz 刷新。
+
+        少变项(分辨率/编码/硬解/帧率)取自事件缓存;持续项按需读取。
+        码率属性以 bit/s 计,下行速率 raw-input-rate 以 byte/s 计(mpv 0.41 实测)。
+        """
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return {}
+        snapshot: dict[str, object] = {}
+        video_params = self._telemetry.get("video-params")
+        if isinstance(video_params, Mapping):
+            snapshot["video_width"] = video_params.get("w")
+            snapshot["video_height"] = video_params.get("h")
+        video_format = self._telemetry.get("video-format")
+        if video_format:
+            snapshot["video_format"] = str(video_format)
+        hwdec_current = self._telemetry.get("hwdec-current")
+        if hwdec_current:
+            snapshot["hwdec_current"] = str(hwdec_current)
+        container_fps = self._telemetry.get("container-fps")
+        if isinstance(container_fps, (int, float)):
+            snapshot["container_fps"] = float(container_fps)
+        snapshot["frame_drop_count"] = self._read_runtime_property("frame-drop-count")
+        snapshot["cache_buffering_state"] = self._read_runtime_property("cache-buffering-state")
+        snapshot["video_bitrate"] = self._read_runtime_property("video-bitrate")
+        snapshot["audio_bitrate"] = self._read_runtime_property("audio-bitrate")
+        snapshot["audio_codec"] = self._read_runtime_property("audio-codec")
+        audio_params = self._read_runtime_property("audio-params")
+        if isinstance(audio_params, Mapping):
+            snapshot["audio_samplerate"] = audio_params.get("samplerate")
+            snapshot["audio_channels"] = audio_params.get("channel-count")
+        demuxer_state = self._read_runtime_property("demuxer-cache-state")
+        if isinstance(demuxer_state, Mapping):
+            snapshot["input_rate_bytes"] = demuxer_state.get("raw-input-rate")
+            snapshot["cache_duration"] = demuxer_state.get("cache-duration")
+        return snapshot
+
+    def _read_runtime_property(self, name: str) -> object:
+        # python-mpv 的 player[name] 走 options/ 前缀,运行时属性必须经属性访问读取。
+        player = self._player
+        try:
+            return getattr(player, name.replace("-", "_"))
+        except AttributeError:
+            return None
 
     def _chapter_label(self, title: str, index: int) -> str:
         return title.strip() or f"章节 {index}"

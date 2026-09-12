@@ -785,6 +785,71 @@ class _PlayerToolDialog(ThemedDialogBase):
         self.resize(*size)
 
 
+def _format_bitrate(bits_per_second: object) -> str:
+    if not isinstance(bits_per_second, (int, float)) or bits_per_second <= 0:
+        return ""
+    if bits_per_second >= 1_000_000:
+        return f"{bits_per_second / 1_000_000:.1f} Mbps"
+    return f"{bits_per_second / 1_000:.0f} kbps"
+
+
+def _format_byte_rate(bytes_per_second: object) -> str:
+    if not isinstance(bytes_per_second, (int, float)) or bytes_per_second <= 0:
+        return ""
+    if bytes_per_second >= 1_000_000:
+        return f"{bytes_per_second / 1_000_000:.1f} MB/s"
+    if bytes_per_second >= 1_000:
+        return f"{bytes_per_second / 1_000:.0f} KB/s"
+    return f"{bytes_per_second:.0f} B/s"
+
+
+def _format_telemetry_text(snapshot: dict) -> str:
+    """组装播放遥测徽章文本;空快照返回空串(徽章隐藏)。"""
+    parts: list[str] = []
+    width = snapshot.get("video_width")
+    height = snapshot.get("video_height")
+    if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+        parts.append(f"{int(width)}×{int(height)}")
+        video_format = str(snapshot.get("video_format") or "").strip()
+        if video_format:
+            parts.append(video_format.upper())
+        hwdec_current = str(snapshot.get("hwdec_current") or "").strip()
+        if hwdec_current:
+            parts.append("软解" if hwdec_current == "no" else f"硬解 {hwdec_current}")
+        container_fps = snapshot.get("container_fps")
+        if isinstance(container_fps, (int, float)) and container_fps > 0:
+            parts.append(f"{container_fps:g}fps")
+        video_bitrate = _format_bitrate(snapshot.get("video_bitrate"))
+        if video_bitrate:
+            parts.append(video_bitrate)
+    else:
+        audio_codec = str(snapshot.get("audio_codec") or "").strip()
+        if audio_codec:
+            parts.append(audio_codec.split(" (")[0].strip())
+        samplerate = snapshot.get("audio_samplerate")
+        if isinstance(samplerate, (int, float)) and samplerate > 0:
+            parts.append(f"{samplerate / 1000:g}kHz")
+        channels = snapshot.get("audio_channels")
+        if isinstance(channels, int) and channels > 0:
+            parts.append(f"{channels}声道")
+        audio_bitrate = _format_bitrate(snapshot.get("audio_bitrate"))
+        if audio_bitrate:
+            parts.append(audio_bitrate)
+    input_rate = _format_byte_rate(snapshot.get("input_rate_bytes"))
+    if input_rate:
+        parts.append(f"↓{input_rate}")
+    cache_duration = snapshot.get("cache_duration")
+    if isinstance(cache_duration, (int, float)) and cache_duration >= 1:
+        parts.append(f"缓冲{cache_duration:.0f}s")
+    buffering = snapshot.get("cache_buffering_state")
+    if isinstance(buffering, (int, float)) and 0 <= buffering < 100:
+        parts.append(f"缓冲中{int(buffering)}%")
+    frame_drops = snapshot.get("frame_drop_count")
+    if isinstance(frame_drops, int) and frame_drops > 0:
+        parts.append(f"丢帧{frame_drops}")
+    return " · ".join(parts)
+
+
 class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _PSEUDO_MAXIMIZED_GEOMETRY_PREFIX = b"ATV_PLAYER_PSEUDO_MAXIMIZED_V1\0"
     _PSEUDO_MAXIMIZED_GEOMETRY_RECT_SIZE = struct.calcsize(">4i")
@@ -1320,6 +1385,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.current_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.duration_label = QLabel("00:00")
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.telemetry_label = QLabel("")
+        self.telemetry_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.telemetry_label.setStyleSheet("font-family: monospace;")
+        self.telemetry_label.hide()
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
         self.progress.set_hover_tooltip_formatter(self._format_progress_tooltip)
         self.progress.setFixedHeight(24)
@@ -1458,6 +1527,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.progress_timer = QTimer(self)
         self.progress_timer.setInterval(1000)
         self.progress_timer.timeout.connect(self._sync_progress_slider)
+        self.telemetry_timer = QTimer(self)
+        self.telemetry_timer.setInterval(1000)
+        self.telemetry_timer.timeout.connect(self._update_telemetry_badge)
         self._cursor_hide_timer = QTimer(self)
         self._cursor_hide_timer.setInterval(100)
         self._cursor_hide_timer.timeout.connect(self._poll_cursor_idle_state)
@@ -1474,7 +1546,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.bottom_area = QWidget()
         self.bottom_area.setObjectName("playerBottomArea")
         self.bottom_area.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.bottom_area.setMaximumHeight(88)
+        self.bottom_area.setMaximumHeight(104)
         bottom_layout = QVBoxLayout(self.bottom_area)
         self.bottom_layout = bottom_layout
         bottom_layout.setContentsMargins(12, 6, 12, 6)
@@ -1486,6 +1558,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         progress_row.addWidget(self.progress, 1)
         progress_row.addWidget(self.duration_label)
         bottom_layout.addLayout(progress_row)
+
+        telemetry_row = QHBoxLayout()
+        telemetry_row.setContentsMargins(0, 0, 0, 0)
+        telemetry_row.addWidget(self.telemetry_label)
+        bottom_layout.addLayout(telemetry_row)
 
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
@@ -3719,6 +3796,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
         self.progress.set_buffer_value(0)
+        self.telemetry_label.setText("")
+        self.telemetry_label.hide()
         self._clear_chapter_markers()
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
@@ -3730,6 +3809,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not session.playlist:
             self.report_timer.start()
             self.progress_timer.start()
+            self.telemetry_timer.start()
             self._sync_video_cursor_autohide()
             return
         try:
@@ -3739,6 +3819,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._start_episode_title_enhancement()
         self.report_timer.start()
         self.progress_timer.start()
+        self.telemetry_timer.start()
         self._sync_video_cursor_autohide()
 
     def _maybe_restore_cached_danmaku_for_current_item(self, *, allow_with_playback_loader: bool = False) -> None:
@@ -11999,6 +12080,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._ignore_playback_finished_until = time.monotonic() + 2.0
         self._recent_user_seek_target_seconds = target_seconds
 
+    def _update_telemetry_badge(self) -> None:
+        snapshot = self.video.telemetry_snapshot() if hasattr(self.video, "telemetry_snapshot") else {}
+        text = _format_telemetry_text(snapshot if isinstance(snapshot, dict) else {})
+        if text == self.telemetry_label.text():
+            return
+        self.telemetry_label.setText(text)
+        self.telemetry_label.setVisible(bool(text))
+
     def _sync_progress_slider(self) -> None:
         if self._slider_dragging:
             return
@@ -12752,6 +12841,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._shutdown_controller_task_queue()
             self.report_timer.stop()
             self.progress_timer.stop()
+            self.telemetry_timer.stop()
             self._restore_video_cursor()
             self.video_widget.shutdown()
             app = QApplication.instance()

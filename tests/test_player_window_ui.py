@@ -767,7 +767,7 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.volume_layout.indexOf(window.mute_button) == 0
     assert window.volume_layout.indexOf(window.volume_slider) == 1
     assert window.volume_slider.maximumWidth() == 180
-    assert window.bottom_area.maximumHeight() == 88
+    assert window.bottom_area.maximumHeight() == 104
     assert window.bottom_layout.spacing() == 4
     assert window.opening_spin.prefix() == "片头 "
     assert window.ending_spin.prefix() == "片尾 "
@@ -12983,6 +12983,77 @@ def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_loa
     assert audio_apply_calls == [("auto", None)]
 
 
+def test_format_telemetry_text_renders_full_video_snapshot() -> None:
+    text = player_window_module._format_telemetry_text(
+        {
+            "video_width": 1920,
+            "video_height": 1080,
+            "video_format": "h264",
+            "hwdec_current": "nvdec",
+            "container_fps": 23.976,
+            "video_bitrate": 4200000,
+            "input_rate_bytes": 7_201_569,
+            "cache_duration": 38.2,
+            "cache_buffering_state": 100,
+            "frame_drop_count": 2,
+        }
+    )
+
+    assert text == "1920×1080 · H264 · 硬解 nvdec · 23.976fps · 4.2 Mbps · ↓7.2 MB/s · 缓冲38s · 丢帧2"
+
+
+def test_format_telemetry_text_renders_audio_only_snapshot() -> None:
+    text = player_window_module._format_telemetry_text(
+        {
+            "audio_codec": "AAC (Advanced Audio Coding)",
+            "audio_samplerate": 44100,
+            "audio_channels": 2,
+            "audio_bitrate": 69533,
+        }
+    )
+
+    assert text == "AAC · 44.1kHz · 2声道 · 70 kbps"
+
+
+def test_format_telemetry_text_hides_unavailable_values() -> None:
+    assert player_window_module._format_telemetry_text({}) == ""
+    assert player_window_module._format_telemetry_text({"video_width": None, "video_height": None}) == ""
+    text = player_window_module._format_telemetry_text(
+        {"hwdec_current": "no", "cache_buffering_state": 67, "frame_drop_count": 0}
+    )
+    assert text == "缓冲中67%"
+
+
+def test_player_window_updates_telemetry_badge_from_video_snapshot(qtbot) -> None:
+    class FakeVideo:
+        def telemetry_snapshot(self):
+            return {
+                "video_width": 3840,
+                "video_height": 2160,
+                "video_format": "hevc",
+                "hwdec_current": "no",
+                "container_fps": 25.0,
+            }
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.telemetry_label.setText("旧内容")
+    window.telemetry_label.show()
+
+    window._update_telemetry_badge()
+
+    assert window.telemetry_label.text() == "3840×2160 · HEVC · 软解 · 25fps"
+    assert window.telemetry_label.isVisibleTo(window) is True
+
+    empty_video = type("EmptyVideo", (), {"telemetry_snapshot": lambda self: {}})()
+    window.video = empty_video
+    window._update_telemetry_badge()
+
+    assert window.telemetry_label.text() == ""
+    assert window.telemetry_label.isHidden() is True
+
+
 def test_player_window_shader_menu_lists_presets_and_persists_choice(qtbot) -> None:
     applied: list[str] = []
     saved: list[bool] = []
@@ -23719,7 +23790,7 @@ def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
     margins = window.bottom_layout.contentsMargins()
 
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (12, 6, 12, 6)
-    assert window.bottom_area.maximumHeight() == 88
+    assert window.bottom_area.maximumHeight() == 104
 
 
 def test_player_window_root_layout_has_no_gap_between_video_and_controls(qtbot) -> None:
