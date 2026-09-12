@@ -59,6 +59,7 @@ class AppConfig:
     bilibili_grouped_playlist_tree_enabled: bool = False
     m3u_proxy_segment_prefetch_size: int = 2
     m3u8_ad_filter_mode: str = "smart"
+    next_episode_preload_enabled: bool = True
     episode_title_enhancement_enabled: bool = True
     disabled_danmaku_provider_ids: list[str] = field(default_factory=list)
     danmaku_blocked_words: list[str] = field(default_factory=list)

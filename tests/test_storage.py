@@ -60,6 +60,18 @@ def test_settings_repository_round_trips_m3u8_ad_filter_mode(tmp_path: Path) -> 
     assert loaded.m3u8_ad_filter_mode == "markers"
 
 
+def test_settings_repository_round_trips_next_episode_preload(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.next_episode_preload_enabled is True
+
+    config.next_episode_preload_enabled = False
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.next_episode_preload_enabled is False
+
+
 def test_settings_repository_normalizes_invalid_m3u8_ad_filter_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

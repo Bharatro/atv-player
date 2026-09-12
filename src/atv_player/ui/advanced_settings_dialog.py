@@ -276,6 +276,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.following_backend_hint_label.setWordWrap(True)
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
         self.bilibili_grouped_playlist_tree_enabled_checkbox = QCheckBox("B站播放列表显示为分组树")
+        self.next_episode_preload_enabled_checkbox = QCheckBox(
+            "预加载下一集（提前解析播放地址并预热网盘直链）"
+        )
         self.youtube_group = QGroupBox("YouTube")
         self.youtube_category_group = QGroupBox("分类配置")
         self.youtube_cookie_browser_combo = FlatComboBox()
@@ -499,6 +502,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.bilibili_grouped_playlist_tree_enabled_checkbox.setChecked(
             config.bilibili_grouped_playlist_tree_enabled
         )
+        self.next_episode_preload_enabled_checkbox.setChecked(
+            config.next_episode_preload_enabled
+        )
         self.mpv_cache_size_edit.setText(str(config.mpv_cache_size_mb))
         self.mpv_hwdec_mode_combo.setCurrentIndex(
             max(0, self.mpv_hwdec_mode_combo.findData(config.mpv_render_profile))
@@ -628,6 +634,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout = QFormLayout()
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
+        playback_layout.addRow(self.next_episode_preload_enabled_checkbox)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("渲染模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
@@ -1267,7 +1274,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             return None
         return browser, int(max_height), video_codec, subtitle_lang, audio_lang, metadata_language, region
 
-    def _validated_playback_values(self) -> tuple[bool, bool, int, str, int, int, int, str, str] | None:
+    def _validated_playback_values(
+        self,
+    ) -> tuple[bool, bool, bool, int, str, int, int, int, str, str] | None:
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
             try:
                 value = int(text.strip())
@@ -1343,6 +1352,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         return (
             self.playback_auto_switch_source_on_failure_checkbox.isChecked(),
             self.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked(),
+            self.next_episode_preload_enabled_checkbox.isChecked(),
             cache_size,
             render_profile,
             timeout,
@@ -1543,6 +1553,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         (
             self._config.playback_auto_switch_source_on_failure,
             self._config.bilibili_grouped_playlist_tree_enabled,
+            self._config.next_episode_preload_enabled,
             self._config.mpv_cache_size_mb,
             self._config.mpv_render_profile,
             self._config.mpv_network_timeout_seconds,

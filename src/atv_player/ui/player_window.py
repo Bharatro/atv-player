@@ -98,7 +98,11 @@ from atv_player.metadata.episode_title_overrides import (
 )
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
 from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
-from atv_player.controllers.player_controller import decode_drive_dir_id, split_drive_path
+from atv_player.controllers.player_controller import (
+    PlayerSession,
+    decode_drive_dir_id,
+    split_drive_path,
+)
 from atv_player.player.resume import drive_relative_path
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
 from atv_player.models import (
@@ -763,6 +767,18 @@ class _PendingPlaybackLoader:
     intent_generation: int = 0
 
 
+@dataclass(slots=True)
+class _NextEpisodePreload:
+    """下一集预加载结果:解析阶段直接把 url/headers 写回播放项,网盘额外预注册
+    /driver 并行代理任务并缓存本地地址,切集时消费。"""
+
+    item: PlayItem
+    index: int
+    prepared_url: str = ""
+    source_url: str = ""
+    created_at: float = 0.0
+
+
 class _PlayerToolDialog(ThemedDialogBase):
     def __init__(self, *, title: str, parent: QWidget, size: tuple[int, int]) -> None:
         super().__init__(title=title, parent=parent)
@@ -838,6 +854,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         "sliders.svg",
         "scrape.svg",
     }
+    # 下集预加载:开播后延迟触发 + 片尾剩余阈值触发,结果 TTL 内视为新鲜。
+    _NEXT_EPISODE_PRELOAD_DELAY_MS = 10_000
+    _NEXT_EPISODE_PRELOAD_REMAINING_SECONDS = 150
+    _NEXT_EPISODE_PRELOAD_TTL_SECONDS = 300.0
 
     def __init__(
         self,
@@ -934,6 +954,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._pending_metadata_session = None
         self._pending_episode_title_session = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
+        self._next_episode_preload_lock = threading.Lock()
+        self._next_episode_preload: _NextEpisodePreload | None = None
+        self._next_episode_preload_in_flight = False
         self._video_context_menu: QMenu | None = None
         self._always_on_top_menu_action: QAction | None = None
         self._poster_preview_dialog: QDialog | None = None
@@ -3591,6 +3614,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._reset_auto_switched_failure_sources()
         self._ytdlp_full_resolve_recovery_item = None
         self._invalidate_play_item_resolution()
+        self._clear_next_episode_preload()
         if session.source_groups:
             session.playlists, mapping = self._flatten_source_groups(session.source_groups)
             if not session.playlists:
@@ -3852,6 +3876,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
+        self._clear_next_episode_preload()
         if self._bilibili_grouped_playlist_tree_enabled():
             group_index, _item_index = self._bilibili_tree_group_item_by_flat_index.get(
                 self.current_index,
@@ -3907,6 +3932,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(session)
+        self._clear_next_episode_preload()
         parent_groups = self._session_source_groups()
         parent_group_index = max(0, min(session.source_group_index, len(parent_groups) - 1)) if parent_groups else 0
         parent_source_index = 0
@@ -4414,6 +4440,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._apply_post_load_player_configuration(current_item)
         if self.session is not None:
             self.controller.on_item_started(self.session, self.current_index)
+        self._schedule_window_single_shot(
+            self._NEXT_EPISODE_PRELOAD_DELAY_MS,
+            self._maybe_schedule_next_episode_preload,
+        )
 
     def _uses_event_driven_track_refresh(self) -> bool:
         return self.video is self.video_widget
@@ -5449,6 +5479,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
 
         def prepare() -> None:
+            preloaded_url = self._take_next_episode_preloaded_url(
+                current_item, source_url
+            )
+            if preloaded_url:
+                if not self._is_window_alive():
+                    return
+                self._playback_prepare_signals.succeeded.emit(request_id, preloaded_url)
+                return
             try:
                 drive_prepared_url = self._prepare_drive_parallel_url(current_item, source_url)
             except Exception:
@@ -5569,6 +5607,143 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 drive_path,
             )
         return local_url or ""
+
+    def _next_episode_preload_enabled(self) -> bool:
+        return bool(getattr(self.config, "next_episode_preload_enabled", True))
+
+    def _maybe_schedule_next_episode_preload(self) -> None:
+        """预加载下一集:提前跑完详情/播放地址解析并预注册网盘直链代理任务。
+
+        尽力而为,任何失败都静默降级,切集时仍走原有懒加载流程。
+        """
+        if not self._next_episode_preload_enabled():
+            return
+        session = self.session
+        if session is None or str(session.source_kind or "").strip().lower() == "live":
+            return
+        next_index = self.current_index + 1
+        if not (0 <= next_index < len(session.playlist)):
+            return
+        next_item = session.playlist[next_index]
+        if self._should_skip_next_episode_preload(next_item):
+            return
+        with self._next_episode_preload_lock:
+            if self._next_episode_preload_in_flight:
+                return
+            existing = self._next_episode_preload
+            preload_ttl = self._NEXT_EPISODE_PRELOAD_TTL_SECONDS
+            if (
+                existing is not None
+                and existing.item is next_item
+                and time.monotonic() - existing.created_at < preload_ttl
+            ):
+                return
+            self._next_episode_preload_in_flight = True
+        threading.Thread(
+            target=self._run_next_episode_preload,
+            args=(session, next_index),
+            daemon=True,
+        ).start()
+
+    def _should_skip_next_episode_preload(self, item: PlayItem) -> bool:
+        # yt-dlp 解析代价高且走独立的快启/水合流程,不参与预加载。
+        if self._is_youtube_playback_loader_item(item):
+            return True
+        if str(item.ytdl_format or "").strip():
+            return True
+        if str(item.selected_playback_quality_id or "").startswith("ytdlp_"):
+            return True
+        return any(
+            str(quality.id or "").startswith("ytdlp_")
+            for quality in item.playback_qualities
+        )
+
+    def _run_next_episode_preload(
+        self,
+        session: PlayerSession,
+        next_index: int,
+    ) -> None:
+        try:
+            self._preload_next_episode(session, next_index)
+        except Exception:
+            logger.warning("下一集预加载失败 index=%s", next_index, exc_info=True)
+        finally:
+            with self._next_episode_preload_lock:
+                self._next_episode_preload_in_flight = False
+
+    def _preload_next_episode(self, session: PlayerSession, next_index: int) -> None:
+        if not (0 <= next_index < len(session.playlist)):
+            return
+        next_item = session.playlist[next_index]
+        try:
+            if next_item.vod_id and session.detail_resolver is not None:
+                # 详情解析带 session 级备忘(resolved_vod_by_id),提前解析即提前落好
+                # url 与外挂字幕;与 _start_play_item_resolution 的线程调用同构。
+                self.controller.resolve_play_item_detail(session, next_item)
+        except Exception:
+            logger.info("下一集详情预解析失败 index=%s", next_index, exc_info=True)
+        loader = session.playback_loader
+        if loader is not None and not str(next_item.url or "").strip():
+            # 加载器(playerContent/内置解析)会把 url/headers/清晰度/字幕写回播放项,
+            # 切集时加载器只剩廉价的 url 已设早退路径,不再挡住起播。
+            try:
+                load_result = loader(next_item)
+            except Exception:
+                logger.info(
+                    "下一集播放地址预解析失败 index=%s",
+                    next_index,
+                    exc_info=True,
+                )
+                load_result = None
+            if load_result is not None and (
+                load_result.replacement_playlist or load_result.source_groups
+            ):
+                # 替换整个播放列表的结果只能在 UI 线程应用,留给切集时的正常流程。
+                return
+        prepared_url = ""
+        source_url = ""
+        try:
+            if not self._should_skip_playback_prepare(next_item):
+                source_url = self._playback_prepare_source_url(next_item)
+                # 只预注册网盘直链代理(/driver,切集最慢的一步);m3u8 等本地 token
+                # 创建本身很快,无需预载。
+                prepared_url = self._prepare_drive_parallel_url(next_item, source_url)
+        except Exception:
+            logger.info("下一集网盘直链预注册失败 index=%s", next_index, exc_info=True)
+        if self.session is not session or not self._is_window_alive():
+            return
+        with self._next_episode_preload_lock:
+            self._next_episode_preload = _NextEpisodePreload(
+                item=next_item,
+                index=next_index,
+                prepared_url=prepared_url or "",
+                source_url=source_url if prepared_url else "",
+                created_at=time.monotonic(),
+            )
+        logger.info(
+            "下一集预加载完成 index=%s has_url=%s drive_prepared=%s",
+            next_index,
+            bool(str(next_item.url or "").strip()),
+            bool(prepared_url),
+        )
+
+    def _take_next_episode_preloaded_url(self, item: PlayItem, source_url: str) -> str:
+        """消费预载的网盘代理地址;不匹配或过期返回空串,调用方走原流程。"""
+        with self._next_episode_preload_lock:
+            preload = self._next_episode_preload
+            if preload is None or preload.item is not item:
+                return ""
+            self._next_episode_preload = None
+            if not preload.prepared_url or preload.source_url != source_url:
+                return ""
+            preload_ttl = self._NEXT_EPISODE_PRELOAD_TTL_SECONDS
+            if time.monotonic() - preload.created_at > preload_ttl:
+                return ""
+            return preload.prepared_url
+
+    def _clear_next_episode_preload(self) -> None:
+        with self._next_episode_preload_lock:
+            self._next_episode_preload = None
 
     def _should_skip_playback_prepare(self, current_item: PlayItem) -> bool:
         resolved_url = (current_item.url or "").strip()
@@ -6341,6 +6516,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 )
 
             self._enqueue_controller_task("进度上报失败", report)
+            preload_remaining = self._NEXT_EPISODE_PRELOAD_REMAINING_SECONDS
+            if (
+                not paused
+                and duration_seconds > 0
+                and 0 <= duration_seconds - position_seconds < preload_remaining
+            ):
+                # 片尾临近:长集开播即预载的结果可能过期,这里补一次(有新鲜缓存则跳过)。
+                self._maybe_schedule_next_episode_preload()
             if item is not None:
                 self._following_progress_reporter(
                     item,
@@ -6479,6 +6662,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         reset_prefetch = getattr(self.controller, "reset_next_episode_danmaku_prefetch_state", None)
         if callable(reset_prefetch):
             reset_prefetch(self.session)
+        self._clear_next_episode_preload()
         self.current_index = target_index
         self.session.start_index = self.current_index
         self.playlist_title_mode = "episode"
