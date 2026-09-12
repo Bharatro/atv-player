@@ -923,6 +923,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _NEXT_EPISODE_PRELOAD_DELAY_MS = 10_000
     _NEXT_EPISODE_PRELOAD_REMAINING_SECONDS = 150
     _NEXT_EPISODE_PRELOAD_TTL_SECONDS = 300.0
+    # 跳过片段确认横幅:片尾跳过前倒计时确认;片头直跳后可返回原进度。
+    _SKIP_COUNTDOWN_SECONDS = 5.0
+    _INTRO_RESTORE_BANNER_SECONDS = 8.0
+    _SKIP_BANNER_TICK_MS = 200
 
     def __init__(
         self,
@@ -1109,6 +1113,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._video_surface_ready = False
         self._video_picture_state = "idle"
         self._auto_advance_locked = False
+        self._skip_banner_kind: str | None = None
+        self._skip_banner_remaining_seconds = 0.0
+        self._skip_banner_last_tick = 0.0
+        self._pending_intro_skip: tuple[PlayItem, int, int] | None = None
+        self._intro_restore_position: int | None = None
+        self._intro_skip_skipped_seconds = 0
         self._observed_media_duration_seconds = 0
         self._current_chapters: list[Chapter] = []
         self._last_playback_position_seconds = 0
@@ -1531,6 +1541,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.telemetry_timer = QTimer(self)
         self.telemetry_timer.setInterval(1000)
         self.telemetry_timer.timeout.connect(self._update_telemetry_badge)
+        self._skip_banner_timer = QTimer(self)
+        self._skip_banner_timer.setInterval(self._SKIP_BANNER_TICK_MS)
+        self._skip_banner_timer.timeout.connect(self._tick_skip_banner)
         self._cursor_hide_timer = QTimer(self)
         self._cursor_hide_timer.setInterval(100)
         self._cursor_hide_timer.timeout.connect(self._poll_cursor_idle_state)
@@ -1613,6 +1626,22 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_stack_layout.addWidget(self.video_widget)
         self.video_stack_layout.addWidget(self.video_poster_overlay)
         video_layout.addWidget(self.video_stack)
+        # 跳过片段确认横幅:悬浮在视频区底部中央(片尾倒计时 / 片头返回原进度)。
+        self.skip_banner = QWidget(self.video_stack)
+        self.skip_banner.setObjectName("skipConfirmBanner")
+        self.skip_banner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        skip_banner_layout = QHBoxLayout(self.skip_banner)
+        skip_banner_layout.setContentsMargins(18, 10, 12, 10)
+        skip_banner_layout.setSpacing(12)
+        self.skip_banner_label = QLabel("")
+        self.skip_banner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.skip_banner_button = QPushButton("")
+        self.skip_banner_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.skip_banner_button.clicked.connect(self._handle_skip_banner_button)
+        skip_banner_layout.addWidget(self.skip_banner_label)
+        skip_banner_layout.addWidget(self.skip_banner_button)
+        self.skip_banner.hide()
+        self.video_stack.installEventFilter(self)
 
         self.playlist_panel = QWidget()
         self.playlist_panel_layout = QVBoxLayout(self.playlist_panel)
@@ -1882,6 +1911,30 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         self.opening_spin.setStyleSheet(skip_spinbox_qss)
         self.ending_spin.setStyleSheet(skip_spinbox_qss)
+        self.skip_banner.setStyleSheet(
+            f"""
+            QWidget#skipConfirmBanner {{
+                background-color: {player_tokens.player_scrim};
+                border: 1px solid {player_tokens.player_button_border};
+                border-radius: 16px;
+            }}
+            QWidget#skipConfirmBanner QLabel {{
+                background-color: transparent;
+                color: {player_tokens.player_text_on_dark};
+                font-size: 14px;
+            }}
+            """
+        )
+        skip_banner_button_qss = build_player_control_button_qss(
+            player_tokens,
+            border_radius=12,
+        )
+        # 构建 QSS 的 padding:0 会让文字贴边,这里补水平内边距(后置规则覆盖)。
+        self.skip_banner_button.setStyleSheet(
+            skip_banner_button_qss
+            + "\nQPushButton { padding-left: 16px; padding-right: 16px; }"
+        )
+        self.skip_banner_button.setFixedHeight(30)
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)
@@ -3693,6 +3746,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._ytdlp_full_resolve_recovery_item = None
         self._invalidate_play_item_resolution()
         self._clear_next_episode_preload()
+        self._pending_intro_skip = None
+        self._hide_skip_banner()
         if session.source_groups:
             session.playlists, mapping = self._flatten_source_groups(session.source_groups)
             if not session.playlists:
@@ -4476,6 +4531,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             effective_start_seconds = start_position_seconds
         else:
             effective_start_seconds = self.opening_spin.value()
+        if effective_start_seconds > start_position_seconds:
+            # 片头直跳生效:记录原进度,待 file_loaded 后展示"返回原进度"横幅。
+            self._pending_intro_skip = (
+                current_item,
+                int(start_position_seconds),
+                int(effective_start_seconds - start_position_seconds),
+            )
+        else:
+            self._pending_intro_skip = None
         poster_image_path = self._preferred_audio_cover_path() if self._should_use_audio_cover(current_item.url) else None
         if defer_post_load_configuration:
             self._pending_post_load_item = current_item
@@ -4514,6 +4578,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 self._pending_post_load_pause = False
             raise
         self._auto_advance_locked = False
+        self._hide_skip_banner()
         self._configure_video_surface_widgets()
         if defer_post_load_configuration:
             self._reset_subtitle_combo()
@@ -4572,6 +4637,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_video_file_loaded(self) -> None:
         self._refresh_chapter_markers()
+        self._maybe_show_intro_restore_banner()
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
         pending_danmaku_item = self._pending_file_loaded_danmaku_item
         self._pending_file_loaded_danmaku_item = None
@@ -12084,6 +12150,126 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _mark_recent_user_seek(self, target_seconds: int | None) -> None:
         self._ignore_playback_finished_until = time.monotonic() + 2.0
         self._recent_user_seek_target_seconds = target_seconds
+        if self._skip_banner_kind == "ending":
+            # 用户主动拖动进度,视为放弃本次跳过片尾;若拖回阈值前,允许片尾跳过再次触发。
+            self._cancel_ending_skip_countdown(rearm=True)
+
+    def _begin_ending_skip_countdown(self) -> None:
+        self._skip_banner_kind = "ending"
+        self._skip_banner_remaining_seconds = float(self._SKIP_COUNTDOWN_SECONDS)
+        self._skip_banner_last_tick = time.monotonic()
+        self._intro_restore_position = None
+        self.skip_banner_button.setText("取消")
+        self._render_skip_banner_label()
+        self._show_skip_banner()
+
+    def _cancel_ending_skip_countdown(self, *, rearm: bool) -> None:
+        was_counting = self._skip_banner_kind == "ending"
+        self._hide_skip_banner()
+        if was_counting and rearm:
+            self._auto_advance_locked = False
+
+    def _maybe_show_intro_restore_banner(self) -> None:
+        pending = self._pending_intro_skip
+        self._pending_intro_skip = None
+        if pending is None:
+            return
+        item, original_position, skipped_seconds = pending
+        if (
+            self.session is None
+            or not (0 <= self.current_index < len(self.session.playlist))
+            or self.session.playlist[self.current_index] is not item
+        ):
+            return
+        self._skip_banner_kind = "intro"
+        self._skip_banner_remaining_seconds = float(self._INTRO_RESTORE_BANNER_SECONDS)
+        self._skip_banner_last_tick = time.monotonic()
+        self._intro_restore_position = original_position
+        self._intro_skip_skipped_seconds = skipped_seconds
+        self.skip_banner_button.setText("返回原进度")
+        self._render_skip_banner_label()
+        self._show_skip_banner()
+        logger.info(
+            "PlayerWindow intro skip banner shown index=%s skipped=%ss restore_position=%ss",
+            self.current_index,
+            skipped_seconds,
+            original_position,
+        )
+
+    def _render_skip_banner_label(self) -> None:
+        if self._skip_banner_kind == "ending":
+            remaining = max(0, int(self._skip_banner_remaining_seconds + 0.999))
+            self.skip_banner_label.setText(f"{remaining} 秒后跳过片尾，进入下一集")
+        elif self._skip_banner_kind == "intro":
+            self.skip_banner_label.setText(
+                f"已跳过片头 {self._format_time(self._intro_skip_skipped_seconds)}"
+            )
+
+    def _show_skip_banner(self) -> None:
+        self._skip_banner_last_tick = time.monotonic()
+        self._position_skip_banner()
+        self.skip_banner.show()
+        self.skip_banner.raise_()
+        if not self._skip_banner_timer.isActive():
+            self._skip_banner_timer.start()
+
+    def _hide_skip_banner(self) -> None:
+        self._skip_banner_timer.stop()
+        self._skip_banner_kind = None
+        self._skip_banner_remaining_seconds = 0.0
+        self._intro_restore_position = None
+        self.skip_banner.hide()
+
+    def _position_skip_banner(self) -> None:
+        banner_size = self.skip_banner.sizeHint()
+        parent_rect = self.video_stack.rect()
+        if parent_rect.width() <= 0 or parent_rect.height() <= 0:
+            return
+        margin = max(12, parent_rect.height() // 15)
+        x = max(0, (parent_rect.width() - banner_size.width()) // 2)
+        y = max(0, parent_rect.height() - banner_size.height() - margin)
+        self.skip_banner.setGeometry(x, y, banner_size.width(), banner_size.height())
+
+    def _tick_skip_banner(self) -> None:
+        kind = self._skip_banner_kind
+        if kind is None:
+            self._hide_skip_banner()
+            return
+        if kind == "ending" and not self.is_playing:
+            # 暂停时挂起片尾倒计时,避免用户停在片尾被切走。
+            self._skip_banner_last_tick = time.monotonic()
+            return
+        now = time.monotonic()
+        elapsed = min(max(now - self._skip_banner_last_tick, 0.0), 1.0)
+        self._skip_banner_last_tick = now
+        self._skip_banner_remaining_seconds -= elapsed
+        if self._skip_banner_remaining_seconds > 0:
+            self._render_skip_banner_label()
+            return
+        self._hide_skip_banner()
+        if kind == "ending":
+            logger.info(
+                "PlayerWindow auto advance reason=ending-countdown-elapsed index=%s position=%s duration=%s ending=%s",
+                self.current_index,
+                self._last_playback_position_seconds,
+                self._observed_media_duration_seconds,
+                self.ending_spin.value(),
+            )
+            self.play_next()
+
+    def _handle_skip_banner_button(self) -> None:
+        kind = self._skip_banner_kind
+        if kind == "ending":
+            self._hide_skip_banner()
+            self._append_log("已取消跳过片尾，将继续播放本集")
+            return
+        if kind == "intro":
+            restore_position = self._intro_restore_position
+            self._hide_skip_banner()
+            if restore_position is None:
+                return
+            self._append_log(f"已返回片头原进度: {self._format_time(restore_position)}")
+            self._seek_to_position(int(restore_position))
 
     def _update_telemetry_badge(self) -> None:
         if not self._telemetry_visible:
@@ -12128,14 +12314,16 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             and position + self.ending_spin.value() >= effective_duration
         ):
             logger.info(
-                "PlayerWindow auto advance reason=ending index=%s position=%s duration=%s ending=%s",
+                "PlayerWindow ending skip countdown scheduled index=%s position=%s duration=%s ending=%s",
                 self.current_index,
                 position,
                 effective_duration,
                 self.ending_spin.value(),
             )
+            # 先锁定防止重复触发(进度持续高于阈值),倒计时结束才真正切集;
+            # 用户可点横幅取消,取消后本集不再自动跳过(自然播完仍切集)。
             self._auto_advance_locked = True
-            self.play_next()
+            self._begin_ending_skip_countdown()
             return
         self.progress.setMaximum(max(effective_duration, 0))
         self.progress.setValue(max(min(position, self.progress.maximum()), 0))
@@ -12893,6 +13081,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         details = getattr(self, "details", None)
         if watched is details and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             self._update_log_section_max_height()
+        video_stack = getattr(self, "video_stack", None)
+        if watched is video_stack and event.type() == QEvent.Type.Resize:
+            self._position_skip_banner()
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
             global_pos = event.globalPosition().toPoint()
             if (

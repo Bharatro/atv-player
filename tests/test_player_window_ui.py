@@ -11656,6 +11656,171 @@ def test_player_window_advances_when_mpv_resets_position_before_normal_eof(qtbot
     assert "播放提前结束，正在恢复" not in window.log_view.toPlainText()
 
 
+class _EndingThresholdVideo(RecordingVideo):
+    """position=95/duration=120,叠加片尾 30s 即命中自动跳过阈值。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.position = 95
+        self.duration = 120
+        self.seek_calls: list[int] = []
+
+    def position_seconds(self) -> int:
+        return self.position
+
+    def duration_seconds(self) -> int:
+        return self.duration
+
+    def seek(self, seconds: int) -> None:
+        self.seek_calls.append(seconds)
+
+
+def _window_with_ending_countdown(qtbot) -> tuple[PlayerWindow, _EndingThresholdVideo]:
+    video = _EndingThresholdVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window.ending_spin.setValue(30)
+    window._sync_progress_slider()
+    return window, video
+
+
+def test_player_window_ending_skip_countdown_advances_after_five_seconds(qtbot) -> None:
+    window, video = _window_with_ending_countdown(qtbot)
+
+    # 命中片尾阈值后不再立即切集,先出 5 秒倒计时确认横幅。
+    assert window.current_index == 0
+    assert video.load_calls == []
+    assert not window.skip_banner.isHidden()
+    assert "5 秒后跳过片尾" in window.skip_banner_label.text()
+    assert window.skip_banner_button.text() == "取消"
+    assert window._auto_advance_locked is True
+
+    window._skip_banner_remaining_seconds = 0.0
+    window._tick_skip_banner()
+
+    assert window.current_index == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+    assert window.skip_banner.isHidden()
+
+
+def test_player_window_ending_skip_countdown_cancel_keeps_current_episode(qtbot) -> None:
+    window, video = _window_with_ending_countdown(qtbot)
+
+    window._handle_skip_banner_button()
+
+    assert window.current_index == 0
+    assert window.skip_banner.isHidden()
+    assert window._auto_advance_locked is True
+    assert "已取消跳过片尾" in window.log_view.toPlainText()
+
+    # 取消后进度持续高于阈值也不再重启倒计时。
+    window._sync_progress_slider()
+    assert window._skip_banner_kind is None
+
+    # 自然播完(EOF)仍照常切下一集。
+    window._update_playback_observation(position=119, duration=120)
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+
+
+def test_player_window_ending_skip_countdown_suspends_while_paused_and_cancels_on_seek(
+    qtbot,
+) -> None:
+    window, video = _window_with_ending_countdown(qtbot)
+
+    window.is_playing = False
+    remaining = window._skip_banner_remaining_seconds
+    window._tick_skip_banner()
+    assert window._skip_banner_remaining_seconds == remaining
+
+    # 用户拖动进度(拖回阈值前)会取消倒计时并允许片尾跳过再次触发。
+    window.is_playing = True
+    window._mark_recent_user_seek(60)
+
+    assert window.skip_banner.isHidden()
+    assert window._auto_advance_locked is False
+
+    # 仍在阈值内会重新进入全新 5 秒倒计时。
+    window._sync_progress_slider()
+    assert window._skip_banner_kind == "ending"
+    assert window._skip_banner_remaining_seconds == 5.0
+
+
+def test_player_window_intro_skip_banner_restores_original_position(qtbot) -> None:
+    class SeekableVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+    video = SeekableVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window.opening_spin.setValue(90)
+
+    window._start_current_item_playback(start_position_seconds=0)
+
+    assert video.load_calls == [("http://m/1.m3u8", 90)]
+    assert window.skip_banner.isHidden()
+
+    # 片头直跳生效,file_loaded 后展示"返回原进度"横幅。
+    window._handle_video_file_loaded()
+
+    assert not window.skip_banner.isHidden()
+    assert window.skip_banner_label.text() == "已跳过片头 01:30"
+    assert window.skip_banner_button.text() == "返回原进度"
+
+    window._handle_skip_banner_button()
+
+    assert window.skip_banner.isHidden()
+    assert video.seek_calls == [0]
+    assert "已返回片头原进度" in window.log_view.toPlainText()
+
+
+def test_player_window_intro_skip_banner_not_shown_without_intro_jump(qtbot) -> None:
+    class SeekableVideo(RecordingVideo):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seek_calls: list[int] = []
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+    video = SeekableVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+
+    # 未设置片头跳过:不弹横幅。
+    window._start_current_item_playback(start_position_seconds=0)
+    window._handle_video_file_loaded()
+
+    assert window.skip_banner.isHidden()
+    assert window._pending_intro_skip is None
+
+    # 续播进度已越过片头阈值:直跳不生效,同样不弹横幅。
+    window.opening_spin.setValue(90)
+    video.load_calls.clear()
+    window._start_current_item_playback(start_position_seconds=120)
+
+    assert video.load_calls == [("http://m/1.m3u8", 120)]
+
+    window._handle_video_file_loaded()
+
+    assert window.skip_banner.isHidden()
+
+
 def test_player_window_recovers_last_position_when_mpv_resets_before_premature_eof(qtbot) -> None:
     class ResettingPrematureEofVideo(RecordingVideo):
         def __init__(self) -> None:
