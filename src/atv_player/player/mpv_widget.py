@@ -25,6 +25,11 @@ from atv_player.player.mpv_library import (
     custom_mpv_library_diagnostics,
     prepare_custom_mpv_library,
 )
+from atv_player.player.mpv_user_config import (
+    ShaderPreset,
+    discover_shader_presets,
+    resolve_mpv_config_dir,
+)
 from atv_player.player.ytdlp_runtime import (
     resolve_mpv_ytdl_raw_options,
     resolve_mpv_ytdlp_path,
@@ -427,6 +432,15 @@ class MpvWidget(QWidget):
             getattr(self._config, "mpv_render_profile", "auto")
         )
         options.update(_render_profile_options(render_profile))
+        mpv_config_dir = resolve_mpv_config_dir()
+        if mpv_config_dir is not None:
+            options["config"] = True
+            options["config_dir"] = str(mpv_config_dir)
+            logger.info(
+                "Loading user mpv config dir=%s",
+                mpv_config_dir,
+                extra={"log_category": "player", "log_source": "app"},
+            )
         mismatch = detect_linux_nvidia_driver_mismatch()
         if mismatch is not None:
             userspace_version, kernel_version = mismatch
@@ -856,6 +870,54 @@ class MpvWidget(QWidget):
         finally:
             self._player = previous_player
 
+    def shader_presets(self) -> dict[str, ShaderPreset]:
+        return {preset.name: preset for preset in discover_shader_presets()}
+
+    def apply_shader_preset(self, preset_name: str) -> bool:
+        """运行时切换着色器预设;空名清除。预设不存在或设置失败返回 False。"""
+        shader_files: list[str] = []
+        if preset_name:
+            preset = self.shader_presets().get(preset_name)
+            if preset is None:
+                return False
+            shader_files = list(preset.shader_files)
+        return self._set_glsl_shaders(shader_files)
+
+    def _apply_shader_preset(self, player: Any) -> None:
+        preset_name = str(getattr(self._config, "mpv_shader_preset", "") or "").strip()
+        if not preset_name:
+            return
+        preset = self.shader_presets().get(preset_name)
+        if preset is None:
+            return
+        previous_player = self._player
+        self._player = player
+        try:
+            self._set_glsl_shaders(list(preset.shader_files))
+        finally:
+            self._player = previous_player
+
+    def _set_glsl_shaders(self, shader_files: list[str]) -> bool:
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return False
+        try:
+            self._set_player_property("glsl-shaders", shader_files)
+            return True
+        except Exception as first_exc:
+            # 个别旧版 libmpv 不接受 node 数组,退回逗号分隔字符串
+            try:
+                self._set_player_property("glsl-shaders", ",".join(shader_files))
+                return True
+            except Exception:
+                logger.warning(
+                    "Failed to set glsl-shaders files=%s error=%r",
+                    shader_files,
+                    first_exc,
+                    extra={"log_category": "player", "log_source": "app"},
+                )
+                return False
+
     def _loadfile_options(self, url: str) -> dict[str, str]:
         lowered_path = urlparse(url).path.lower()
         lowered = url.lower()
@@ -1080,6 +1142,7 @@ class MpvWidget(QWidget):
                 ytdl_format=ytdl_format,
             )
             self._apply_extra_mpv_options(player)
+            self._apply_shader_preset(player)
             logger.info(
                 "MPV load url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s elapsed_before_command=%.3fs ensure=%.3fs setup=%.3fs",
                 self._summarize_media_url(url),
@@ -1133,6 +1196,7 @@ class MpvWidget(QWidget):
                     ytdl_format=ytdl_format,
                 )
                 self._apply_extra_mpv_options(player)
+                self._apply_shader_preset(player)
                 logger.info(
                     "MPV reload after player restart url=%s audio=%s ytdl_format=%s start=%s pause=%s profile=%s headers=%s",
                     self._summarize_media_url(url),

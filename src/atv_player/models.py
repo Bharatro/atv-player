@@ -55,6 +55,7 @@ class AppConfig:
     mpv_network_timeout_seconds: int = 15
     mpv_default_readahead_secs: int = 20
     mpv_extra_options: str = ""
+    mpv_shader_preset: str = ""
     playback_auto_switch_source_on_failure: bool = False
     bilibili_grouped_playlist_tree_enabled: bool = False
     m3u_proxy_segment_prefetch_size: int = 2

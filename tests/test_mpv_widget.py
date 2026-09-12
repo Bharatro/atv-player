@@ -7,6 +7,7 @@ import pytest
 
 from atv_player.player import mpv_widget as mpv_widget_module
 from atv_player.models import AppConfig
+from atv_player.player.mpv_user_config import ShaderPreset
 from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack
 
 
@@ -51,6 +52,63 @@ def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeyp
     widget._create_player()
 
     assert recorded["script_opts"] == "ytdl_hook-ytdl_path=/tmp/tools/linux/yt-dlp"
+
+
+def test_mpv_widget_base_options_enable_user_mpv_config_dir_when_present(qtbot, monkeypatch, tmp_path) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(mpv_widget_module, "resolve_mpv_config_dir", lambda: tmp_path)
+
+    options = widget._base_player_options()
+
+    assert options["config"] is True
+    assert options["config_dir"] == str(tmp_path)
+
+
+def test_mpv_widget_base_options_keep_default_without_user_mpv_config(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(mpv_widget_module, "resolve_mpv_config_dir", lambda: None)
+
+    options = widget._base_player_options()
+
+    assert "config" not in options
+    assert "config_dir" not in options
+
+
+def test_mpv_widget_apply_shader_preset_switches_glsl_shaders(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+    monkeypatch.setattr(
+        mpv_widget_module,
+        "discover_shader_presets",
+        lambda: [ShaderPreset(name="Anime4K-A", shader_files=("/tmp/a1.glsl", "/tmp/a2.glsl"))],
+    )
+
+    assert widget.apply_shader_preset("Anime4K-A") is True
+    assert player.options["glsl-shaders"] == ["/tmp/a1.glsl", "/tmp/a2.glsl"]
+
+    assert widget.apply_shader_preset("") is True
+    assert player.options["glsl-shaders"] == []
+
+    assert widget.apply_shader_preset("不存在") is False
+
+
+def test_mpv_widget_applies_persisted_shader_preset_to_given_player(qtbot, monkeypatch) -> None:
+    widget = MpvWidget(config=AppConfig(mpv_shader_preset="Anime4K-A"))
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    monkeypatch.setattr(
+        mpv_widget_module,
+        "discover_shader_presets",
+        lambda: [ShaderPreset(name="Anime4K-A", shader_files=("/tmp/a1.glsl",))],
+    )
+
+    widget._apply_shader_preset(player)
+
+    assert player.options["glsl-shaders"] == ["/tmp/a1.glsl"]
 
 
 def test_mpv_widget_logs_windows_runtime_diagnostics_around_player_creation(qtbot, monkeypatch) -> None:

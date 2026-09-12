@@ -72,6 +72,18 @@ def test_settings_repository_round_trips_next_episode_preload(tmp_path: Path) ->
     assert loaded.next_episode_preload_enabled is False
 
 
+def test_settings_repository_round_trips_mpv_shader_preset(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.mpv_shader_preset == ""
+
+    config.mpv_shader_preset = "Anime4K-A"
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.mpv_shader_preset == "Anime4K-A"
+
+
 def test_settings_repository_normalizes_invalid_m3u8_ad_filter_mode(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

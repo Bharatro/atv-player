@@ -74,6 +74,8 @@ def test_collect_system_info_entries_adds_links_for_all_non_platform_rows(
         "active_mpv_library_description",
         lambda: ("系统", "/usr/lib/x86_64-linux-gnu/libmpv.so.2"),
     )
+    monkeypatch.setattr(diagnostics, "resolve_mpv_config_dir", lambda: None)
+    monkeypatch.setattr(diagnostics, "discover_shader_presets", lambda: [])
 
     entries = diagnostics.collect_system_info_entries()
 
@@ -96,6 +98,7 @@ def test_collect_system_info_entries_adds_links_for_all_non_platform_rows(
         diagnostics.SystemInfoEntry(
             "libmpv", "系统 /usr/lib/x86_64-linux-gnu/libmpv.so.2"
         ),
+        diagnostics.SystemInfoEntry("mpv 配置", "内置默认"),
         diagnostics.SystemInfoEntry(
             "ffmpeg", "7.1", "https://www.ffmpeg.org/download.html"
         ),

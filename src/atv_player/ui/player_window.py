@@ -9477,6 +9477,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addMenu(self._build_subtitle_delay_menu(menu))
         menu.addMenu(self._build_audio_delay_menu(menu))
         menu.addMenu(self._build_picture_menu(menu))
+        menu.addMenu(self._build_shader_menu(menu))
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
@@ -11468,6 +11469,37 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _step_picture(self, prop: str, delta: int) -> None:
         current = self._picture_adjustments.get(prop, 0)
         self._set_picture_from_menu(prop, current + delta)
+
+    def _build_shader_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("着色器", parent)
+        presets = self.video.shader_presets() if hasattr(self.video, "shader_presets") else {}
+        if not presets:
+            notice = menu.addAction("未发现着色器预设")
+            notice.setEnabled(False)
+            hint = menu.addAction("将 .glsl 放入 ~/mpv/shaders/ 子目录")
+            hint.setEnabled(False)
+            return menu
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current = str(getattr(self.config, "mpv_shader_preset", "") or "")
+        for preset_name in ("", *presets.keys()):
+            action = menu.addAction("关闭" if not preset_name else preset_name)
+            action.setCheckable(True)
+            action.setChecked(current == preset_name)
+            action.triggered.connect(
+                lambda _checked=False, preset_name=preset_name: self._set_shader_preset_from_menu(preset_name)
+            )
+            group.addAction(action)
+        return menu
+
+    def _set_shader_preset_from_menu(self, preset_name: str) -> None:
+        if not self.video.apply_shader_preset(preset_name):
+            self._append_log(f"着色器设置失败: {preset_name or '关闭'}")
+            return
+        if self.config is not None and self.config.mpv_shader_preset != preset_name:
+            self.config.mpv_shader_preset = preset_name
+            self._save_config()
+        self._append_log(f"着色器已切换: {preset_name or '关闭'}")
 
     def _build_subtitle_scale_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
         menu = QMenu(title, parent)

@@ -13,6 +13,10 @@ from PySide6 import __version__ as pyside_version
 from PySide6.QtWidgets import QApplication
 
 from atv_player.player.mpv_library import active_mpv_library_description
+from atv_player.player.mpv_user_config import (
+    discover_shader_presets,
+    resolve_mpv_config_dir,
+)
 from atv_player.player.ytdlp_runtime import resolve_system_ytdlp_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +60,7 @@ def collect_system_info_entries() -> tuple[SystemInfoEntry, ...]:
             _MPV_HOME_URL,
         ),
         SystemInfoEntry("libmpv", _resolve_libmpv_display_value()),
+        SystemInfoEntry("mpv 配置", _resolve_mpv_config_display_value()),
         SystemInfoEntry(
             "ffmpeg",
             _read_command_version(["ffmpeg", "-version"], _parse_ffmpeg_version),
@@ -74,6 +79,15 @@ def _resolve_libmpv_display_value() -> str:
     # 实际加载的 libmpv 来源与路径;PATH 上的 mpv 命令版本(上一行)不代表它。
     source, path = active_mpv_library_description()
     return f"{source} {path}".strip()
+
+
+def _resolve_mpv_config_display_value() -> str:
+    config_dir = resolve_mpv_config_dir()
+    if config_dir is None:
+        return "内置默认"
+    shader_count = len(discover_shader_presets())
+    suffix = f"(含 {shader_count} 个着色器预设)" if shader_count else ""
+    return f"{config_dir / 'mpv.conf'} {suffix}".strip()
 
 
 def _resolve_platform_display_value() -> str:

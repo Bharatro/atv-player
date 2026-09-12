@@ -33,6 +33,7 @@ from atv_player.models import (
     YtdlpAudioTrackOption,
 )
 from atv_player.plugins.controller import SpiderPluginController
+from atv_player.player.mpv_user_config import ShaderPreset
 from atv_player.player.mpv_widget import AudioTrack, Chapter, SubtitleTrack
 
 import atv_player.danmaku.cache as danmaku_cache_module
@@ -12982,6 +12983,40 @@ def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_loa
     assert audio_apply_calls == [("auto", None)]
 
 
+def test_player_window_shader_menu_lists_presets_and_persists_choice(qtbot) -> None:
+    applied: list[str] = []
+    saved: list[bool] = []
+
+    class FakeVideo:
+        def shader_presets(self):
+            return {
+                "Anime4K-A": ShaderPreset(name="Anime4K-A", shader_files=("/tmp/a1.glsl", "/tmp/a2.glsl")),
+                "FSRCNNX": ShaderPreset(name="FSRCNNX", shader_files=("/tmp/f.glsl",)),
+            }
+
+        def apply_shader_preset(self, preset_name: str) -> bool:
+            applied.append(preset_name)
+            return True
+
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.append(True))
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    menu = window._build_shader_menu(None)
+    actions = menu.actions()
+
+    assert [action.text() for action in actions] == ["关闭", "Anime4K-A", "FSRCNNX"]
+    assert actions[0].isChecked() is True
+    assert [action.isChecked() for action in actions[1:]] == [False, False]
+
+    actions[1].trigger()
+
+    assert applied == ["Anime4K-A"]
+    assert config.mpv_shader_preset == "Anime4K-A"
+    assert saved == [True]
+
+
 def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -13065,6 +13100,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "字幕延迟",
         "音频延迟",
         "画面调节",
+        "着色器",
         "弹幕配置",
         "刮削",
         "重写剧集标题",
@@ -13111,6 +13147,10 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
     ]
     assert [action.text() for action in _submenu_actions(menu, "画面调节")] == [
         "需启用 hwdec=auto-copy",
+    ]
+    assert [action.text() for action in _submenu_actions(menu, "着色器")] == [
+        "未发现着色器预设",
+        "将 .glsl 放入 ~/mpv/shaders/ 子目录",
     ]
 
 
@@ -13948,6 +13988,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "字幕延迟",
         "音频延迟",
         "画面调节",
+        "着色器",
         "弹幕配置",
         "刮削",
         "重写剧集标题",
