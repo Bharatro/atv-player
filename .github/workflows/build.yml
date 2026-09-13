@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  MPV_DLL_URL: https://github.com/power721/atv-player/releases/download/v0.97.0/libmpv-2.dll
+  MPV_DLL_SHA256: 5825ffd2bef6fd6a4b78016d5890c6c9dedb16a31828a1c749be89eacf9e20ae
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -79,11 +83,12 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           New-Item -ItemType Directory -Force -Path "mpv" | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/power721/atv-player/releases/download/v0.97.0/libmpv-2.dll" -OutFile "mpv\libmpv-2.dll"
-          $mpvDll = Get-Item "mpv\libmpv-2.dll"
-          if ($mpvDll.Length -le 0) {
-            throw "Downloaded libmpv-2.dll is empty"
+          Invoke-WebRequest -Uri "$env:MPV_DLL_URL" -OutFile "mpv\libmpv-2.dll"
+          $actualHash = (Get-FileHash "mpv\libmpv-2.dll" -Algorithm SHA256).Hash.ToLower()
+          if ($actualHash -ne "$env:MPV_DLL_SHA256") {
+            throw "libmpv-2.dll SHA256 mismatch: expected $env:MPV_DLL_SHA256, got $actualHash"
           }
+          $mpvDll = Get-Item "mpv\libmpv-2.dll"
           Write-Host "Downloaded libmpv runtime: $($mpvDll.FullName) ($([Math]::Round($mpvDll.Length / 1MB, 2)) MB)"
 
       - name: Sync dependencies
