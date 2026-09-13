@@ -239,7 +239,13 @@ class LocalPlaybackHistoryRepository:
             """
         )
 
-    def get_history(self, source_kind: str, vod_id: str, source_key: str = "") -> HistoryRecord | None:
+    def get_history(
+        self,
+        source_kind: str,
+        vod_id: str,
+        source_key: str = "",
+        vod_name: str = "",
+    ) -> HistoryRecord | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -264,6 +270,31 @@ class LocalPlaybackHistoryRepository:
                     """,
                     (self._account_namespace, source_kind, vod_id),
                 ).fetchone()
+            if row is None and source_kind == "spider_plugin" and vod_name:
+                # 同系列跳转等场景下 vod_id 形态会漂移(裸 id/路由前缀等);
+                # 同插件内同名条目视为同一播放身份兜底续播,并把历史行重键到
+                # 当前 vod_id,避免两个 id 各存一行导致进度分叉。
+                row = conn.execute(
+                    """
+                    SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
+                           episode, episode_url, position, duration, opening, ending, speed, playlist_index,
+                           source_group_index, source_index, source_subgroup_index, source_subgroup_name,
+                           drive_dir_id, drive_share_key, drive_path, updated_at
+                    FROM media_playback_history
+                    WHERE account_namespace = ? AND source_kind = ? AND source_key = ? AND vod_name = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (self._account_namespace, source_kind, source_key, vod_name),
+                ).fetchone()
+                if row is not None and str(row[3]) != str(vod_id):
+                    conn.execute(
+                        """
+                        UPDATE media_playback_history SET vod_id = ?
+                        WHERE account_namespace = ? AND source_kind = ? AND source_key = ? AND vod_id = ?
+                        """,
+                        (str(vod_id), self._account_namespace, source_kind, source_key, str(row[3])),
+                    )
         if row is None:
             return None
         return HistoryRecord(

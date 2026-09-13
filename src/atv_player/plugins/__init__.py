@@ -473,10 +473,11 @@ class SpiderPluginManager:
             plugin_log_writer=lambda message, plugin_id=plugin.id: self._append_plugin_log(plugin_id, "info", message),
             playback_history_loader=None
             if self._playback_history_repository is None
-            else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(
+            else lambda vod_id, vod_name="", plugin_id=plugin.id: self._playback_history_repository.get_history(
                 "spider_plugin",
                 vod_id,
                 source_key=str(plugin_id),
+                vod_name=vod_name,
             ),
             playback_history_saver=None
             if self._playback_history_repository is None

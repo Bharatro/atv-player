@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QResizeEvent, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
@@ -30,6 +30,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
+    VodSeriesEntry,
     YtdlpAudioTrackOption,
 )
 from atv_player.plugins.controller import SpiderPluginController
@@ -9660,6 +9661,129 @@ def test_player_window_inlines_collection_level_detail_fields_into_metadata_text
     assert "播放: 12万" in window.metadata_view.toPlainText()
 
 
+def _series_chip_buttons(window: PlayerWindow) -> list[QPushButton]:
+    return [
+        window.series_chips_layout.itemAt(index).widget()
+        for index in range(window.series_chips_layout.count())
+    ]
+
+
+def test_player_window_renders_vod_series_chips_and_marks_current(qtbot) -> None:
+    session = make_player_session(start_index=0)
+    session.vod.vod_series = [
+        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季", vod_remarks="全62集"),
+        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    ]
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.series_widget.isHidden() is False
+    chips = _series_chip_buttons(window)
+    assert [chip.text() for chip in chips] == ["Movie 第一季", "Movie 第二季"]
+    assert chips[0].toolTip() == "Movie 第一季\n全62集"
+    assert chips[1].toolTip() == "Movie 第二季"
+    assert chips[0].property("seriesCurrent") is True
+    assert chips[1].property("seriesCurrent") is None
+
+
+def test_player_window_hides_series_section_when_detail_has_no_series(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.series_widget.isHidden() is True
+    assert window.series_chips_layout.count() == 0
+
+
+def test_player_window_series_chip_click_opens_detail_via_runner(qtbot) -> None:
+    session = make_player_session(start_index=0)
+    session.vod.vod_series = [
+        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季"),
+        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    ]
+    calls: list[tuple[PlayItem, PlaybackDetailFieldAction]] = []
+    session.detail_field_runner = lambda item, action: calls.append((item, action))
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    chips = _series_chip_buttons(window)
+    chips[1].click()
+
+    assert len(calls) == 1
+    item, action = calls[0]
+    assert item is session.playlist[0]
+    assert (action.type, action.value) == ("detail", "movie-2")
+
+
+def test_player_window_series_chip_click_without_runner_is_noop(qtbot) -> None:
+    session = make_player_session(start_index=0)
+    session.vod.vod_series = [
+        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季"),
+        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    ]
+    assert session.detail_field_runner is None
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_series_entry(VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"))
+
+
+def _series_session_with(count: int) -> PlayerSession:
+    session = make_player_session(start_index=0)
+    session.vod.vod_series = [
+        VodSeriesEntry(vod_id=f"movie-{index}", vod_name=f"Movie 第{index}季")
+        for index in range(1, count + 1)
+    ]
+    return session
+
+
+def test_player_window_collapses_series_section_beyond_threshold(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(_series_session_with(11))
+
+    assert window.series_widget.isHidden() is False
+    assert window.series_chips_widget.isHidden() is True
+    assert "(11)" in window.series_heading.text()
+    assert window.series_chips_layout.count() == 0
+
+
+def test_player_window_series_heading_click_expands_and_persists_preference(qtbot) -> None:
+    saved: list[bool] = []
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.append(True))
+    qtbot.addWidget(window)
+
+    window.open_session(_series_session_with(11))
+    qtbot.mouseClick(window.series_heading, Qt.MouseButton.LeftButton)
+
+    assert window.series_chips_widget.isHidden() is False
+    assert window.series_chips_layout.count() == 11
+    assert config.player_series_expanded is True
+    assert saved
+
+    window._render_series_entries()
+    assert window.series_chips_widget.isHidden() is False
+
+
+def test_player_window_series_pinned_collapse_stays_collapsed_for_few_entries(qtbot) -> None:
+    config = AppConfig()
+    config.player_series_expanded = False
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+
+    window.open_session(_series_session_with(2))
+
+    assert window.series_widget.isHidden() is False
+    assert window.series_chips_widget.isHidden() is True
+
+
 def test_player_window_hides_internal_episode_count_detail_fields_from_cached_metadata(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -13200,7 +13324,7 @@ def test_player_window_updates_telemetry_badge_from_video_snapshot(qtbot) -> Non
                 "container_fps": 25.0,
             }
 
-    window = PlayerWindow(FakePlayerController())
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(player_telemetry_visible=True))
     qtbot.addWidget(window)
     window.video = FakeVideo()
     window.telemetry_label.setText("旧内容")
@@ -13226,7 +13350,7 @@ def test_player_window_telemetry_toggle_hides_badge_and_persists(qtbot) -> None:
         def telemetry_snapshot(self):
             return {"video_width": 1920, "video_height": 1080}
 
-    config = AppConfig()
+    config = AppConfig(player_telemetry_visible=True)
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.append(True))
     qtbot.addWidget(window)
     window.video = FakeVideo()
@@ -13257,6 +13381,52 @@ def test_player_window_respects_persisted_telemetry_visibility(qtbot) -> None:
     qtbot.addWidget(window)
 
     assert window._telemetry_visible is False
+
+
+def test_player_window_telemetry_badge_defaults_off(qtbot) -> None:
+    class FakeVideo:
+        def telemetry_snapshot(self):
+            return {"video_width": 1920, "video_height": 1080}
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window._update_telemetry_badge()
+
+    assert window._telemetry_visible is False
+    assert window.telemetry_label.text() == ""
+    assert window.telemetry_label.isHidden() is True
+
+
+def test_player_window_telemetry_badge_floats_over_video_stack(qtbot) -> None:
+    class FakeVideo:
+        def telemetry_snapshot(self):
+            return {"video_width": 1920, "video_height": 1080}
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(player_telemetry_visible=True))
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.video_stack.resize(600, 400)
+    window._update_telemetry_badge()
+
+    # 悬浮在视频区上,不再占用底部控制栏的独立行(底部只剩进度行+按钮行)。
+    assert window.telemetry_label.parent() is window.video_stack
+    assert window.bottom_layout.count() == 2
+
+    geometry = window.telemetry_label.geometry()
+    assert geometry.x() == 0
+    assert geometry.y() == 0
+    assert geometry.right() < 600
+    assert geometry.bottom() < 400
+
+    # 视频区尺寸变化时经 Resize 事件过滤器重新贴角(隐藏窗口下 resize 事件投递时序
+    # 不确定,先应用几何再手动派发事件,验证过滤器挂钩)。
+    window.video_stack.resize(900, 300)
+    window.eventFilter(window.video_stack, QResizeEvent(QSize(900, 300), QSize(600, 400)))
+    geometry = window.telemetry_label.geometry()
+    assert geometry.x() == 0
+    assert geometry.y() == 0
 
 
 def test_player_window_shader_menu_lists_presets_and_persists_choice(qtbot) -> None:

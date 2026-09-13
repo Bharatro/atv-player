@@ -6740,6 +6740,14 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             request.episode_title_override_repository = self._episode_title_override_repository
         if request.detail_field_runner is not None:
             return request
+        if request.source_kind == "browse" and request.source_key:
+            source_key = request.source_key
+
+            def run_browse_detail_field_action(item, action):
+                self._run_browse_detail_field_action(source_key, item, action)
+
+            request.detail_field_runner = run_browse_detail_field_action
+            return request
         if request.source_kind == "plugin" and request.source_key:
             context = self._plugin_page_context_by_id(request.source_key)
             if context is None:
@@ -6760,6 +6768,20 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 lambda item, action, page=self.bilibili_page: self._run_bilibili_detail_field_action(page, item, action)
             )
         return request
+
+    def _run_browse_detail_field_action(
+        self,
+        source_key: str,
+        item: PlayItem,
+        action: PlaybackDetailFieldAction,
+    ) -> None:
+        if action.type != "detail":
+            return
+
+        def build_request() -> OpenPlayerRequest:
+            return self.browse_controller.build_request_from_detail(action.value, source_key=source_key)
+
+        self._start_open_request(build_request)
 
     def _run_plugin_detail_field_action(
         self,

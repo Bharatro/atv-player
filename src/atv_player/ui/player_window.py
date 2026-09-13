@@ -117,6 +117,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
+    VodSeriesEntry,
     YtdlpAudioTrackOption,
 )
 from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
@@ -144,6 +145,7 @@ from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dia
 from atv_player.ui.icon_cache import load_icon, tint_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
+from atv_player.ui.poster_grid_page import _FlowLayout
 from atv_player.ui.table_utils import configure_table_columns
 from atv_player.ui.theme import (
     FlatComboBox,
@@ -158,6 +160,7 @@ from atv_player.ui.theme import (
     build_player_list_qss,
     build_player_panel_qss,
     build_player_section_heading_qss,
+    build_player_series_chip_qss,
     build_player_spinbox_qss,
     build_player_tabbar_qss,
     build_player_text_panel_qss,
@@ -927,6 +930,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _SKIP_COUNTDOWN_SECONDS = 5.0
     _INTRO_RESTORE_BANNER_SECONDS = 8.0
     _SKIP_BANNER_TICK_MS = 200
+    # 同系列条目超过该数量且用户未固定展开偏好时,区块默认收起
+    _SERIES_COLLAPSE_THRESHOLD = 8
 
     def __init__(
         self,
@@ -1395,11 +1400,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.current_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.duration_label = QLabel("00:00")
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.telemetry_label = QLabel("")
-        self.telemetry_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.telemetry_label.setStyleSheet("font-family: monospace;")
-        self.telemetry_label.hide()
-        self._telemetry_visible = bool(getattr(self.config, "player_telemetry_visible", True))
+        self._telemetry_visible = bool(getattr(self.config, "player_telemetry_visible", False))
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
         self.progress.set_hover_tooltip_formatter(self._format_progress_tooltip)
         self.progress.setFixedHeight(24)
@@ -1505,6 +1506,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_fields_layout.setSpacing(6)
         metadata_layout.addWidget(self.detail_fields_widget)
+        self.series_widget = QWidget()
+        series_layout = QVBoxLayout(self.series_widget)
+        series_layout.setContentsMargins(0, 0, 0, 0)
+        series_layout.setSpacing(6)
+        self.series_heading = ClickableLabel("同系列")
+        self.series_heading.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.series_heading.setToolTip("展开/收起同系列列表")
+        self.series_heading.clicked.connect(self._toggle_series_expanded)
+        series_layout.addWidget(self.series_heading)
+        self.series_chips_widget = QWidget()
+        self.series_chips_layout = _FlowLayout(self.series_chips_widget, spacing=6)
+        series_layout.addWidget(self.series_chips_widget)
+        metadata_layout.addWidget(self.series_widget)
         self.metadata_heading = QLabel("影片详情")
         self._metadata_heading_row = QHBoxLayout()
         self._metadata_heading_row.setContentsMargins(0, 0, 8, 0)
@@ -1573,11 +1587,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         progress_row.addWidget(self.duration_label)
         bottom_layout.addLayout(progress_row)
 
-        telemetry_row = QHBoxLayout()
-        telemetry_row.setContentsMargins(0, 0, 0, 0)
-        telemetry_row.addWidget(self.telemetry_label)
-        bottom_layout.addLayout(telemetry_row)
-
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
         controls.addStretch(1)
@@ -1641,6 +1650,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         skip_banner_layout.addWidget(self.skip_banner_label)
         skip_banner_layout.addWidget(self.skip_banner_button)
         self.skip_banner.hide()
+        # 播放遥测徽章:悬浮在视频区左上角,不占底部控制栏布局,
+        # 避免视频加载后首帧快照到达时底部变高、视频区被压矮的跳动。
+        self.telemetry_label = QLabel("", self.video_stack)
+        self.telemetry_label.setObjectName("telemetryBadge")
+        self.telemetry_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.telemetry_label.hide()
         self.video_stack.installEventFilter(self)
 
         self.playlist_panel = QWidget()
@@ -1796,6 +1811,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         heading_qss = build_player_section_heading_qss(tokens)
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
+        self.series_heading.setStyleSheet(heading_qss)
+        self.series_chips_widget.setStyleSheet(build_player_series_chip_qss(tokens))
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
         poster_arrow_qss = (
             f"QToolButton {{ border: none; background: transparent; color: {tokens.text_secondary}; padding: 0; }}"
@@ -1935,6 +1952,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             + "\nQPushButton { padding-left: 16px; padding-right: 16px; }"
         )
         self.skip_banner_button.setFixedHeight(30)
+        # 背景必须不透明(同 skipConfirmBanner,5214b540 教训):这台环境的原生
+        # mpv 窗口上,半透明/纯透明 QSS 与 WA_TranslucentBackground 都试过,
+        # 前者混出底色残影、后者整个文本不可见,只有不透明底可靠。
+        self.telemetry_label.setStyleSheet(
+            f"""
+            QLabel#telemetryBadge {{
+                background-color: {player_tokens.player_overlay_bg};
+                color: {player_tokens.player_text_on_dark};
+                border: 1px solid {player_tokens.player_button_border};
+                padding: 3px 10px;
+                font-family: monospace;
+                font-size: 12px;
+            }}
+            """
+        )
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)
@@ -3110,6 +3142,72 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         row_layout.addWidget(value, 1)
         self.detail_fields_layout.addWidget(row)
         self.detail_fields_widget.setHidden(False)
+
+    def _clear_series_entries(self) -> None:
+        while self.series_chips_layout.count():
+            layout_item = self.series_chips_layout.takeAt(0)
+            widget = layout_item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _current_series_entries(self) -> list[VodSeriesEntry]:
+        vod = self._current_metadata_vod()
+        if vod is None:
+            return []
+        return list(vod.vod_series or [])
+
+    def _series_section_expanded(self, count: int) -> bool:
+        configured = getattr(self.config, "player_series_expanded", None) if self.config is not None else None
+        if configured is None:
+            return count <= self._SERIES_COLLAPSE_THRESHOLD
+        return bool(configured)
+
+    def _render_series_entries(self) -> None:
+        self._clear_series_entries()
+        entries = self._current_series_entries()
+        self.series_widget.setHidden(not entries)
+        if not entries:
+            return
+        expanded = self._series_section_expanded(len(entries))
+        self.series_heading.setText(f"同系列 ({len(entries)}) {'▾' if expanded else '▸'}")
+        self.series_chips_widget.setHidden(not expanded)
+        if not expanded:
+            return
+        current_id = str(getattr(self._current_metadata_vod(), "vod_id", "") or "")
+        for entry in entries:
+            button = QPushButton(entry.vod_name)
+            button.setToolTip(
+                f"{entry.vod_name}\n{entry.vod_remarks}" if entry.vod_remarks else entry.vod_name
+            )
+            if str(entry.vod_id) == current_id:
+                button.setProperty("seriesCurrent", True)
+            else:
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.clicked.connect(
+                    lambda _checked=False, entry=entry: self._open_series_entry(entry)
+                )
+            self.series_chips_layout.addWidget(button)
+
+    def _toggle_series_expanded(self) -> None:
+        entries = self._current_series_entries()
+        if not entries:
+            return
+        expanded = not self._series_section_expanded(len(entries))
+        if self.config is not None and self.config.player_series_expanded != expanded:
+            self.config.player_series_expanded = expanded
+            self._save_config()
+        self._render_series_entries()
+
+    def _open_series_entry(self, entry: VodSeriesEntry) -> None:
+        if self.session is None:
+            return
+        if self.session.detail_field_runner is None:
+            self._append_log(f"同系列跳转失败: 当前来源不支持打开 {entry.vod_name}")
+            return
+        self._run_detail_field_action(
+            PlaybackDetailFieldAction(type="detail", value=str(entry.vod_id))
+        )
 
     def _current_heat_identity(self):
         if self.session is None:
@@ -4852,8 +4950,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         vod = self._current_metadata_vod()
         if vod is None:
             self.metadata_view.clear()
+            self._render_series_entries()
             return
         self.metadata_view.setHtml(self._format_metadata_html(vod))
+        self._render_series_entries()
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:
@@ -12230,6 +12330,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         y = max(0, parent_rect.height() - banner_size.height() - margin)
         self.skip_banner.setGeometry(x, y, banner_size.width(), banner_size.height())
 
+    def _position_telemetry_badge(self) -> None:
+        badge_size = self.telemetry_label.sizeHint()
+        parent_rect = self.video_stack.rect()
+        if parent_rect.width() <= 0 or parent_rect.height() <= 0:
+            return
+        self.telemetry_label.setGeometry(0, 0, badge_size.width(), badge_size.height())
+
     def _tick_skip_banner(self) -> None:
         kind = self._skip_banner_kind
         if kind is None:
@@ -12280,6 +12387,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self.telemetry_label.setText(text)
         self.telemetry_label.setVisible(bool(text))
+        if text:
+            self._position_telemetry_badge()
+            self.telemetry_label.raise_()
 
     def _set_telemetry_visible(self, visible: bool) -> None:
         self._telemetry_visible = visible
@@ -13084,6 +13194,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         video_stack = getattr(self, "video_stack", None)
         if watched is video_stack and event.type() == QEvent.Type.Resize:
             self._position_skip_banner()
+            self._position_telemetry_badge()
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
             global_pos = event.globalPosition().toPoint()
             if (

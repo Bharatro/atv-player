@@ -6,7 +6,7 @@ from atv_player.controllers.browse_controller import (
     filter_search_results,
     map_drive_video_to_play_item,
 )
-from atv_player.models import VodItem
+from atv_player.models import VodItem, VodSeriesEntry
 from atv_player.share_types import infer_share_type
 
 
@@ -216,6 +216,62 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.vod.vod_id == "detail-1"
     assert [item.title for item in request.playlist] == ["Episode 1", "Episode 2"]
     assert request.clicked_index == 0
+
+
+def test_build_request_from_detail_maps_vod_series_entries() -> None:
+    api = FakeApiClient()
+    api.detail_payload["list"][0]["vod_series"] = [
+        {"vod_id": "detail-1", "vod_name": "Movie 第一季", "vod_remarks": "全62集"},
+        {"id": "detail-2", "title": "Movie 第二季", "remarks": "更新至30集"},
+        {"vod_id": "detail-3", "vod_name": "无备注条目"},
+        {"vod_id": "", "vod_name": "缺 id 的条目"},
+        {"vod_id": "detail-4", "vod_name": ""},
+        "not-a-mapping",
+        {"vod_id": "detail-1", "vod_name": "重复 id"},
+    ]
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert [
+        (entry.vod_id, entry.vod_name, entry.vod_remarks) for entry in request.vod.vod_series
+    ] == [
+        ("detail-1", "Movie 第一季", "全62集"),
+        ("detail-2", "Movie 第二季", "更新至30集"),
+        ("detail-3", "无备注条目", ""),
+    ]
+
+
+def test_build_request_from_detail_without_vod_series_keeps_empty_list() -> None:
+    controller = BrowseController(FakeApiClient())
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.vod.vod_series == []
+
+
+def test_merge_vod_metadata_keeps_vod_series_from_either_side() -> None:
+    controller = BrowseController(FakeApiClient())
+    fallback = VodItem(
+        vod_id="v1",
+        vod_name="原始",
+        vod_series=[VodSeriesEntry(vod_id="s1", vod_name="第一季")],
+    )
+    resolved = VodItem(vod_id="v1", vod_name="增强", vod_series=[])
+
+    merged = controller._merge_vod_metadata(resolved, fallback)
+    assert [(entry.vod_id, entry.vod_name) for entry in merged.vod_series] == [("s1", "第一季")]
+
+    resolved_with_series = VodItem(
+        vod_id="v1",
+        vod_name="增强",
+        vod_series=[
+            VodSeriesEntry(vod_id="s1", vod_name="第一季"),
+            VodSeriesEntry(vod_id="s2", vod_name="第二季"),
+        ],
+    )
+    merged = controller._merge_vod_metadata(resolved_with_series, fallback)
+    assert [entry.vod_id for entry in merged.vod_series] == ["s1", "s2"]
 
 
 def test_browse_request_uses_alist_sync_history_callbacks() -> None:

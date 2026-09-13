@@ -534,6 +534,7 @@ class SettingsRepository:
                     player_wide_mode INTEGER NOT NULL DEFAULT 0,
                     player_log_visible INTEGER NOT NULL DEFAULT 1,
                     player_telemetry_visible INTEGER NOT NULL DEFAULT 1,
+                    player_series_expanded INTEGER,
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
                     preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
@@ -832,6 +833,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_telemetry_visible INTEGER NOT NULL DEFAULT 1"
                 )
+            if "player_series_expanded" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_series_expanded INTEGER"
+                )
             if "preferred_parse_key" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_parse_key TEXT NOT NULL DEFAULT ''"
@@ -1038,6 +1043,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
+                    player_series_expanded,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -1076,7 +1082,7 @@ class SettingsRepository:
                 )
                     VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 0, 2, 'smart', 1, '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, 1, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
+                    0, 100, 0, 0, 1, 1, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
                 ON CONFLICT(id) DO NOTHING
@@ -1194,6 +1200,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
+                    player_series_expanded,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -1301,6 +1308,7 @@ class SettingsRepository:
             player_wide_mode,
             player_log_visible,
             player_telemetry_visible,
+            player_series_expanded,
             preferred_parse_key,
             preferred_danmaku_enabled,
             preferred_danmaku_line_count,
@@ -1429,6 +1437,9 @@ class SettingsRepository:
             player_wide_mode=bool(player_wide_mode),
             player_log_visible=bool(player_log_visible),
             player_telemetry_visible=bool(player_telemetry_visible),
+            player_series_expanded=(
+                None if player_series_expanded is None else bool(player_series_expanded)
+            ),
             preferred_parse_key=preferred_parse_key,
             preferred_danmaku_enabled=bool(preferred_danmaku_enabled),
             preferred_danmaku_line_count=_normalize_danmaku_line_count(preferred_danmaku_line_count),
@@ -1553,6 +1564,7 @@ class SettingsRepository:
                     player_wide_mode = ?,
                     player_log_visible = ?,
                     player_telemetry_visible = ?,
+                    player_series_expanded = ?,
                     preferred_parse_key = ?,
                     preferred_danmaku_enabled = ?,
                     preferred_danmaku_line_count = ?,
@@ -1679,6 +1691,11 @@ class SettingsRepository:
                     int(config.player_wide_mode),
                     int(config.player_log_visible),
                     int(getattr(config, "player_telemetry_visible", True)),
+                    (
+                        None
+                        if getattr(config, "player_series_expanded", None) is None
+                        else int(config.player_series_expanded)
+                    ),
                     config.preferred_parse_key,
                     int(config.preferred_danmaku_enabled),
                     _normalize_danmaku_line_count(config.preferred_danmaku_line_count),

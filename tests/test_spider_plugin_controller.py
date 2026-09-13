@@ -23,7 +23,7 @@ from atv_player.danmaku.models import (
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
 from atv_player.metadata.providers.plugin import CustomPluginProvider
-from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem, PlaybackDetailAction, PlaybackDetailField
+from atv_player.models import CategoryFilter, CategoryFilterOption, HistoryRecord, PlayItem, PlaybackDetailAction, PlaybackDetailField, VodSeriesEntry
 from atv_player.plugins.controller import SpiderPluginController, _count_danmaku_entries
 
 
@@ -1002,6 +1002,83 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
+
+
+class SeriesJumpSpider(FakeSpider):
+    def detailContent(self, ids):
+        vod_id = str(ids[0])
+        return {
+            "list": [
+                {
+                    "vod_id": vod_id,
+                    "vod_name": "同系列第二季",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "线路",
+                    "vod_play_url": "#".join(f"第{i}集$/play/{i}" for i in range(1, 66)),
+                    "vod_series": [
+                        {"vod_id": "season-1", "vod_name": "同系列第一季"},
+                        {"vod_id": vod_id, "vod_name": "同系列第二季"},
+                    ],
+                }
+            ]
+        }
+
+
+def test_controller_series_jump_request_restores_history() -> None:
+    loaded_calls: list[tuple[str, str]] = []
+
+    def history_loader(vod_id, vod_name=""):
+        loaded_calls.append((vod_id, vod_name))
+        return HistoryRecord(
+            id=1,
+            key=vod_id,
+            vod_name="同系列第二季",
+            vod_pic="",
+            vod_remarks="",
+            episode=61,
+            episode_url="",
+            position=43000,
+            opening=0,
+            ending=0,
+            speed=1.25,
+            create_time=0,
+            duration=58000,
+        )
+
+    controller = SpiderPluginController(
+        SeriesJumpSpider(),
+        plugin_name="系列插件",
+        search_enabled=False,
+        playback_history_loader=history_loader,
+    )
+
+    request = controller.build_request("season-2")
+
+    assert [entry.vod_id for entry in request.vod.vod_series] == ["season-1", "season-2"]
+
+    class NoFallbackApi:
+        def get_history(self, key):
+            raise AssertionError("plugin session should use its own history loader")
+
+    session = PlayerController(NoFallbackApi()).create_session(
+        request.vod,
+        request.playlist,
+        request.clicked_index,
+        playlists=request.playlists,
+        use_local_history=request.use_local_history,
+        restore_history=request.restore_history,
+        playback_loader=request.playback_loader,
+        async_playback_loader=request.async_playback_loader,
+        playback_history_loader=request.playback_history_loader,
+        source_kind="plugin",
+        source_key="683",
+    )
+
+    assert session.start_index == 61
+    assert session.start_position_seconds == 43
+    assert session.speed == 1.25
+    # 详情的 vod_name 会随历史查询下发,供同名兜底续播使用
+    assert loaded_calls == [("season-2", "同系列第二季")]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

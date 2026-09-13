@@ -5,7 +5,15 @@ import re
 from collections.abc import Callable
 from urllib.parse import urlparse
 
-from atv_player.models import ExternalSubtitleOption, OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
+from atv_player.models import (
+    ExternalSubtitleOption,
+    OpenPlayerRequest,
+    PlayItem,
+    PlaybackSource,
+    PlaybackSourceGroup,
+    VodItem,
+    VodSeriesEntry,
+)
 from atv_player.playback_parsers import coerce_media_url
 from atv_player.playlist_sorting import parse_size_bytes
 from atv_player.share_types import get_share_type_name
@@ -124,6 +132,39 @@ def map_drive_video_to_play_item(
     )
 
 
+def _map_vod_series(payload: object) -> list[VodSeriesEntry]:
+    """同系列条目:爬虫详情下发的同 IP 其他季/部({vod_id, vod_name}),键名做别名容错。"""
+    if not isinstance(payload, list):
+        return []
+    entries: list[VodSeriesEntry] = []
+    seen_ids: set[str] = set()
+    for raw_entry in payload:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry_id = str(
+            raw_entry.get("vod_id") or raw_entry.get("id") or raw_entry.get("value") or ""
+        ).strip()
+        entry_name = str(
+            raw_entry.get("vod_name")
+            or raw_entry.get("name")
+            or raw_entry.get("title")
+            or raw_entry.get("label")
+            or ""
+        ).strip()
+        entry_remarks = str(
+            raw_entry.get("vod_remarks") or raw_entry.get("remarks") or ""
+        ).strip()
+        if not entry_id or not entry_name or entry_id in seen_ids:
+            continue
+        seen_ids.add(entry_id)
+        entries.append(
+            VodSeriesEntry(vod_id=entry_id, vod_name=entry_name, vod_remarks=entry_remarks)
+        )
+        if len(entries) >= 100:
+            break
+    return entries
+
+
 def _map_vod_item(payload: dict) -> VodItem:
     items = [
         _map_play_item(item, index)
@@ -149,6 +190,7 @@ def _map_vod_item(payload: dict) -> VodItem:
         vod_actor=str(payload.get("vod_actor") or ""),
         dbid=int(payload.get("dbid") or 0),
         type=int(payload.get("type") or 0),
+        vod_series=_map_vod_series(payload.get("vod_series")),
         items=items,
     )
 
@@ -294,6 +336,7 @@ class BrowseController:
             vod_actor=resolved_vod.vod_actor or fallback_vod.vod_actor,
             dbid=resolved_vod.dbid or fallback_vod.dbid,
             type=resolved_vod.type or fallback_vod.type,
+            vod_series=resolved_vod.vod_series or fallback_vod.vod_series,
             items=resolved_vod.items if resolved_vod.items is not None else fallback_vod.items,
         )
 

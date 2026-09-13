@@ -911,6 +911,27 @@ def build_player_panel_qss(tokens: ThemeTokens) -> str:
     """
 
 
+def build_player_series_chip_qss(tokens: ThemeTokens) -> str:
+    return f"""
+    QPushButton {{
+        background-color: {tokens.input_bg};
+        color: {tokens.text_primary};
+        border: 1px solid {tokens.input_border};
+        border-radius: 12px;
+        padding: 4px 12px;
+    }}
+    QPushButton:hover {{
+        background-color: {tokens.panel_alt_bg};
+        border-color: {tokens.accent_hover};
+    }}
+    QPushButton[seriesCurrent="true"] {{
+        color: {tokens.accent};
+        border: 1px solid {tokens.accent};
+        font-weight: 600;
+    }}
+    """
+
+
 def build_player_list_qss(tokens: ThemeTokens) -> str:
     return f"""
     QListWidget {{

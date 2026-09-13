@@ -2772,8 +2772,12 @@ class SpiderPluginController:
         history_loader = None
         history_saver = None
         if self._playback_history_loader is not None:
-            def history_loader(source_vod_id=source_vod_id):
-                return self._playback_history_loader(source_vod_id)
+            def history_loader(source_vod_id=source_vod_id, vod_name=str(detail.vod_name or "")):
+                try:
+                    return self._playback_history_loader(source_vod_id, vod_name)
+                except TypeError:
+                    # 兼容只收 vod_id 的旧注入方(测试桩等)
+                    return self._playback_history_loader(source_vod_id)
         if self._playback_history_saver is not None:
             def history_saver(payload, source_vod_id=source_vod_id):
                 return self._playback_history_saver(

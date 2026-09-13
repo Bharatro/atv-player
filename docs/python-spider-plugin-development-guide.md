@@ -965,6 +965,35 @@ def runPlayerAction(self, action_id, context):
 - `target` 可选
 - `target="bilibili"` 会路由到内置 Bilibili 标签
 
+### 13.4 同系列媒体
+
+短剧、连续剧常拆成多个独立条目（第一季、第二季……）。在 `detailContent(...).list[0]` 里返回 `vod_series`，播放器详情侧栏会显示一排"同系列"胶囊按钮，点击即用当前来源打开该条目详情并播放：
+
+```python
+def detailContent(self, ids):
+    vod = {
+        "vod_id": "book-1001",
+        "vod_name": "闪婚老伴第一季",
+        # ...
+        "vod_series": [
+            {"vod_id": "book-1001", "vod_name": "闪婚老伴第一季", "vod_remarks": "全62集"},
+            {"vod_id": "book-2042", "vod_name": "闪婚老伴第二季", "vod_remarks": "更新至30集"},
+            {"vod_id": "book-3190", "vod_name": "闪婚老伴第三季", "vod_remarks": "全93集"},
+        ],
+    }
+    return {"list": [vod]}
+```
+
+规则：
+
+- 每个条目需要 `vod_id` 和 `vod_name`（键名也接受 `id`/`name`/`title`/`label`/`value` 别名），缺一即丢弃该条目
+- 可选 `vod_remarks`（也接受 `remarks` 别名）作为条目备注（集数/状态等），显示在胶囊的 tooltip 第二行
+- `vod_id` 必须是当前插件 `detailContent(...)` 能直接打开的 id，并尽量与列表/搜索返回的 `vod_id` 保持同一形态——播放记录按 id 存续播进度，形态漂移会先按同插件同名条目兜底续播
+- 列表应包含当前作品本身，正在播放的条目会高亮且不可点击
+- 建议按季/部顺序排列，最多取前 100 条
+- 跳转走的是普通详情请求，历史记录、断点续播照常生效
+- 条目多于 8 个时播放器默认收起该区块（标题显示数量），用户可点标题展开/收起并持久化偏好
+
 ## 14. 插件管理动作
 
 除了播放器里的详情动作，你还可以给“插件管理”对话框提供自定义按钮。

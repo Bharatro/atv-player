@@ -9431,6 +9431,63 @@ def test_main_window_detail_field_category_click_loads_plugin_results(qtbot, mon
     assert window.nav_tabs.currentWidget() is plugin_page
 
 
+def test_main_window_detail_field_runner_opens_browse_series_detail(qtbot, monkeypatch) -> None:
+    class FakeBrowseController(FakeStaticController):
+        def __init__(self) -> None:
+            self.detail_calls: list[tuple[str, str]] = []
+
+        def build_request_from_detail(self, vod_id: str, source_key: str = "csp_AList"):
+            self.detail_calls.append((vod_id, source_key))
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="同系列详情"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                source_kind="browse",
+                source_key=source_key,
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config, **kwargs) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    browse_controller = FakeBrowseController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        browse_controller,
+        FakeStaticController(),
+        FakePlayerController(),
+        AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    request = browse_controller.build_request_from_detail("detail-1", source_key="csp_AList")
+    window.open_player(request)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+
+    session = window.player_window.opened[0][0]
+    runner = session["detail_field_runner"]
+    assert runner is not None
+    runner(session["playlist"][0], PlaybackDetailFieldAction(type="detail", value="detail-2"))
+
+    qtbot.waitUntil(lambda: browse_controller.detail_calls == [("detail-1", "csp_AList"), ("detail-2", "csp_AList")])
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2)
+    assert window.player_window.opened[1][0]["vod"].vod_id == "detail-2"
+
+
 def test_main_window_detail_field_search_click_loads_plugin_results(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
