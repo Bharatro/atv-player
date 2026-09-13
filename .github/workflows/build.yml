@@ -79,7 +79,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           New-Item -ItemType Directory -Force -Path "mpv" | Out-Null
-          Invoke-WebRequest -Uri "http://46.38.157.230/libmpv-2.dll" -OutFile "mpv\libmpv-2.dll"
+          Invoke-WebRequest -Uri "https://github.com/power721/atv-player/releases/download/v0.97.0/libmpv-2.dll" -OutFile "mpv\libmpv-2.dll"
           $mpvDll = Get-Item "mpv\libmpv-2.dll"
           if ($mpvDll.Length -le 0) {
             throw "Downloaded libmpv-2.dll is empty"
