@@ -87,13 +87,13 @@ def test_settings_repository_round_trips_mpv_shader_preset(tmp_path: Path) -> No
 def test_settings_repository_round_trips_player_telemetry_visible(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
-    assert config.player_telemetry_visible is True
+    assert config.player_telemetry_visible is False
 
-    config.player_telemetry_visible = False
+    config.player_telemetry_visible = True
     repo.save_config(config)
     loaded = repo.load_config()
 
-    assert loaded.player_telemetry_visible is False
+    assert loaded.player_telemetry_visible is True
 
 
 def test_settings_repository_normalizes_invalid_m3u8_ad_filter_mode(tmp_path: Path) -> None:

@@ -87,7 +87,7 @@ class AppConfig:
     player_muted: bool = False
     player_wide_mode: bool = False
     player_log_visible: bool = True
-    player_telemetry_visible: bool = True
+    player_telemetry_visible: bool = False
     # 同系列区块展开状态:None=按数量自动(少量展开、超过阈值收起)
     player_series_expanded: bool | None = None
     preferred_parse_key: str = ""
