@@ -541,7 +541,7 @@ class LocalHlsProxyServer:
                 spade_a,
                 get=self._get,
             )
-        return f"http://{self.host}:{self.port}/cenc/{quote(token, safe='')}/video.mp4"
+        return f"http://{self.host}:{self.port}/cenc/{quote(token, safe='')}.mp4"
 
     def create_iso_media_url(
         self,
@@ -1366,6 +1366,8 @@ class LocalHlsProxyServer:
         if not parsed.path.startswith("/cenc/"):
             return None, ""
         token = unquote(parsed.path[len("/cenc/") :].split("/", 1)[0])
+        if token.endswith(".mp4"):
+            token = token[: -len(".mp4")]
         return self._registry.get(token), token
 
     def _stream_cenc_response(

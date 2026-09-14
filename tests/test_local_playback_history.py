@@ -11,7 +11,7 @@ def _payload(episode: int = 5, position_ms: int = 65000) -> dict:
     return {
         "vodName": "同系列第二季",
         "episode": episode,
-        "episodeUrl": "http://127.0.0.1:2323/cenc/abc/video.mp4",
+        "episodeUrl": "http://127.0.0.1:2323/cenc/abc.mp4",
         "position": position_ms,
         "duration": 58000,
         "speed": 1.0,
