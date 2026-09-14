@@ -9431,7 +9431,7 @@ def test_main_window_detail_field_category_click_loads_plugin_results(qtbot, mon
     assert window.nav_tabs.currentWidget() is plugin_page
 
 
-def test_main_window_detail_field_runner_opens_browse_series_detail(qtbot, monkeypatch) -> None:
+def test_main_window_detail_runner_opens_browse_related(qtbot, monkeypatch) -> None:
     class FakeBrowseController(FakeStaticController):
         def __init__(self) -> None:
             self.detail_calls: list[tuple[str, str]] = []

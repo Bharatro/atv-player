@@ -6,7 +6,7 @@ from atv_player.controllers.browse_controller import (
     filter_search_results,
     map_drive_video_to_play_item,
 )
-from atv_player.models import VodItem, VodSeriesEntry
+from atv_player.models import VodItem, VodRelatedEntry
 from atv_player.share_types import infer_share_type
 
 
@@ -218,60 +218,124 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.clicked_index == 0
 
 
-def test_build_request_from_detail_maps_vod_series_entries() -> None:
+def test_build_request_from_detail_maps_vod_related_entries() -> None:
     api = FakeApiClient()
-    api.detail_payload["list"][0]["vod_series"] = [
-        {"vod_id": "detail-1", "vod_name": "Movie 第一季", "vod_remarks": "全62集"},
-        {"id": "detail-2", "title": "Movie 第二季", "remarks": "更新至30集"},
-        {"vod_id": "detail-3", "vod_name": "无备注条目"},
+    api.detail_payload["list"][0]["vod_related"] = [
+        {
+            "vod_id": "related-1",
+            "vod_name": "Movie 第一季",
+            "vod_remarks": "全62集",
+            "vod_pic": "https://cdn/1.jpg",
+            "vod_year": "2025",
+        },
+        {
+            "id": "related-2",
+            "title": "Movie 第二季",
+            "remarks": "更新至30集",
+            "pic": "p2.jpg",
+            "year": "2026",
+        },
+        {"vod_id": "related-3", "vod_name": "无备注条目"},
         {"vod_id": "", "vod_name": "缺 id 的条目"},
-        {"vod_id": "detail-4", "vod_name": ""},
+        {"value": "related-4", "label": "别名键条目"},
+        {"vod_id": "related-1", "vod_name": "重复 id"},
         "not-a-mapping",
-        {"vod_id": "detail-1", "vod_name": "重复 id"},
     ]
     controller = BrowseController(api)
 
     request = controller.build_request_from_detail("detail-1")
 
     assert [
-        (entry.vod_id, entry.vod_name, entry.vod_remarks) for entry in request.vod.vod_series
+        (
+            entry.vod_id,
+            entry.vod_name,
+            entry.vod_remarks,
+            entry.vod_pic,
+            entry.vod_year,
+        )
+        for entry in request.vod.vod_related
     ] == [
-        ("detail-1", "Movie 第一季", "全62集"),
-        ("detail-2", "Movie 第二季", "更新至30集"),
-        ("detail-3", "无备注条目", ""),
+        ("related-1", "Movie 第一季", "全62集", "https://cdn/1.jpg", "2025"),
+        ("related-2", "Movie 第二季", "更新至30集", "p2.jpg", "2026"),
+        ("related-3", "无备注条目", "", "", ""),
+        ("related-4", "别名键条目", "", "", ""),
     ]
 
 
-def test_build_request_from_detail_without_vod_series_keeps_empty_list() -> None:
+def test_build_request_from_detail_maps_vod_related_label() -> None:
+    api = FakeApiClient()
+    api.detail_payload["list"][0]["vod_related"] = [
+        {"vod_id": "related-1", "vod_name": "相关作品"},
+    ]
+    api.detail_payload["list"][0]["vod_related_label"] = "  同系列  "
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.vod.vod_related_label == "同系列"
+
+    api.detail_payload["list"][0]["vod_related_label"] = "这是一个特别特别长的标题吧"
+    request = controller.build_request_from_detail("detail-1")
+
+    assert len(request.vod.vod_related_label) == 12
+
+    api.detail_payload["list"][0]["vod_related_label"] = ""
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.vod.vod_related_label == ""
+
+
+def test_build_request_from_detail_maps_vod_related_entries_up_to_limit() -> None:
+    api = FakeApiClient()
+    api.detail_payload["list"][0]["vod_related"] = [
+        {"vod_id": f"related-{index}", "vod_name": f"作品{index}"}
+        for index in range(150)
+    ]
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert len(request.vod.vod_related) == 100
+
+
+def test_build_request_from_detail_without_vod_related_keeps_empty_list() -> None:
     controller = BrowseController(FakeApiClient())
 
     request = controller.build_request_from_detail("detail-1")
 
-    assert request.vod.vod_series == []
+    assert request.vod.vod_related == []
 
 
-def test_merge_vod_metadata_keeps_vod_series_from_either_side() -> None:
+def test_merge_vod_metadata_keeps_vod_related_from_either_side() -> None:
     controller = BrowseController(FakeApiClient())
     fallback = VodItem(
         vod_id="v1",
         vod_name="原始",
-        vod_series=[VodSeriesEntry(vod_id="s1", vod_name="第一季")],
+        vod_related=[VodRelatedEntry(vod_id="s1", vod_name="第一季")],
+        vod_related_label="同系列",
     )
-    resolved = VodItem(vod_id="v1", vod_name="增强", vod_series=[])
+    resolved = VodItem(
+        vod_id="v1", vod_name="增强", vod_related=[], vod_related_label=""
+    )
 
     merged = controller._merge_vod_metadata(resolved, fallback)
-    assert [(entry.vod_id, entry.vod_name) for entry in merged.vod_series] == [("s1", "第一季")]
+    assert [(entry.vod_id, entry.vod_name) for entry in merged.vod_related] == [
+        ("s1", "第一季")
+    ]
+    assert merged.vod_related_label == "同系列"
 
-    resolved_with_series = VodItem(
+    resolved_with_related = VodItem(
         vod_id="v1",
         vod_name="增强",
-        vod_series=[
-            VodSeriesEntry(vod_id="s1", vod_name="第一季"),
-            VodSeriesEntry(vod_id="s2", vod_name="第二季"),
+        vod_related=[
+            VodRelatedEntry(vod_id="s1", vod_name="第一季"),
+            VodRelatedEntry(vod_id="s2", vod_name="相似作品"),
         ],
+        vod_related_label="相关推荐",
     )
-    merged = controller._merge_vod_metadata(resolved_with_series, fallback)
-    assert [entry.vod_id for entry in merged.vod_series] == ["s1", "s2"]
+    merged = controller._merge_vod_metadata(resolved_with_related, fallback)
+    assert [entry.vod_id for entry in merged.vod_related] == ["s1", "s2"]
+    assert merged.vod_related_label == "相关推荐"
 
 
 def test_browse_request_uses_alist_sync_history_callbacks() -> None:

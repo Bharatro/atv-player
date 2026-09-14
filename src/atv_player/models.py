@@ -88,8 +88,8 @@ class AppConfig:
     player_wide_mode: bool = False
     player_log_visible: bool = True
     player_telemetry_visible: bool = False
-    # 同系列区块展开状态:None=按数量自动(少量展开、超过阈值收起)
-    player_series_expanded: bool | None = None
+    # 相关推荐区块展开状态:None=按数量自动(少量展开、超过阈值收起)
+    player_related_expanded: bool | None = None
     preferred_parse_key: str = ""
     preferred_danmaku_enabled: bool = True
     preferred_danmaku_line_count: int = 1
@@ -152,10 +152,12 @@ class ExternalSubtitleSelection:
 
 
 @dataclass(slots=True)
-class VodSeriesEntry:
+class VodRelatedEntry:
     vod_id: str
     vod_name: str
     vod_remarks: str = ""
+    vod_pic: str = ""
+    vod_year: str = ""
 
 
 @dataclass(slots=True)
@@ -362,7 +364,8 @@ class VodItem:
     type: int = 0
     detail_fields: list[PlaybackDetailField] = field(default_factory=list)
     metadata_field_sources: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
-    vod_series: list[VodSeriesEntry] = field(default_factory=list)
+    vod_related: list[VodRelatedEntry] = field(default_factory=list)
+    vod_related_label: str = ""
     items: list[PlayItem] = field(default_factory=list)
 
 

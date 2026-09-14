@@ -21,6 +21,7 @@ from typing import cast
 from urllib.parse import urlparse
 
 import httpx
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, QRect, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
 from PySide6.QtGui import (
     QActionGroup,
@@ -30,6 +31,7 @@ from PySide6.QtGui import (
     QContextMenuEvent,
     QCursor,
     QDesktopServices,
+    QFontMetrics,
     QIcon,
     QImage,
     QKeyEvent,
@@ -48,6 +50,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QDoubleSpinBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QGridLayout,
     QLabel,
@@ -55,6 +58,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
     QSizePolicy,
@@ -117,7 +121,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
-    VodSeriesEntry,
+    VodRelatedEntry,
     YtdlpAudioTrackOption,
 )
 from atv_player.episode_titles import normalize_episode_title_text, playlist_has_title_variants, playlist_item_display_title
@@ -143,7 +147,13 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon, tint_icon
-from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url, poster_cache_path
+from atv_player.ui.poster_loader import (
+    load_local_poster_image,
+    load_remote_poster_image,
+    normalize_poster_url,
+    poster_cache_path,
+    poster_load_slot,
+)
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.poster_grid_page import _FlowLayout
 from atv_player.ui.table_utils import configure_table_columns
@@ -160,7 +170,7 @@ from atv_player.ui.theme import (
     build_player_list_qss,
     build_player_panel_qss,
     build_player_section_heading_qss,
-    build_player_series_chip_qss,
+    build_player_related_chip_qss,
     build_player_spinbox_qss,
     build_player_tabbar_qss,
     build_player_text_panel_qss,
@@ -527,6 +537,88 @@ class ClickableLabel(QLabel):
             event.accept()
             return
         super().mousePressEvent(event)
+
+
+class _RelatedMediaCard(QFrame):
+    """播完推荐浮层里的媒体卡片:海报 + 标题 + 年份/备注,点击整卡触发跳转。"""
+
+    activated = Signal(object)
+    image_loaded = Signal(object)
+
+    WIDTH = 220
+    HEIGHT = 360
+    _POSTER_SIZE = QSize(200, 285)
+
+    def __init__(self, entry: VodRelatedEntry, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.entry = entry
+        self.setObjectName("relatedMediaCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        self.poster_label = QLabel("海报", self)
+        self.poster_label.setObjectName("relatedMediaCardPoster")
+        self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poster_label.setFixedSize(self._POSTER_SIZE)
+        poster_row = QHBoxLayout()
+        poster_row.addStretch(1)
+        poster_row.addWidget(self.poster_label)
+        poster_row.addStretch(1)
+        layout.addLayout(poster_row)
+        self.title_label = QLabel(self._elided_title(entry.vod_name), self)
+        self.title_label.setObjectName("relatedMediaCardTitle")
+        layout.addWidget(self.title_label)
+        meta_parts = [part for part in (entry.vod_year, entry.vod_remarks) if part]
+        self.meta_label = QLabel(" · ".join(meta_parts), self)
+        self.meta_label.setObjectName("relatedMediaCardMeta")
+        layout.addWidget(self.meta_label)
+        layout.addStretch(1)
+        self.setToolTip(
+            f"{entry.vod_name}\n{entry.vod_remarks}"
+            if entry.vod_remarks
+            else entry.vod_name
+        )
+        self.image_loaded.connect(self._handle_image_loaded)
+        self._start_poster_load()
+
+    @staticmethod
+    def _elided_title(title: str) -> str:
+        metrics = QFontMetrics(QLabel().font())
+        return metrics.elidedText(title, Qt.TextElideMode.ElideRight, 200)
+
+    def _start_poster_load(self) -> None:
+        source = self.entry.vod_pic
+        image_url = normalize_poster_url(source)
+        if not image_url:
+            return
+
+        def load() -> None:
+            with poster_load_slot():
+                image = load_local_poster_image(source, self._POSTER_SIZE)
+                if image is None:
+                    image = load_remote_poster_image(
+                        image_url, self._POSTER_SIZE, timeout=10.0, get=httpx.get
+                    )
+                if image is not None and shiboken6.isValid(self.poster_label):
+                    self.image_loaded.emit(image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_image_loaded(self, image) -> None:
+        if not shiboken6.isValid(self.poster_label):
+            return
+        self.poster_label.setText("")
+        self.poster_label.setPixmap(QPixmap.fromImage(image))
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activated.emit(self.entry)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class PosterPreviewDialog(ThemedDialogBase):
@@ -930,8 +1022,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     _SKIP_COUNTDOWN_SECONDS = 5.0
     _INTRO_RESTORE_BANNER_SECONDS = 8.0
     _SKIP_BANNER_TICK_MS = 200
-    # 同系列条目超过该数量且用户未固定展开偏好时,区块默认收起
-    _SERIES_COLLAPSE_THRESHOLD = 8
+    # 相关推荐条目超过该数量且用户未固定展开偏好时,区块默认收起
+    _RELATED_COLLAPSE_THRESHOLD = 8
+    _RELATED_DEFAULT_LABEL = "相关推荐"
+    _RELATED_OVERLAY_MAX_CARDS = 24
+    _RELATED_OVERLAY_MAX_COLUMNS = 8
+    _RELATED_OVERLAY_CARD_SPACING = 16
 
     def __init__(
         self,
@@ -1506,19 +1602,19 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_fields_layout.setSpacing(6)
         metadata_layout.addWidget(self.detail_fields_widget)
-        self.series_widget = QWidget()
-        series_layout = QVBoxLayout(self.series_widget)
-        series_layout.setContentsMargins(0, 0, 0, 0)
-        series_layout.setSpacing(6)
-        self.series_heading = ClickableLabel("同系列")
-        self.series_heading.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.series_heading.setToolTip("展开/收起同系列列表")
-        self.series_heading.clicked.connect(self._toggle_series_expanded)
-        series_layout.addWidget(self.series_heading)
-        self.series_chips_widget = QWidget()
-        self.series_chips_layout = _FlowLayout(self.series_chips_widget, spacing=6)
-        series_layout.addWidget(self.series_chips_widget)
-        metadata_layout.addWidget(self.series_widget)
+        self.related_widget = QWidget()
+        related_layout = QVBoxLayout(self.related_widget)
+        related_layout.setContentsMargins(0, 0, 0, 0)
+        related_layout.setSpacing(6)
+        self.related_heading = ClickableLabel(self._RELATED_DEFAULT_LABEL)
+        self.related_heading.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.related_heading.setToolTip("展开/收起相关推荐列表")
+        self.related_heading.clicked.connect(self._toggle_related_expanded)
+        related_layout.addWidget(self.related_heading)
+        self.related_chips_widget = QWidget()
+        self.related_chips_layout = _FlowLayout(self.related_chips_widget, spacing=6)
+        related_layout.addWidget(self.related_chips_widget)
+        metadata_layout.addWidget(self.related_widget)
         self.metadata_heading = QLabel("影片详情")
         self._metadata_heading_row = QHBoxLayout()
         self._metadata_heading_row.setContentsMargins(0, 0, 8, 0)
@@ -1650,6 +1746,50 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         skip_banner_layout.addWidget(self.skip_banner_label)
         skip_banner_layout.addWidget(self.skip_banner_button)
         self.skip_banner.hide()
+        # 播完相关推荐浮层:整个播放列表播完后铺满视频区的媒体卡片推荐位。
+        self.related_overlay = QWidget(self.video_stack)
+        self.related_overlay.setObjectName("relatedRecommendationOverlay")
+        self.related_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        related_overlay_layout = QVBoxLayout(self.related_overlay)
+        related_overlay_layout.setContentsMargins(0, 0, 0, 0)
+        related_overlay_layout.setSpacing(0)
+        related_overlay_heading_row = QHBoxLayout()
+        related_overlay_heading_row.setContentsMargins(24, 20, 16, 8)
+        related_overlay_heading_row.setSpacing(12)
+        self.related_overlay_heading = QLabel(self._RELATED_DEFAULT_LABEL)
+        self.related_overlay_heading.setObjectName("relatedRecommendationOverlayHeading")
+        related_overlay_heading_row.addWidget(self.related_overlay_heading)
+        related_overlay_heading_row.addStretch(1)
+        self.related_overlay_close_button = QToolButton()
+        self.related_overlay_close_button.setText("✕")
+        self.related_overlay_close_button.setToolTip("关闭推荐")
+        self.related_overlay_close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.related_overlay_close_button.clicked.connect(self._hide_related_overlay)
+        related_overlay_heading_row.addWidget(self.related_overlay_close_button)
+        related_overlay_layout.addLayout(related_overlay_heading_row)
+        self.related_overlay_scroll = QScrollArea()
+        self.related_overlay_scroll.setObjectName("relatedRecommendationOverlayScroll")
+        self.related_overlay_scroll.setWidgetResizable(True)
+        self.related_overlay_scroll.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.related_overlay_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.related_overlay_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.related_overlay_cards_container = QWidget()
+        self.related_overlay_cards_container.setObjectName("relatedOverlayCards")
+        self.related_overlay_cards_layout = QGridLayout(
+            self.related_overlay_cards_container
+        )
+        self.related_overlay_cards_layout.setContentsMargins(24, 4, 24, 20)
+        self.related_overlay_cards_layout.setSpacing(16)
+        self.related_overlay_cards_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.related_overlay_scroll.setWidget(self.related_overlay_cards_container)
+        related_overlay_layout.addWidget(self.related_overlay_scroll, 1)
+        self._related_overlay_card_widgets: list[QWidget] = []
+        self.related_overlay.hide()
+        self.related_overlay_scroll.viewport().installEventFilter(self)
         # 播放遥测徽章:悬浮在视频区左上角,不占底部控制栏布局,
         # 避免视频加载后首帧快照到达时底部变高、视频区被压矮的跳动。
         self.telemetry_label = QLabel("", self.video_stack)
@@ -1811,8 +1951,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         heading_qss = build_player_section_heading_qss(tokens)
         self.metadata_heading.setStyleSheet(heading_qss)
         self.log_heading.setStyleSheet(heading_qss)
-        self.series_heading.setStyleSheet(heading_qss)
-        self.series_chips_widget.setStyleSheet(build_player_series_chip_qss(tokens))
+        self.related_heading.setStyleSheet(heading_qss)
+        self.related_chips_widget.setStyleSheet(build_player_related_chip_qss(tokens))
         self.bottom_area.setStyleSheet(build_player_immersive_qss(player_tokens))
         poster_arrow_qss = (
             f"QToolButton {{ border: none; background: transparent; color: {tokens.text_secondary}; padding: 0; }}"
@@ -1952,6 +2092,61 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             + "\nQPushButton { padding-left: 16px; padding-right: 16px; }"
         )
         self.skip_banner_button.setFixedHeight(30)
+        # 播完相关推荐浮层:底色必须不透明(同 skipConfirmBanner,5214b540 教训)。
+        self.related_overlay.setStyleSheet(
+            f"""
+            QWidget#relatedRecommendationOverlay {{
+                background-color: {player_tokens.player_overlay_bg};
+            }}
+            QWidget#relatedRecommendationOverlay QLabel {{
+                background-color: transparent;
+                color: {player_tokens.player_text_on_dark};
+            }}
+            QLabel#relatedRecommendationOverlayHeading {{
+                font-size: 16px;
+                font-weight: 600;
+            }}
+            QLabel#relatedMediaCardTitle {{
+                font-size: 13px;
+            }}
+            QLabel#relatedMediaCardMeta {{
+                color: rgba(245, 247, 251, 190);
+                font-size: 12px;
+            }}
+            QLabel#relatedMediaCardPoster {{
+                border: 1px solid {player_tokens.player_button_border};
+                border-radius: 8px;
+                background-color: rgba(255, 255, 255, 12);
+                color: rgba(245, 247, 251, 140);
+            }}
+            QFrame#relatedMediaCard {{
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 10px;
+            }}
+            QFrame#relatedMediaCard:hover {{
+                border: 1px solid {player_tokens.player_button_border};
+            }}
+            QScrollArea#relatedRecommendationOverlayScroll {{
+                background-color: transparent;
+                border: none;
+            }}
+            QWidget#relatedOverlayCards {{
+                background-color: transparent;
+            }}
+            QToolButton {{
+                background-color: transparent;
+                color: {player_tokens.player_text_on_dark};
+                border: none;
+                font-size: 16px;
+                padding: 4px 8px;
+            }}
+            QToolButton:hover {{
+                background-color: rgba(255, 255, 255, 25);
+                border-radius: 8px;
+            }}
+            """
+        )
         # 背景必须不透明(同 skipConfirmBanner,5214b540 教训):这台环境的原生
         # mpv 窗口上,半透明/纯透明 QSS 与 WA_TranslucentBackground 都试过,
         # 前者混出底色残影、后者整个文本不可见,只有不透明底可靠。
@@ -3143,71 +3338,144 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.detail_fields_layout.addWidget(row)
         self.detail_fields_widget.setHidden(False)
 
-    def _clear_series_entries(self) -> None:
-        while self.series_chips_layout.count():
-            layout_item = self.series_chips_layout.takeAt(0)
+    def _clear_related_entries(self) -> None:
+        while self.related_chips_layout.count():
+            layout_item = self.related_chips_layout.takeAt(0)
             widget = layout_item.widget()
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
 
-    def _current_series_entries(self) -> list[VodSeriesEntry]:
+    def _current_related_entries(self) -> list[VodRelatedEntry]:
         vod = self._current_metadata_vod()
         if vod is None:
             return []
-        return list(vod.vod_series or [])
+        return list(vod.vod_related or [])
 
-    def _series_section_expanded(self, count: int) -> bool:
-        configured = getattr(self.config, "player_series_expanded", None) if self.config is not None else None
+    def _current_related_label(self) -> str:
+        vod = self._current_metadata_vod()
+        if vod is None:
+            return self._RELATED_DEFAULT_LABEL
+        return str(vod.vod_related_label or "").strip() or self._RELATED_DEFAULT_LABEL
+
+    def _related_section_expanded(self, count: int) -> bool:
+        configured = (
+            getattr(self.config, "player_related_expanded", None)
+            if self.config is not None
+            else None
+        )
         if configured is None:
-            return count <= self._SERIES_COLLAPSE_THRESHOLD
+            return count <= self._RELATED_COLLAPSE_THRESHOLD
         return bool(configured)
 
-    def _render_series_entries(self) -> None:
-        self._clear_series_entries()
-        entries = self._current_series_entries()
-        self.series_widget.setHidden(not entries)
+    def _render_related_entries(self) -> None:
+        self._clear_related_entries()
+        entries = self._current_related_entries()
+        self.related_widget.setHidden(not entries)
         if not entries:
             return
-        expanded = self._series_section_expanded(len(entries))
-        self.series_heading.setText(f"同系列 ({len(entries)}) {'▾' if expanded else '▸'}")
-        self.series_chips_widget.setHidden(not expanded)
+        expanded = self._related_section_expanded(len(entries))
+        label = self._current_related_label()
+        arrow = "▾" if expanded else "▸"
+        self.related_heading.setText(f"{label} ({len(entries)}) {arrow}")
+        self.related_chips_widget.setHidden(not expanded)
         if not expanded:
             return
         current_id = str(getattr(self._current_metadata_vod(), "vod_id", "") or "")
         for entry in entries:
             button = QPushButton(entry.vod_name)
             button.setToolTip(
-                f"{entry.vod_name}\n{entry.vod_remarks}" if entry.vod_remarks else entry.vod_name
+                f"{entry.vod_name}\n{entry.vod_remarks}"
+                if entry.vod_remarks
+                else entry.vod_name
             )
             if str(entry.vod_id) == current_id:
-                button.setProperty("seriesCurrent", True)
+                button.setProperty("relatedCurrent", True)
             else:
                 button.setCursor(Qt.CursorShape.PointingHandCursor)
                 button.clicked.connect(
-                    lambda _checked=False, entry=entry: self._open_series_entry(entry)
+                    lambda _checked=False, entry=entry: self._open_related_entry(entry)
                 )
-            self.series_chips_layout.addWidget(button)
+            self.related_chips_layout.addWidget(button)
 
-    def _toggle_series_expanded(self) -> None:
-        entries = self._current_series_entries()
+    def _toggle_related_expanded(self) -> None:
+        entries = self._current_related_entries()
         if not entries:
             return
-        expanded = not self._series_section_expanded(len(entries))
-        if self.config is not None and self.config.player_series_expanded != expanded:
-            self.config.player_series_expanded = expanded
+        expanded = not self._related_section_expanded(len(entries))
+        if self.config is not None and self.config.player_related_expanded != expanded:
+            self.config.player_related_expanded = expanded
             self._save_config()
-        self._render_series_entries()
+        self._render_related_entries()
 
-    def _open_series_entry(self, entry: VodSeriesEntry) -> None:
+    def _open_related_entry(self, entry: VodRelatedEntry) -> None:
         if self.session is None:
             return
         if self.session.detail_field_runner is None:
-            self._append_log(f"同系列跳转失败: 当前来源不支持打开 {entry.vod_name}")
+            self._append_log(f"相关推荐跳转失败: 当前来源不支持打开 {entry.vod_name}")
             return
         self._run_detail_field_action(
             PlaybackDetailFieldAction(type="detail", value=str(entry.vod_id))
         )
+
+    def _clear_related_overlay_cards(self) -> None:
+        self._related_overlay_card_widgets = []
+        while self.related_overlay_cards_layout.count():
+            layout_item = self.related_overlay_cards_layout.takeAt(0)
+            widget = layout_item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _show_related_overlay(self) -> None:
+        self._clear_related_overlay_cards()
+        vod = self._current_metadata_vod()
+        if vod is None:
+            return
+        current_id = str(getattr(vod, "vod_id", "") or "")
+        entries = [
+            entry
+            for entry in list(vod.vod_related or [])
+            if str(entry.vod_id) != current_id
+        ][: self._RELATED_OVERLAY_MAX_CARDS]
+        if not entries:
+            return
+        label = self._current_related_label()
+        self.related_overlay_heading.setText(f"{label} ({len(entries)})")
+        for entry in entries:
+            card = _RelatedMediaCard(entry)
+            card.activated.connect(self._open_related_entry)
+            self._related_overlay_card_widgets.append(card)
+        self._relayout_related_overlay_cards()
+        self._position_related_overlay()
+        self.related_overlay.show()
+        self.related_overlay.raise_()
+
+    def _related_overlay_column_count(self, width: int) -> int:
+        card_width = _RelatedMediaCard.WIDTH
+        spacing = self._RELATED_OVERLAY_CARD_SPACING
+        fit_columns = (width - 48 + spacing) // (card_width + spacing)
+        return max(1, min(fit_columns, self._RELATED_OVERLAY_MAX_COLUMNS))
+
+    def _relayout_related_overlay_cards(self) -> None:
+        while self.related_overlay_cards_layout.count():
+            self.related_overlay_cards_layout.takeAt(0)
+        columns = self._related_overlay_column_count(
+            self.related_overlay_scroll.viewport().width()
+        )
+        for index, card in enumerate(self._related_overlay_card_widgets):
+            self.related_overlay_cards_layout.addWidget(
+                card, index // columns, index % columns
+            )
+
+    def _hide_related_overlay(self) -> None:
+        self.related_overlay.hide()
+        self._clear_related_overlay_cards()
+
+    def _position_related_overlay(self) -> None:
+        if self.video_stack.rect().isEmpty():
+            return
+        self.related_overlay.setGeometry(self.video_stack.rect())
 
     def _current_heat_identity(self):
         if self.session is None:
@@ -3846,6 +4114,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._clear_next_episode_preload()
         self._pending_intro_skip = None
         self._hide_skip_banner()
+        self._hide_related_overlay()
         if session.source_groups:
             session.playlists, mapping = self._flatten_source_groups(session.source_groups)
             if not session.playlists:
@@ -4677,6 +4946,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             raise
         self._auto_advance_locked = False
         self._hide_skip_banner()
+        self._hide_related_overlay()
         self._configure_video_surface_widgets()
         if defer_post_load_configuration:
             self._reset_subtitle_combo()
@@ -4950,10 +5220,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         vod = self._current_metadata_vod()
         if vod is None:
             self.metadata_view.clear()
-            self._render_series_entries()
+            self._render_related_entries()
             return
         self.metadata_view.setHtml(self._format_metadata_html(vod))
-        self._render_series_entries()
+        self._render_related_entries()
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:
@@ -12785,6 +13055,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._close_danmaku_settings_dialog()
         self._close_metadata_scrape_dialog()
         self._close_video_context_menu()
+        self._hide_related_overlay()
         self._remember_restore_state()
         try:
             self.controls.pause()
@@ -12847,6 +13118,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_escape(self) -> None:
         if self._dismiss_escape_dialog():
+            return
+        if not self.related_overlay.isHidden():
+            self._hide_related_overlay()
             return
         if self.isFullScreen():
             self.toggle_fullscreen()
@@ -12931,6 +13205,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             self._mark_playback_stopped()
+            self._show_related_overlay()
             return
         self.play_next()
 
@@ -13195,6 +13470,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if watched is video_stack and event.type() == QEvent.Type.Resize:
             self._position_skip_banner()
             self._position_telemetry_badge()
+            if not self.related_overlay.isHidden():
+                self._position_related_overlay()
+        related_scroll = getattr(self, "related_overlay_scroll", None)
+        if (
+            related_scroll is not None
+            and watched is related_scroll.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._relayout_related_overlay_cards()
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
             global_pos = event.globalPosition().toPoint()
             if (

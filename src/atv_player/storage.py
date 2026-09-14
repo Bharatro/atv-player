@@ -534,7 +534,7 @@ class SettingsRepository:
                     player_wide_mode INTEGER NOT NULL DEFAULT 0,
                     player_log_visible INTEGER NOT NULL DEFAULT 1,
                     player_telemetry_visible INTEGER NOT NULL DEFAULT 0,
-                    player_series_expanded INTEGER,
+                    player_related_expanded INTEGER,
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
                     preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
@@ -833,9 +833,9 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_telemetry_visible INTEGER NOT NULL DEFAULT 0"
                 )
-            if "player_series_expanded" not in columns:
+            if "player_related_expanded" not in columns:
                 conn.execute(
-                    "ALTER TABLE app_config ADD COLUMN player_series_expanded INTEGER"
+                    "ALTER TABLE app_config ADD COLUMN player_related_expanded INTEGER"
                 )
             if "preferred_parse_key" not in columns:
                 conn.execute(
@@ -1043,7 +1043,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
-                    player_series_expanded,
+                    player_related_expanded,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -1200,7 +1200,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
-                    player_series_expanded,
+                    player_related_expanded,
                     preferred_parse_key,
                     preferred_danmaku_enabled,
                     preferred_danmaku_line_count,
@@ -1308,7 +1308,7 @@ class SettingsRepository:
             player_wide_mode,
             player_log_visible,
             player_telemetry_visible,
-            player_series_expanded,
+            player_related_expanded,
             preferred_parse_key,
             preferred_danmaku_enabled,
             preferred_danmaku_line_count,
@@ -1437,8 +1437,10 @@ class SettingsRepository:
             player_wide_mode=bool(player_wide_mode),
             player_log_visible=bool(player_log_visible),
             player_telemetry_visible=bool(player_telemetry_visible),
-            player_series_expanded=(
-                None if player_series_expanded is None else bool(player_series_expanded)
+            player_related_expanded=(
+                None
+                if player_related_expanded is None
+                else bool(player_related_expanded)
             ),
             preferred_parse_key=preferred_parse_key,
             preferred_danmaku_enabled=bool(preferred_danmaku_enabled),
@@ -1564,7 +1566,7 @@ class SettingsRepository:
                     player_wide_mode = ?,
                     player_log_visible = ?,
                     player_telemetry_visible = ?,
-                    player_series_expanded = ?,
+                    player_related_expanded = ?,
                     preferred_parse_key = ?,
                     preferred_danmaku_enabled = ?,
                     preferred_danmaku_line_count = ?,
@@ -1693,8 +1695,8 @@ class SettingsRepository:
                     int(getattr(config, "player_telemetry_visible", False)),
                     (
                         None
-                        if getattr(config, "player_series_expanded", None) is None
-                        else int(config.player_series_expanded)
+                        if getattr(config, "player_related_expanded", None) is None
+                        else int(config.player_related_expanded)
                     ),
                     config.preferred_parse_key,
                     int(config.preferred_danmaku_enabled),

@@ -23,7 +23,14 @@ from atv_player.danmaku.models import (
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.danmaku.service import DanmakuService, build_danmaku_series_key
 from atv_player.metadata.providers.plugin import CustomPluginProvider
-from atv_player.models import CategoryFilter, CategoryFilterOption, HistoryRecord, PlayItem, PlaybackDetailAction, PlaybackDetailField, VodSeriesEntry
+from atv_player.models import (
+    CategoryFilter,
+    CategoryFilterOption,
+    HistoryRecord,
+    PlayItem,
+    PlaybackDetailAction,
+    PlaybackDetailField,
+)
 from atv_player.plugins.controller import SpiderPluginController, _count_danmaku_entries
 
 
@@ -1004,7 +1011,7 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
     assert first.headers == {"Referer": "https://site.example"}
 
 
-class SeriesJumpSpider(FakeSpider):
+class RelatedJumpSpider(FakeSpider):
     def detailContent(self, ids):
         vod_id = str(ids[0])
         return {
@@ -1015,7 +1022,7 @@ class SeriesJumpSpider(FakeSpider):
                     "vod_pic": "poster-detail",
                     "vod_play_from": "线路",
                     "vod_play_url": "#".join(f"第{i}集$/play/{i}" for i in range(1, 66)),
-                    "vod_series": [
+                    "vod_related": [
                         {"vod_id": "season-1", "vod_name": "同系列第一季"},
                         {"vod_id": vod_id, "vod_name": "同系列第二季"},
                     ],
@@ -1024,7 +1031,7 @@ class SeriesJumpSpider(FakeSpider):
         }
 
 
-def test_controller_series_jump_request_restores_history() -> None:
+def test_controller_related_jump_request_restores_history() -> None:
     loaded_calls: list[tuple[str, str]] = []
 
     def history_loader(vod_id, vod_name=""):
@@ -1046,7 +1053,7 @@ def test_controller_series_jump_request_restores_history() -> None:
         )
 
     controller = SpiderPluginController(
-        SeriesJumpSpider(),
+        RelatedJumpSpider(),
         plugin_name="系列插件",
         search_enabled=False,
         playback_history_loader=history_loader,
@@ -1054,7 +1061,8 @@ def test_controller_series_jump_request_restores_history() -> None:
 
     request = controller.build_request("season-2")
 
-    assert [entry.vod_id for entry in request.vod.vod_series] == ["season-1", "season-2"]
+    related_ids = [entry.vod_id for entry in request.vod.vod_related]
+    assert related_ids == ["season-1", "season-2"]
 
     class NoFallbackApi:
         def get_history(self, key):

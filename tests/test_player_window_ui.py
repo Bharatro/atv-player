@@ -30,7 +30,7 @@ from atv_player.models import (
     PlaybackLoadResult,
     VideoQualityOption,
     VodItem,
-    VodSeriesEntry,
+    VodRelatedEntry,
     YtdlpAudioTrackOption,
 )
 from atv_player.plugins.controller import SpiderPluginController
@@ -9661,48 +9661,65 @@ def test_player_window_inlines_collection_level_detail_fields_into_metadata_text
     assert "播放: 12万" in window.metadata_view.toPlainText()
 
 
-def _series_chip_buttons(window: PlayerWindow) -> list[QPushButton]:
+def _related_chip_buttons(window: PlayerWindow) -> list[QPushButton]:
     return [
-        window.series_chips_layout.itemAt(index).widget()
-        for index in range(window.series_chips_layout.count())
+        window.related_chips_layout.itemAt(index).widget()
+        for index in range(window.related_chips_layout.count())
     ]
 
 
-def test_player_window_renders_vod_series_chips_and_marks_current(qtbot) -> None:
+def test_player_window_renders_vod_related_chips_and_marks_current(qtbot) -> None:
     session = make_player_session(start_index=0)
-    session.vod.vod_series = [
-        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季", vod_remarks="全62集"),
-        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    session.vod.vod_related = [
+        VodRelatedEntry(
+            vod_id="movie-1", vod_name="Movie 第一季", vod_remarks="全62集"
+        ),
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季"),
     ]
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     window.open_session(session)
 
-    assert window.series_widget.isHidden() is False
-    chips = _series_chip_buttons(window)
+    assert window.related_widget.isHidden() is False
+    chips = _related_chip_buttons(window)
     assert [chip.text() for chip in chips] == ["Movie 第一季", "Movie 第二季"]
     assert chips[0].toolTip() == "Movie 第一季\n全62集"
     assert chips[1].toolTip() == "Movie 第二季"
-    assert chips[0].property("seriesCurrent") is True
-    assert chips[1].property("seriesCurrent") is None
+    assert chips[0].property("relatedCurrent") is True
+    assert chips[1].property("relatedCurrent") is None
+    assert window.related_heading.text().startswith("相关推荐 (2)")
 
 
-def test_player_window_hides_series_section_when_detail_has_no_series(qtbot) -> None:
+def test_player_window_uses_custom_vod_related_label(qtbot) -> None:
+    session = make_player_session(start_index=0)
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    ]
+    session.vod.vod_related_label = "同系列"
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.related_heading.text().startswith("同系列 (1)")
+
+
+def test_player_window_hides_related_section_when_detail_has_no_related(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     window.open_session(make_player_session(start_index=0))
 
-    assert window.series_widget.isHidden() is True
-    assert window.series_chips_layout.count() == 0
+    assert window.related_widget.isHidden() is True
+    assert window.related_chips_layout.count() == 0
 
 
-def test_player_window_series_chip_click_opens_detail_via_runner(qtbot) -> None:
+def test_player_window_related_chip_click_opens_detail_via_runner(qtbot) -> None:
     session = make_player_session(start_index=0)
-    session.vod.vod_series = [
-        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季"),
-        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id="movie-1", vod_name="Movie 第一季"),
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季"),
     ]
     calls: list[tuple[PlayItem, PlaybackDetailFieldAction]] = []
     session.detail_field_runner = lambda item, action: calls.append((item, action))
@@ -9710,7 +9727,7 @@ def test_player_window_series_chip_click_opens_detail_via_runner(qtbot) -> None:
     qtbot.addWidget(window)
 
     window.open_session(session)
-    chips = _series_chip_buttons(window)
+    chips = _related_chip_buttons(window)
     chips[1].click()
 
     assert len(calls) == 1
@@ -9719,69 +9736,205 @@ def test_player_window_series_chip_click_opens_detail_via_runner(qtbot) -> None:
     assert (action.type, action.value) == ("detail", "movie-2")
 
 
-def test_player_window_series_chip_click_without_runner_is_noop(qtbot) -> None:
+def test_player_window_related_chip_click_without_runner_is_noop(qtbot) -> None:
     session = make_player_session(start_index=0)
-    session.vod.vod_series = [
-        VodSeriesEntry(vod_id="movie-1", vod_name="Movie 第一季"),
-        VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id="movie-1", vod_name="Movie 第一季"),
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季"),
     ]
     assert session.detail_field_runner is None
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     window.open_session(session)
-    window._open_series_entry(VodSeriesEntry(vod_id="movie-2", vod_name="Movie 第二季"))
+    window._open_related_entry(
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季")
+    )
 
 
-def _series_session_with(count: int) -> PlayerSession:
+def _related_session_with(count: int) -> PlayerSession:
     session = make_player_session(start_index=0)
-    session.vod.vod_series = [
-        VodSeriesEntry(vod_id=f"movie-{index}", vod_name=f"Movie 第{index}季")
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id=f"movie-{index}", vod_name=f"Movie 第{index}季")
         for index in range(1, count + 1)
     ]
     return session
 
 
-def test_player_window_collapses_series_section_beyond_threshold(qtbot) -> None:
+def test_player_window_collapses_related_section_beyond_threshold(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    window.open_session(_series_session_with(11))
+    window.open_session(_related_session_with(11))
 
-    assert window.series_widget.isHidden() is False
-    assert window.series_chips_widget.isHidden() is True
-    assert "(11)" in window.series_heading.text()
-    assert window.series_chips_layout.count() == 0
+    assert window.related_widget.isHidden() is False
+    assert window.related_chips_widget.isHidden() is True
+    assert "(11)" in window.related_heading.text()
+    assert window.related_chips_layout.count() == 0
 
 
-def test_player_window_series_heading_click_expands_and_persists_preference(qtbot) -> None:
+def test_player_window_related_heading_click_expands_and_persists(qtbot) -> None:
     saved: list[bool] = []
     config = AppConfig()
-    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.append(True))
+    window = PlayerWindow(
+        FakePlayerController(), config=config, save_config=lambda: saved.append(True)
+    )
     qtbot.addWidget(window)
 
-    window.open_session(_series_session_with(11))
-    qtbot.mouseClick(window.series_heading, Qt.MouseButton.LeftButton)
+    window.open_session(_related_session_with(11))
+    qtbot.mouseClick(window.related_heading, Qt.MouseButton.LeftButton)
 
-    assert window.series_chips_widget.isHidden() is False
-    assert window.series_chips_layout.count() == 11
-    assert config.player_series_expanded is True
+    assert window.related_chips_widget.isHidden() is False
+    assert window.related_chips_layout.count() == 11
+    assert config.player_related_expanded is True
     assert saved
 
-    window._render_series_entries()
-    assert window.series_chips_widget.isHidden() is False
+    window._render_related_entries()
+    assert window.related_chips_widget.isHidden() is False
 
 
-def test_player_window_series_pinned_collapse_stays_collapsed_for_few_entries(qtbot) -> None:
+def test_player_window_related_pinned_collapse_for_few_entries(qtbot) -> None:
     config = AppConfig()
-    config.player_series_expanded = False
+    config.player_related_expanded = False
     window = PlayerWindow(FakePlayerController(), config=config)
     qtbot.addWidget(window)
 
-    window.open_session(_series_session_with(2))
+    window.open_session(_related_session_with(2))
 
-    assert window.series_widget.isHidden() is False
-    assert window.series_chips_widget.isHidden() is True
+    assert window.related_widget.isHidden() is False
+    assert window.related_chips_widget.isHidden() is True
+
+
+def _related_overlay_cards(window: PlayerWindow) -> list:
+    cards = []
+    for index in range(window.related_overlay_cards_layout.count()):
+        widget = window.related_overlay_cards_layout.itemAt(index).widget()
+        if widget is not None:
+            cards.append(widget)
+    return cards
+
+
+def _finished_playlist_session() -> PlayerSession:
+    session = make_player_session(start_index=2)
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id="movie-1", vod_name="Movie"),
+        VodRelatedEntry(
+            vod_id="movie-2",
+            vod_name="Movie 第二季",
+            vod_remarks="全62集",
+            vod_year="2025",
+        ),
+        VodRelatedEntry(vod_id="movie-3", vod_name="黄昏恋歌"),
+    ]
+    return session
+
+
+def test_player_window_shows_related_overlay_when_playlist_finished(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(_finished_playlist_session())
+
+    window._update_playback_observation(position=119, duration=120)
+    window._handle_playback_finished()
+
+    assert window.related_overlay.isHidden() is False
+    cards = _related_overlay_cards(window)
+    assert [card.entry.vod_id for card in cards] == ["movie-2", "movie-3"]
+    assert window.related_overlay_heading.text().startswith("相关推荐 (2)")
+    assert cards[0].meta_label.text() == "2025 · 全62集"
+    assert cards[0].title_label.text().startswith("Movie 第二季")
+
+
+def test_player_window_keeps_related_overlay_hidden_without_entries(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=2))
+
+    window._update_playback_observation(position=119, duration=120)
+    window._handle_playback_finished()
+
+    assert window.related_overlay.isHidden() is True
+
+
+def test_player_window_related_overlay_uses_custom_label(qtbot) -> None:
+    session = _finished_playlist_session()
+    session.vod.vod_related_label = "同系列"
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._update_playback_observation(position=119, duration=120)
+    window._handle_playback_finished()
+
+    assert window.related_overlay_heading.text().startswith("同系列 (2)")
+
+
+def test_player_window_related_overlay_card_click_opens_detail(qtbot) -> None:
+    session = _finished_playlist_session()
+    calls: list[tuple[PlayItem, PlaybackDetailFieldAction]] = []
+    session.detail_field_runner = lambda item, action: calls.append((item, action))
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(session)
+
+    window._show_related_overlay()
+    cards = _related_overlay_cards(window)
+    qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
+
+    assert len(calls) == 1
+    item, action = calls[0]
+    assert item is session.playlist[2]
+    assert (action.type, action.value) == ("detail", "movie-2")
+
+
+def test_player_window_related_overlay_close_and_new_session_hide(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(_finished_playlist_session())
+
+    window._show_related_overlay()
+    assert window.related_overlay.isHidden() is False
+    qtbot.mouseClick(window.related_overlay_close_button, Qt.MouseButton.LeftButton)
+    assert window.related_overlay.isHidden() is True
+
+    window._show_related_overlay()
+    window.open_session(_finished_playlist_session())
+    assert window.related_overlay.isHidden() is True
+
+
+def test_player_window_related_overlay_column_count(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window._related_overlay_column_count(4000) == 8
+    assert window._related_overlay_column_count(600) == 2
+    assert window._related_overlay_column_count(100) == 1
+
+
+def test_player_window_related_overlay_grid_wraps_and_caps_cards(
+    qtbot, monkeypatch
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_related_overlay_column_count", lambda width: 3)
+    session = make_player_session(start_index=0)
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id=f"movie-{index}", vod_name=f"相似作品{index}")
+        for index in range(1, 31)
+    ]
+    window.open_session(session)
+
+    window._show_related_overlay()
+
+    cards = _related_overlay_cards(window)
+    assert len(cards) == 24
+    assert window.related_overlay_cards_layout.rowCount() == 8
+    assert window.related_overlay_cards_layout.columnCount() == 3
 
 
 def test_player_window_hides_internal_episode_count_detail_fields_from_cached_metadata(qtbot) -> None:

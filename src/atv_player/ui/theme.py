@@ -911,7 +911,7 @@ def build_player_panel_qss(tokens: ThemeTokens) -> str:
     """
 
 
-def build_player_series_chip_qss(tokens: ThemeTokens) -> str:
+def build_player_related_chip_qss(tokens: ThemeTokens) -> str:
     return f"""
     QPushButton {{
         background-color: {tokens.input_bg};
@@ -924,7 +924,7 @@ def build_player_series_chip_qss(tokens: ThemeTokens) -> str:
         background-color: {tokens.panel_alt_bg};
         border-color: {tokens.accent_hover};
     }}
-    QPushButton[seriesCurrent="true"] {{
+    QPushButton[relatedCurrent="true"] {{
         color: {tokens.accent};
         border: 1px solid {tokens.accent};
         font-weight: 600;

@@ -12,7 +12,7 @@ from atv_player.models import (
     PlaybackSource,
     PlaybackSourceGroup,
     VodItem,
-    VodSeriesEntry,
+    VodRelatedEntry,
 )
 from atv_player.playback_parsers import coerce_media_url
 from atv_player.playlist_sorting import parse_size_bytes
@@ -132,11 +132,11 @@ def map_drive_video_to_play_item(
     )
 
 
-def _map_vod_series(payload: object) -> list[VodSeriesEntry]:
-    """同系列条目:爬虫详情下发的同 IP 其他季/部({vod_id, vod_name}),键名做别名容错。"""
+def _map_vod_entry_list(payload: object, entry_cls: type) -> list:
+    """详情下发的关联条目({vod_id, vod_name, vod_remarks})通用解析,键名做别名容错。"""
     if not isinstance(payload, list):
         return []
-    entries: list[VodSeriesEntry] = []
+    entries: list = []
     seen_ids: set[str] = set()
     for raw_entry in payload:
         if not isinstance(raw_entry, dict):
@@ -154,15 +154,39 @@ def _map_vod_series(payload: object) -> list[VodSeriesEntry]:
         entry_remarks = str(
             raw_entry.get("vod_remarks") or raw_entry.get("remarks") or ""
         ).strip()
+        entry_pic = str(raw_entry.get("vod_pic") or raw_entry.get("pic") or "").strip()
+        entry_year = str(
+            raw_entry.get("vod_year") or raw_entry.get("year") or ""
+        ).strip()
         if not entry_id or not entry_name or entry_id in seen_ids:
             continue
         seen_ids.add(entry_id)
         entries.append(
-            VodSeriesEntry(vod_id=entry_id, vod_name=entry_name, vod_remarks=entry_remarks)
+            entry_cls(
+                vod_id=entry_id,
+                vod_name=entry_name,
+                vod_remarks=entry_remarks,
+                vod_pic=entry_pic,
+                vod_year=entry_year,
+            )
         )
         if len(entries) >= 100:
             break
     return entries
+
+
+def _map_vod_related(payload: object) -> list[VodRelatedEntry]:
+    """相关推荐条目:爬虫详情下发的同系列/相似推荐等关联作品({vod_id, vod_name})。"""
+    return _map_vod_entry_list(payload, VodRelatedEntry)
+
+
+_RELATED_LABEL_MAX_CHARS = 12
+
+
+def _map_vod_related_label(payload: object) -> str:
+    """相关推荐区块标题:爬虫可自定义(vod_related_label),留空由界面用默认文案。"""
+    label = str(payload or "").strip()
+    return label[:_RELATED_LABEL_MAX_CHARS]
 
 
 def _map_vod_item(payload: dict) -> VodItem:
@@ -190,7 +214,8 @@ def _map_vod_item(payload: dict) -> VodItem:
         vod_actor=str(payload.get("vod_actor") or ""),
         dbid=int(payload.get("dbid") or 0),
         type=int(payload.get("type") or 0),
-        vod_series=_map_vod_series(payload.get("vod_series")),
+        vod_related=_map_vod_related(payload.get("vod_related")),
+        vod_related_label=_map_vod_related_label(payload.get("vod_related_label")),
         items=items,
     )
 
@@ -336,7 +361,10 @@ class BrowseController:
             vod_actor=resolved_vod.vod_actor or fallback_vod.vod_actor,
             dbid=resolved_vod.dbid or fallback_vod.dbid,
             type=resolved_vod.type or fallback_vod.type,
-            vod_series=resolved_vod.vod_series or fallback_vod.vod_series,
+            vod_related=resolved_vod.vod_related or fallback_vod.vod_related,
+            vod_related_label=(
+                resolved_vod.vod_related_label or fallback_vod.vod_related_label
+            ),
             items=resolved_vod.items if resolved_vod.items is not None else fallback_vod.items,
         )
 

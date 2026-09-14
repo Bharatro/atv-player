@@ -965,9 +965,9 @@ def runPlayerAction(self, action_id, context):
 - `target` 可选
 - `target="bilibili"` 会路由到内置 Bilibili 标签
 
-### 13.4 同系列媒体
+### 13.4 相关推荐
 
-短剧、连续剧常拆成多个独立条目（第一季、第二季……）。在 `detailContent(...).list[0]` 里返回 `vod_series`，播放器详情侧栏会显示一排"同系列"胶囊按钮，点击即用当前来源打开该条目详情并播放：
+在 `detailContent(...).list[0]` 里返回 `vod_related`，播放器详情侧栏会显示一排"相关推荐"胶囊按钮，点击即用当前来源打开该条目详情并播放。适合映射源站的"同系列""相关推荐""猜你喜欢"等区块——同一作品的其他季/部和其他相似作品可以放进同一个列表：
 
 ```python
 def detailContent(self, ids):
@@ -975,11 +975,14 @@ def detailContent(self, ids):
         "vod_id": "book-1001",
         "vod_name": "闪婚老伴第一季",
         # ...
-        "vod_series": [
+        "vod_related": [
             {"vod_id": "book-1001", "vod_name": "闪婚老伴第一季", "vod_remarks": "全62集"},
-            {"vod_id": "book-2042", "vod_name": "闪婚老伴第二季", "vod_remarks": "更新至30集"},
-            {"vod_id": "book-3190", "vod_name": "闪婚老伴第三季", "vod_remarks": "全93集"},
+            {"vod_id": "book-2042", "vod_name": "闪婚老伴第二季", "vod_remarks": "更新至30集",
+             "vod_pic": "https://cdn.example.com/2042.jpg", "vod_year": "2025"},
+            {"vod_id": "book-3190", "vod_name": "黄昏恋歌", "vod_remarks": "都市短剧",
+             "vod_pic": "https://cdn.example.com/3190.jpg", "vod_year": "2026"},
         ],
+        "vod_related_label": "同系列",
     }
     return {"list": [vod]}
 ```
@@ -988,9 +991,11 @@ def detailContent(self, ids):
 
 - 每个条目需要 `vod_id` 和 `vod_name`（键名也接受 `id`/`name`/`title`/`label`/`value` 别名），缺一即丢弃该条目
 - 可选 `vod_remarks`（也接受 `remarks` 别名）作为条目备注（集数/状态等），显示在胶囊的 tooltip 第二行
+- 可选 `vod_pic`（也接受 `pic` 别名）海报地址、`vod_year`（也接受 `year` 别名）年份：整个播放列表播完后,播放器会在视频区弹出全屏网格的相关推荐媒体卡片(海报 + 标题 + 年份/备注,点击即播),带海报的卡片效果最好
 - `vod_id` 必须是当前插件 `detailContent(...)` 能直接打开的 id，并尽量与列表/搜索返回的 `vod_id` 保持同一形态——播放记录按 id 存续播进度，形态漂移会先按同插件同名条目兜底续播
-- 列表应包含当前作品本身，正在播放的条目会高亮且不可点击
-- 建议按季/部顺序排列，最多取前 100 条
+- 列表包含当前作品本身时，正在播放的条目会高亮且不可点击；只放相似作品时可以不含当前作品
+- 可选 `vod_related_label` 自定义区块标题（默认"相关推荐"，超过 12 字符会截断），例如纯同系列列表可设为"同系列"、站方推荐位可设为"猜你喜欢"
+- 建议按相关度/季部顺序排列，最多取前 100 条（播完卡片最多显示前 24 条）
 - 跳转走的是普通详情请求，历史记录、断点续播照常生效
 - 条目多于 8 个时播放器默认收起该区块（标题显示数量），用户可点标题展开/收起并持久化偏好
 
