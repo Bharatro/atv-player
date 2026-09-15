@@ -55,6 +55,51 @@ def test_spider_plugin_controller_delegates_episode_offset(tmp_path: Path) -> No
     assert item.danmaku_offset_seconds == -2.5
 
 
+class ManagerActionSpider:
+    def getManagerActions(self):
+        return [
+            {"id": "qr_login", "label": "扫码登录"},
+            {
+                "id": "refresh_cookie",
+                "label": "刷新 Cookie",
+                "enabled": False,
+                "tooltip": "需要先扫码登录",
+            },
+            {"id": "hidden", "label": "隐藏动作", "visible": False},
+            "bad-payload",
+            {"id": "", "label": "缺少 id"},
+        ]
+
+
+def test_spider_plugin_controller_manager_actions_coerces_and_filters() -> None:
+    logs: list[str] = []
+    controller = SpiderPluginController(
+        ManagerActionSpider(),
+        plugin_name="demo",
+        search_enabled=False,
+        plugin_log_writer=logs.append,
+    )
+
+    actions = controller.manager_actions()
+
+    assert [(action.id, action.label, action.enabled) for action in actions] == [
+        ("qr_login", "扫码登录", True),
+        ("refresh_cookie", "刷新 Cookie", False),
+    ]
+    assert actions[1].tooltip == "需要先扫码登录"
+    assert len(logs) == 2
+
+
+def test_spider_plugin_controller_manager_actions_without_spider_support() -> None:
+    controller = SpiderPluginController(
+        object(),
+        plugin_name="demo",
+        search_enabled=False,
+    )
+
+    assert controller.manager_actions() == []
+
+
 class JsonResponse:
     def __init__(self, payload=None, text: str = "", status_code: int = 200, content: bytes = b"") -> None:
         self._payload = payload

@@ -20,7 +20,10 @@ from atv_player.models import (
     SpiderPluginImportProgress,
     SpiderPluginImportResult,
 )
-from atv_player.plugins.controller import SpiderPluginController
+from atv_player.plugins.controller import (
+    SpiderPluginController,
+    coerce_spider_plugin_action,
+)
 from atv_player.plugins.loader import LoadedSpiderPlugin, SpiderPluginLoader
 from atv_player.plugins.repository import SpiderPluginRepository
 
@@ -42,22 +45,6 @@ def _default_plugin_name(source_type: str, source_value: str) -> str:
         if name:
             return name
     return Path(source_value).stem or Path(source_value).name.removesuffix(".py")
-
-
-def _coerce_plugin_action(payload: object) -> SpiderPluginAction | None:
-    if not isinstance(payload, dict):
-        return None
-    action_id = str(payload.get("id") or "").strip()
-    label = str(payload.get("label") or "").strip()
-    if not action_id or not label:
-        return None
-    return SpiderPluginAction(
-        id=action_id,
-        label=label,
-        enabled=bool(payload.get("enabled", True)),
-        visible=bool(payload.get("visible", True)),
-        tooltip=str(payload.get("tooltip") or "").strip(),
-    )
 
 
 def _parse_github_repo(value: str) -> tuple[str, str]:
@@ -532,7 +519,7 @@ class SpiderPluginManager:
             return []
         actions: list[SpiderPluginAction] = []
         for payload in get_actions() or []:
-            action = _coerce_plugin_action(payload)
+            action = coerce_spider_plugin_action(payload)
             if action is None:
                 self._repository.append_log(plugin.id, "error", f"插件动作声明无效: {payload!r}")
                 continue

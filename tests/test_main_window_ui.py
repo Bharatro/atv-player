@@ -42,6 +42,7 @@ from atv_player.models import (
     PlaybackDetailField,
     PlaybackDetailFieldAction,
     PlayItem,
+    SpiderPluginAction,
     VodItem,
 )
 from atv_player.player.startup import PlaybackStartupStage
@@ -282,6 +283,45 @@ class FakePluginManager:
 
 class WidthAwarePluginManager(FakePluginManager):
     pass
+
+
+class ManagerActionSpiderController(FakeSpiderController):
+    def manager_actions(self):
+        return [
+            SpiderPluginAction(id="qr_login", label="扫码登录"),
+            SpiderPluginAction(id="refresh_cookie", label="刷新 Cookie", enabled=False, tooltip="需要先扫码登录"),
+        ]
+
+
+class CustomActionPluginManager(WidthAwarePluginManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.run_action_calls: list[tuple[int, str, object]] = []
+        self.run_action_error: Exception | None = None
+
+    def load_plugins(self, plugin_ids, drive_detail_loader=None, offline_download_detail_loader=None):
+        requested = {str(plugin_id) for plugin_id in plugin_ids}
+        self.load_plugins_calls.append(sorted(requested))
+        definitions = []
+        for plugin in self.plugins:
+            if not plugin.enabled or str(plugin.id) not in requested:
+                continue
+            definitions.append(
+                {
+                    "id": str(plugin.id),
+                    "title": plugin.display_name,
+                    "controller": ManagerActionSpiderController(plugin.display_name)
+                    if plugin.id == 1
+                    else FakeSpiderController(plugin.display_name),
+                    "search_enabled": True,
+                }
+            )
+        return definitions
+
+    def run_plugin_action(self, plugin_id: int, action_id: str, parent=None):
+        self.run_action_calls.append((plugin_id, action_id, parent))
+        if self.run_action_error is not None:
+            raise self.run_action_error
 
 
 class CountingSpiderController(FakeSpiderController):
@@ -3914,6 +3954,158 @@ def test_main_window_plugin_context_menu_includes_category_management(qtbot, mon
     window._open_plugin_context_menu("1", window.mapToGlobal(window.rect().center()))
 
     assert captured_actions == ["重新加载", "编辑名称", "编辑配置", "分类管理", "禁用"]
+
+
+class _CustomActionMenuFake:
+    class Action:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.enabled = True
+            self.tooltip = ""
+
+        def setEnabled(self, enabled: bool) -> None:
+            self.enabled = enabled
+
+        def setToolTip(self, tooltip: str) -> None:
+            self.tooltip = tooltip
+
+    def __init__(self, parent=None) -> None:
+        del parent
+        self.actions: list[_CustomActionMenuFake.Action] = []
+        self.separators = 0
+
+    def addAction(self, text: str):
+        action = _CustomActionMenuFake.Action(text)
+        self.actions.append(action)
+        return action
+
+    def addSeparator(self) -> None:
+        self.separators += 1
+
+    def exec(self, global_pos):
+        del global_pos
+        return None
+
+
+def _custom_action_menu_factory(monkeypatch) -> list:
+    menus: list = []
+    original = _CustomActionMenuFake
+
+    class RecordingMenu(original):
+        def __init__(self, parent=None) -> None:
+            super().__init__(parent)
+            menus.append(self)
+
+    monkeypatch.setattr(main_window_module, "QMenu", RecordingMenu)
+    return menus
+
+
+def test_main_window_plugin_context_menu_includes_custom_manager_actions(qtbot, monkeypatch) -> None:
+    manager = CustomActionPluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    menus = _custom_action_menu_factory(monkeypatch)
+
+    window._open_plugin_context_menu("1", window.mapToGlobal(window.rect().center()))
+
+    menu = menus[-1]
+    assert [action.text for action in menu.actions] == [
+        "重新加载",
+        "编辑名称",
+        "编辑配置",
+        "分类管理",
+        "禁用",
+        "扫码登录",
+        "刷新 Cookie",
+    ]
+    assert menu.separators == 1
+    actions_by_text = {action.text: action for action in menu.actions}
+    assert actions_by_text["扫码登录"].enabled is True
+    assert actions_by_text["刷新 Cookie"].enabled is False
+    assert actions_by_text["刷新 Cookie"].tooltip == "需要先扫码登录"
+
+
+def test_main_window_plugin_context_menu_custom_action_runs_and_reloads(qtbot, monkeypatch) -> None:
+    manager = CustomActionPluginManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    window.show()
+    window._refresh_navigation_tabs()
+    _custom_action_menu_factory(monkeypatch)
+    monkeypatch.setattr(
+        _CustomActionMenuFake,
+        "exec",
+        lambda self, global_pos: next(action for action in self.actions if action.text == "扫码登录"),
+    )
+
+    window._open_plugin_context_menu("1", window.mapToGlobal(window.rect().center()))
+
+    assert manager.run_action_calls == [(1, "qr_login", window)]
+    assert manager.load_plugins_calls[-1] == ["1"]
+
+
+def test_main_window_plugin_context_menu_custom_action_failure_warns_without_reload(qtbot, monkeypatch) -> None:
+    manager = CustomActionPluginManager()
+    manager.run_action_error = RuntimeError("动作执行失败")
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    warnings: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda parent, title, text: warnings.append((title, text)),
+    )
+    _custom_action_menu_factory(monkeypatch)
+    monkeypatch.setattr(
+        _CustomActionMenuFake,
+        "exec",
+        lambda self, global_pos: next(action for action in self.actions if action.text == "扫码登录"),
+    )
+    load_calls_before = list(manager.load_plugins_calls)
+
+    window._open_plugin_context_menu("1", window.mapToGlobal(window.rect().center()))
+
+    assert manager.run_action_calls == [(1, "qr_login", window)]
+    assert warnings == [("插件动作失败", "动作执行失败")]
+    assert manager.load_plugins_calls == load_calls_before
 
 
 def _capture_context_menu_actions(monkeypatch) -> list[str]:

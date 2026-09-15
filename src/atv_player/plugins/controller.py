@@ -70,6 +70,7 @@ from atv_player.models import (
     PlaybackDetailValuePart,
     PlaybackLoadResult,
     VideoQualityOption,
+    SpiderPluginAction,
     SpiderPluginRawCategory,
     VodItem,
 )
@@ -758,6 +759,22 @@ def _split_grouped_route_label(route_label: str) -> tuple[str, str]:
     return group_label, normalized
 
 
+def coerce_spider_plugin_action(payload: object) -> SpiderPluginAction | None:
+    if not isinstance(payload, dict):
+        return None
+    action_id = str(payload.get("id") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    if not action_id or not label:
+        return None
+    return SpiderPluginAction(
+        id=action_id,
+        label=label,
+        enabled=bool(payload.get("enabled", True)),
+        visible=bool(payload.get("visible", True)),
+        tooltip=str(payload.get("tooltip") or "").strip(),
+    )
+
+
 class SpiderPluginController:
     def __init__(
         self,
@@ -1009,6 +1026,22 @@ class SpiderPluginController:
             DoubanCategory(type_id=item.type_id, type_name=item.type_name, filters=list(item.filters))
             for item in self._raw_home_categories
         ]
+
+    def manager_actions(self) -> list[SpiderPluginAction]:
+        get_actions = getattr(self._spider, "getManagerActions", None)
+        if not callable(get_actions):
+            return []
+        self._ensure_spider_initialized()
+        actions: list[SpiderPluginAction] = []
+        for payload in get_actions() or []:
+            action = coerce_spider_plugin_action(payload)
+            if action is None:
+                if self._plugin_log_writer is not None:
+                    self._plugin_log_writer(f"插件动作声明无效: {payload!r}")
+                continue
+            if action.visible:
+                actions.append(action)
+        return actions
 
     def load_categories(self) -> list[DoubanCategory]:
         self._ensure_home_loaded()

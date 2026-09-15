@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QAction,
     QCloseEvent,
     QDesktopServices,
     QGuiApplication,
@@ -77,6 +78,7 @@ from atv_player.models import (
     OpenPlayerRequest,
     PlaybackDetailFieldAction,
     PlayItem,
+    SpiderPluginAction,
     VodItem,
 )
 from atv_player.paths import app_cache_dir, app_data_dir
@@ -4087,7 +4089,19 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         config_action = menu.addAction("编辑配置")
         manage_categories_action = menu.addAction("分类管理")
         toggle_action = menu.addAction(self._plugin_toggle_action_text(plugin_id))
+        custom_actions = self._plugin_manager_actions(plugin_id)
+        custom_menu_actions: list[tuple[QAction, SpiderPluginAction]] = []
+        if custom_actions:
+            menu.addSeparator()
+            for plugin_action in custom_actions:
+                menu_action = menu.addAction(plugin_action.label)
+                menu_action.setEnabled(plugin_action.enabled)
+                if plugin_action.tooltip:
+                    menu_action.setToolTip(plugin_action.tooltip)
+                custom_menu_actions.append((menu_action, plugin_action))
         chosen = menu.exec(global_pos)
+        if chosen is None:
+            return
         if chosen is reload_action:
             self._run_plugin_context_action("refresh", plugin_id)
         elif chosen is rename_action:
@@ -4098,6 +4112,40 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._run_plugin_context_action("manage_categories", plugin_id)
         elif chosen is toggle_action:
             self._run_plugin_context_action("toggle_enabled", plugin_id)
+        else:
+            for menu_action, plugin_action in custom_menu_actions:
+                if chosen is menu_action:
+                    self._run_plugin_custom_action(plugin_id, plugin_action.id)
+                    break
+
+    def _plugin_manager_actions(self, plugin_id: str) -> list[SpiderPluginAction]:
+        normalized_plugin_id = self._normalize_plugin_id(plugin_id)
+        page_context = self._plugin_page_context_by_id(normalized_plugin_id)
+        if page_context is None:
+            return []
+        manager_actions = getattr(page_context[1], "manager_actions", None)
+        if not callable(manager_actions):
+            return []
+        try:
+            return list(manager_actions() or [])
+        except Exception:
+            return []
+
+    def _run_plugin_custom_action(self, plugin_id: str, action_id: str) -> bool:
+        if self._plugin_manager is None:
+            return False
+        run_action = getattr(self._plugin_manager, "run_plugin_action", None)
+        if not callable(run_action):
+            return False
+        normalized_plugin_id = int(self._normalize_plugin_id(plugin_id))
+        try:
+            run_action(normalized_plugin_id, action_id, parent=self)
+        except Exception as exc:
+            QMessageBox.warning(self, "插件动作失败", str(exc))
+            return False
+        self._reload_changed_plugin_tabs([str(normalized_plugin_id)])
+        self._sync_plugin_overflow_drawer(reset_search=False)
+        return True
 
     def _connect_video_item_context_menu(self, page: PosterGridPage) -> None:
         page.card_context_menu_requested.connect(
