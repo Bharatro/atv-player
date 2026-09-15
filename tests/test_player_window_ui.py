@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QByteArray, QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, Signal, QMargins
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QResizeEvent, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QStyle, QStyleOptionComboBox, QTableWidget, QToolButton, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
@@ -318,6 +318,28 @@ def test_player_window_playlist_sort_combo_uses_available_fields(qtbot) -> None:
         window.playlist_sort_combo.itemData(index)
         for index in range(window.playlist_sort_combo.count())
     ] == ["index", "name,asc", "name,desc", "size,asc", "size,desc"]
+
+
+def test_player_window_video_yields_edge_resize_hot_zone(qtbot) -> None:
+    # mpv wid 原生子窗口吃掉鼠标事件,视频左右须让出无边框 6px 调整热区;
+    # 全屏/最大化不可调宽时热区收回。
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    border = window._RESIZE_BORDER
+
+    assert window.video_layout.contentsMargins() == QMargins(border, 0, border, 0)
+    assert window._can_resize_window() is True
+
+    original = window._can_resize_window
+    window._can_resize_window = lambda: False
+    try:
+        window._update_window_chrome_state()
+        assert window.video_layout.contentsMargins() == QMargins(0, 0, 0, 0)
+    finally:
+        window._can_resize_window = original
+
+    window._update_window_chrome_state()
+    assert window.video_layout.contentsMargins() == QMargins(border, 0, border, 0)
 
 
 def test_player_window_playlist_sort_keeps_current_item_and_does_not_reload(qtbot) -> None:

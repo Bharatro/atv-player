@@ -1723,7 +1723,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         video_container = QWidget()
         video_layout = QVBoxLayout(video_container)
-        video_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_layout = video_layout
+        self._apply_video_edge_resize_margins()
         self.video_stack = QWidget()
         self.video_stack_layout = QStackedLayout(self.video_stack)
         self.video_stack_layout.setContentsMargins(0, 0, 0, 0)
@@ -2294,6 +2295,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _uses_xcb_pseudo_maximize(self) -> bool:
         return QApplication.platformName().strip().lower() == "xcb"
+
+    def _update_window_chrome_state(self) -> None:
+        super()._update_window_chrome_state()
+        self._apply_video_edge_resize_margins()
+
+    def _apply_video_edge_resize_margins(self) -> None:
+        # wid 嵌入时 mpv 原生子窗口直接吃掉鼠标事件,Qt 的无边框 6px
+        # 边缘热区(指针+拖拽)在视频上方失效;视频左右让出该热区,
+        # 全屏/最大化(含伪最大化)不可调宽时收回。
+        layout = getattr(self, "video_layout", None)
+        if layout is None:
+            return
+        margin = self._RESIZE_BORDER if self._can_resize_window() else 0
+        layout.setContentsMargins(margin, 0, margin, 0)
 
     def _is_effectively_maximized(self) -> bool:
         return bool(getattr(self, "_pseudo_maximized", False)) or self.isMaximized()
