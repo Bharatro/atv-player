@@ -2,30 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from atv_player.metadata.tmdb_pool import OFFICIAL_API_BASE, OFFICIAL_IMAGE_BASE, build_mirror_pool
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
-def _normalize_tmdb_proxy_base_url(value: str) -> str:
-    text = str(value or "").strip().rstrip("/")
-    if not text:
-        return ""
-    parsed = urlparse(text)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    path = parsed.path.rstrip("/")
-    if path == "/3":
-        path = ""
-    elif path.endswith("/3"):
-        path = path[:-2].rstrip("/")
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
-
-
 class TMDBClient:
-    _BASE_URL = "https://api.themoviedb.org/3"
+    _BASE_URL = f"{OFFICIAL_API_BASE}/3"
 
     def __init__(
         self,
@@ -36,14 +21,15 @@ class TMDBClient:
         client_factory: Callable[..., httpx.Client] = httpx.Client,
     ) -> None:
         self._api_key = str(api_key or "").strip()
-        self._proxy_base_url = _normalize_tmdb_proxy_base_url(proxy_base_url)
-        self._api_base_url = f"{self._proxy_base_url}/3" if self._proxy_base_url else self._BASE_URL
+        self._mirror_pool = build_mirror_pool(proxy_base_url)
+        # 池地址同为外网 https Worker,代理决策按首个地址定一次即可。
+        first_api_base = self._mirror_pool.next_api_base()
         client_kwargs: dict[str, Any] = dict(
-            base_url=self._api_base_url,
+            base_url=f"{first_api_base}/3",
             transport=transport,
             timeout=20.0,
         )
-        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, self._api_base_url))
+        client_kwargs.update(build_httpx_kwargs_for_url(proxy_decider, f"{first_api_base}/3"))
         self._client = client_factory(**client_kwargs)
         self._image_config: dict[str, Any] | None = None
 
@@ -52,7 +38,8 @@ class TMDBClient:
         if self._api_key:
             query["api_key"] = self._api_key
         query.update({key: value for key, value in params.items() if value not in ("", None)})
-        response = self._client.get(path, params=query)
+        api_base = f"{self._mirror_pool.next_api_base()}/3"
+        response = self._client.get(f"{api_base}{path}", params=query)
         response.raise_for_status()
         return dict(response.json())
 
@@ -61,11 +48,11 @@ class TMDBClient:
             self._image_config = self._request("/configuration").get("images") or {}
         sizes = list(self._image_config.get(f"{kind}_sizes") or [])
         size = "original" if kind == "poster" else (sizes[-1] if sizes else "original")
-        base = (
-            f"{self._proxy_base_url}/t/p/"
-            if self._proxy_base_url
-            else str(self._image_config.get("secure_base_url") or "https://image.tmdb.org/t/p/")
-        )
+        mirror_base = self._mirror_pool.next_image_base() if self._mirror_pool else None
+        if mirror_base:
+            base = f"{mirror_base}/t/p/"
+        else:
+            base = str(self._image_config.get("secure_base_url") or OFFICIAL_IMAGE_BASE)
         return f"{base}{size}"
 
     def _image_base(self, kind: str) -> str:

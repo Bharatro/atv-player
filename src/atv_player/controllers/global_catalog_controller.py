@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Protocol
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from atv_player.metadata.tmdb_pool import build_mirror_pool
 from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 
 
@@ -322,28 +322,16 @@ class GlobalCatalogService:
         external_title_loader=None,
     ) -> None:
         self._tmdb_api_key = str(tmdb_api_key or "").strip()
-        self._tmdb_proxy_base_url = self._normalize_tmdb_proxy_base_url(tmdb_proxy_base_url)
-        api_base_url = f"{self._tmdb_proxy_base_url}/3" if self._tmdb_proxy_base_url else self._TMDB_BASE_URL
-        self._image_base_url = (
-            f"{self._tmdb_proxy_base_url}/t/p/w500" if self._tmdb_proxy_base_url else self._TMDB_IMAGE_BASE_URL
-        )
-        self._client = client_factory(base_url=api_base_url, timeout=20.0, transport=transport)
+        self._mirror_pool = build_mirror_pool(tmdb_proxy_base_url)
+        first_api_base = self._mirror_pool.next_api_base()
+        self._client = client_factory(base_url=f"{first_api_base}/3", timeout=20.0, transport=transport)
         self._external_title_loader = external_title_loader or self._default_external_title_loader
 
-    @staticmethod
-    def _normalize_tmdb_proxy_base_url(value: str) -> str:
-        text = str(value or "").strip().rstrip("/")
-        if not text:
-            return ""
-        parsed = urlparse(text)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return ""
-        path = parsed.path.rstrip("/")
-        if path == "/3":
-            path = ""
-        elif path.endswith("/3"):
-            path = path[:-2].rstrip("/")
-        return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+    def _next_image_base_url(self) -> str:
+        mirror_base = self._mirror_pool.next_image_base() if self._mirror_pool else None
+        if mirror_base:
+            return f"{mirror_base}/t/p/w500"
+        return self._TMDB_IMAGE_BASE_URL
 
     def load_items(
         self,
@@ -383,7 +371,8 @@ class GlobalCatalogService:
         if self._tmdb_api_key:
             query["api_key"] = self._tmdb_api_key
         query.update({key: value for key, value in params.items() if value not in ("", None)})
-        response = self._client.get(path, params=query)
+        api_base = f"{self._mirror_pool.next_api_base()}/3"
+        response = self._client.get(f"{api_base}{path}", params=query)
         response.raise_for_status()
         return dict(response.json())
 
@@ -657,11 +646,12 @@ class GlobalCatalogService:
         poster_path = str(item.get("poster_path") or "").strip()
         rating = item.get("vote_average")
         remarks = f"{float(rating):.1f}" if isinstance(rating, int | float) and rating else ""
+        image_base = self._next_image_base_url()
         return VodItem(
             vod_id=f"tmdb:{media_type}:{tmdb_id}",
             vod_name=title,
-            vod_pic=f"{self._image_base_url}{poster_path}" if poster_path else "",
-            poster_candidates=[f"{self._image_base_url}{poster_path}"] if poster_path else [],
+            vod_pic=f"{image_base}{poster_path}" if poster_path else "",
+            poster_candidates=[f"{image_base}{poster_path}"] if poster_path else [],
             vod_remarks=remarks,
             vod_year=date[:4],
             vod_content=f"{date}\n{item.get('overview') or '暂无简介'}" if date else str(item.get("overview") or "暂无简介"),

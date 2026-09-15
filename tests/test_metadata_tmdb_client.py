@@ -1,6 +1,7 @@
 import httpx
 
 from atv_player.metadata.providers.tmdb_client import TMDBClient
+from atv_player.metadata.tmdb_pool import BUILTIN_WORKER_POOL, WORKER_POOL_VALUE
 from atv_player.network_proxy import ProxyConfig, ProxyDecider
 
 
@@ -245,3 +246,97 @@ def test_tmdb_client_discover_tv_passes_filters() -> None:
         "with_genres": "18",
         "with_origin_country": "KR",
     }
+
+
+def test_tmdb_client_rotates_mirror_pool_per_request() -> None:
+    seen_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_hosts.append(request.url.host)
+        return httpx.Response(200, json={"results": []})
+
+    client = TMDBClient(
+        api_key="tmdb-key",
+        proxy_base_url="https://mirror-a.example.com,https://mirror-b.example.com",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_movie("深空彼岸")
+    client.search_movie("深空彼岸")
+
+    assert sorted(set(seen_hosts)) == ["mirror-a.example.com", "mirror-b.example.com"]
+    assert len(seen_hosts) == 2
+
+
+def test_tmdb_client_worker_pool_sentinel_targets_builtin_hosts() -> None:
+    seen_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_hosts.append(request.url.host)
+        return httpx.Response(200, json={"results": []})
+
+    client = TMDBClient(
+        api_key="tmdb-key",
+        proxy_base_url=WORKER_POOL_VALUE,
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_movie("深空彼岸")
+
+    builtin_hosts = {host.removeprefix("https://") for host in BUILTIN_WORKER_POOL}
+    assert seen_hosts == [seen_hosts[0]]
+    assert seen_hosts[0] in builtin_hosts
+
+
+def test_tmdb_client_image_urls_follow_mirror_pool() -> None:
+    requested_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_hosts.append(request.url.host)
+        if request.url.path == "/3/configuration":
+            return httpx.Response(
+                200,
+                json={
+                    "images": {
+                        "secure_base_url": "https://image.tmdb.org/t/p/",
+                        "poster_sizes": ["w500", "original"],
+                        "backdrop_sizes": ["w300", "w1280"],
+                    }
+                },
+            )
+        if request.url.path == "/3/movie/550":
+            return httpx.Response(
+                200,
+                json={"id": 550, "poster_path": "/abc.jpg", "backdrop_path": "/bd.jpg"},
+            )
+        raise AssertionError(request.url.path)
+
+    client = TMDBClient(
+        api_key="",
+        proxy_base_url="https://mirror-a.example.com",
+        transport=httpx.MockTransport(handler),
+    )
+
+    detail = client.get_movie_detail("550")
+
+    assert detail["poster_url"] == "https://mirror-a.example.com/t/p/original/abc.jpg"
+    assert detail["backdrop_url"] == "https://mirror-a.example.com/t/p/w1280/bd.jpg"
+    assert set(requested_hosts) == {"mirror-a.example.com"}
+
+
+def test_tmdb_client_invalid_proxy_value_falls_back_to_official() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["host"] = request.url.host
+        return httpx.Response(200, json={"results": []})
+
+    client = TMDBClient(
+        api_key="tmdb-key",
+        proxy_base_url="not-a-url",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_movie("深空彼岸")
+
+    assert seen["host"] == "api.themoviedb.org"

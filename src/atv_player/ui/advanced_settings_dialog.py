@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
-from urllib.parse import urlparse, urlunparse
 
 import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
@@ -38,6 +37,11 @@ from atv_player.controllers.youtube_category_config import (
     parse_youtube_category_config,
 )
 from atv_player.danmaku.providers.dandan import probe_dandan_server
+from atv_player.metadata.tmdb_pool import (
+    BUILTIN_WORKER_POOL,
+    WORKER_POOL_VALUE,
+    canonicalize_mirror_value,
+)
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
 from atv_player.source_preferences import (
@@ -60,26 +64,14 @@ from atv_player.ui.window_chrome import ThemedDialogBase
 _TMDB_CUSTOM_ENDPOINT_VALUE = "__custom__"
 _TMDB_ENDPOINT_OPTIONS = [
     ("官方 API - https://api.themoviedb.org", "", "https://api.themoviedb.org"),
-    ("Worker - https://tmdb.8866033.xyz", "https://tmdb.8866033.xyz", "https://tmdb.8866033.xyz"),
-    ("Worker - https://tmdb.swust-oj.workers.dev", "https://tmdb.swust-oj.workers.dev", "https://tmdb.swust-oj.workers.dev"),
-    ("Worker - https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev"),
+    ("Worker 轮询池(12 个内置地址自动轮询)", WORKER_POOL_VALUE, WORKER_POOL_VALUE),
 ]
 _TMDB_ENDPOINT_PRESET_VALUES = {item[1] for item in _TMDB_ENDPOINT_OPTIONS}
+_TMDB_BUILTIN_WORKER_VALUES = set(BUILTIN_WORKER_POOL)
 
 
 def _normalize_tmdb_proxy_base_url(value: object) -> str:
-    text = str(value or "").strip().rstrip("/")
-    if not text:
-        return ""
-    parsed = urlparse(text)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return text
-    path = parsed.path.rstrip("/")
-    if path == "/3":
-        path = ""
-    elif path.endswith("/3"):
-        path = path[:-2].rstrip("/")
-    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+    return canonicalize_mirror_value(value)
 
 
 def _build_source_checkbox_layout(checkboxes: list[QCheckBox]) -> QGridLayout:
@@ -981,6 +973,13 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
     def _select_tmdb_endpoint(self, value: object) -> None:
         normalized = _normalize_tmdb_proxy_base_url(value)
+        if normalized == WORKER_POOL_VALUE or normalized in _TMDB_BUILTIN_WORKER_VALUES:
+            # 存量为内置 Worker 单地址的老配置自动升级为轮询池。
+            self.tmdb_endpoint_combo.setCurrentIndex(
+                max(0, self.tmdb_endpoint_combo.findData(WORKER_POOL_VALUE))
+            )
+            self.tmdb_proxy_base_url_edit.setText(WORKER_POOL_VALUE)
+            return
         if normalized in _TMDB_ENDPOINT_PRESET_VALUES:
             self.tmdb_endpoint_combo.setCurrentIndex(max(0, self.tmdb_endpoint_combo.findData(normalized)))
             self.tmdb_proxy_base_url_edit.setText(normalized)
@@ -1068,32 +1067,67 @@ class AdvancedSettingsDialog(ThemedDialogBase):
     def _test_tmdb_endpoints_in_background(self, api_key: str) -> None:
         results: list[dict[str, object]] = []
         for label, value, speed_base_url in _TMDB_ENDPOINT_OPTIONS:
-            started_at = time.perf_counter()
-            status_text = ""
-            elapsed_ms = 0
-            try:
-                params = {"language": "zh-CN"}
-                if api_key:
-                    params["api_key"] = api_key
-                response = httpx.get(
-                    f"{speed_base_url.rstrip('/')}/3/configuration",
-                    params=params,
-                    timeout=5.0,
-                )
-                elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-                status_text = "OK" if response.status_code < 500 else str(response.status_code)
-            except Exception as exc:
-                elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-                status_text = f"失败: {exc.__class__.__name__}"
+            if value == WORKER_POOL_VALUE:
+                worker_results = [
+                    self._probe_tmdb_endpoint(api_key, host, label=label, value=value)
+                    for host in BUILTIN_WORKER_POOL
+                ]
+                ok_results = [result for result in worker_results if result["status"] == "OK"]
+                if ok_results:
+                    results.append(
+                        {
+                            "label": label,
+                            "value": value,
+                            "elapsed_ms": min(int(result["elapsed_ms"]) for result in ok_results),
+                            "status": f"{len(ok_results)}/{len(worker_results)} 可用",
+                        }
+                    )
+                else:
+                    results.append(
+                        {
+                            "label": label,
+                            "value": value,
+                            "elapsed_ms": 0,
+                            "status": "全部失败",
+                        }
+                    )
+                continue
             results.append(
-                {
-                    "label": label,
-                    "value": value,
-                    "elapsed_ms": elapsed_ms,
-                    "status": status_text,
-                }
+                self._probe_tmdb_endpoint(api_key, speed_base_url, label=label, value=value)
             )
         self._emit_initial_content_signal(self._initial_content_signals.tmdb_speed_test_finished, results)
+
+    @staticmethod
+    def _probe_tmdb_endpoint(
+        api_key: str,
+        speed_base_url: str,
+        *,
+        label: str,
+        value: str,
+    ) -> dict[str, object]:
+        started_at = time.perf_counter()
+        status_text = ""
+        elapsed_ms = 0
+        try:
+            params = {"language": "zh-CN"}
+            if api_key:
+                params["api_key"] = api_key
+            response = httpx.get(
+                f"{speed_base_url.rstrip('/')}/3/configuration",
+                params=params,
+                timeout=5.0,
+            )
+            elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            status_text = "OK" if response.status_code < 500 else str(response.status_code)
+        except Exception as exc:
+            elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+            status_text = f"失败: {exc.__class__.__name__}"
+        return {
+            "label": label,
+            "value": value,
+            "elapsed_ms": elapsed_ms,
+            "status": status_text,
+        }
 
     def _apply_tmdb_speed_results(self, results: list[dict[str, object]]) -> None:
         self._tmdb_speed_test_running = False

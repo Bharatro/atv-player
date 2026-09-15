@@ -7,6 +7,7 @@ import time
 from typing import Any, cast
 import uuid
 
+from atv_player.metadata.tmdb_pool import canonicalize_mirror_value
 from atv_player.models import AppConfig, AppIdentity
 from atv_player.source_preferences import (
     VALID_DANMAKU_PROVIDER_IDS,
@@ -221,7 +222,8 @@ def _normalize_network_proxy_url(value: object) -> str:
 
 
 def _normalize_tmdb_proxy_base_url(value: object) -> str:
-    return str(value or "").strip().rstrip("/")
+    # 哨兵值 worker-pool 原样保留;显式镜像(可逗号分隔多个)逐项归一,全非法归空。
+    return canonicalize_mirror_value(value)
 
 
 def _normalize_network_proxy_bypass_rules(value: object) -> list[str]:

@@ -7946,6 +7946,7 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
 
 
 def test_advanced_settings_dialog_saves_preset_tmdb_proxy(qtbot) -> None:
+    from atv_player.metadata.tmdb_pool import WORKER_POOL_VALUE
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     saved: list[AppConfig] = []
@@ -7954,15 +7955,49 @@ def test_advanced_settings_dialog_saves_preset_tmdb_proxy(qtbot) -> None:
     qtbot.addWidget(dialog)
 
     dialog.tmdb_endpoint_combo.setCurrentIndex(
-        dialog.tmdb_endpoint_combo.findData("https://tmdb.8866033.xyz")
+        dialog.tmdb_endpoint_combo.findData(WORKER_POOL_VALUE)
     )
     dialog._save()
 
-    assert config.metadata_tmdb_proxy_base_url == "https://tmdb.8866033.xyz"
+    assert config.metadata_tmdb_proxy_base_url == WORKER_POOL_VALUE
+    assert len(saved) == 1
+
+
+def test_advanced_settings_dialog_upgrades_builtin_worker_to_pool(qtbot) -> None:
+    from atv_player.metadata.tmdb_pool import WORKER_POOL_VALUE
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    config.metadata_tmdb_proxy_base_url = "https://tmdb.power0721.workers.dev"
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.tmdb_endpoint_combo.currentData() == WORKER_POOL_VALUE
+    assert dialog.tmdb_proxy_base_url_edit.text() == WORKER_POOL_VALUE
+
+
+def test_advanced_settings_dialog_saves_custom_mirror_list(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.tmdb_endpoint_combo.setCurrentIndex(
+        dialog.tmdb_endpoint_combo.findData("__custom__")
+    )
+    dialog.tmdb_proxy_base_url_edit.setText(" https://mirror-a.example.com/3, https://mirror-b.example.com ")
+    dialog._save()
+
+    assert config.metadata_tmdb_proxy_base_url == (
+        "https://mirror-a.example.com,https://mirror-b.example.com"
+    )
     assert len(saved) == 1
 
 
 def test_advanced_settings_dialog_displays_tmdb_speed_results(qtbot) -> None:
+    from atv_player.metadata.tmdb_pool import WORKER_POOL_VALUE
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
     dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
@@ -7972,18 +8007,19 @@ def test_advanced_settings_dialog_displays_tmdb_speed_results(qtbot) -> None:
         [
             {"label": "官方 API", "value": "", "elapsed_ms": 120, "status": "OK"},
             {
-                "label": "Worker 8866033.xyz",
-                "value": "https://tmdb.8866033.xyz",
+                "label": "Worker 轮询池",
+                "value": WORKER_POOL_VALUE,
                 "elapsed_ms": 80,
-                "status": "OK",
+                "status": "10/12 可用",
             },
         ]
     )
 
     official_index = dialog.tmdb_endpoint_combo.findData("")
-    worker_index = dialog.tmdb_endpoint_combo.findData("https://tmdb.8866033.xyz")
+    pool_index = dialog.tmdb_endpoint_combo.findData(WORKER_POOL_VALUE)
     assert "120 ms" in dialog.tmdb_endpoint_combo.itemText(official_index)
-    assert "80 ms" in dialog.tmdb_endpoint_combo.itemText(worker_index)
+    assert "80 ms" in dialog.tmdb_endpoint_combo.itemText(pool_index)
+    assert "10/12 可用" in dialog.tmdb_endpoint_combo.itemText(pool_index)
 
 
 def test_advanced_settings_dialog_saves_source_enablement(qtbot) -> None:
