@@ -552,7 +552,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         dandan_server_layout.addRow("状态", self.dandan_test_status_label)
         self.dandan_server_group.setLayout(dandan_server_layout)
         danmaku_cleaning_layout = QFormLayout()
-        danmaku_cleaning_layout.addRow("屏蔽词（每行一个）", self.danmaku_blocked_words_edit)
+        danmaku_cleaning_layout.addRow("屏蔽词（每行一个，支持 /正则/i 写法）", self.danmaku_blocked_words_edit)
         danmaku_cleaning_layout.addRow("重复内容窗口", self.danmaku_duplicate_window_spinbox)
         danmaku_cleaning_layout.addRow(self.danmaku_convert_top_bottom_checkbox)
         danmaku_cleaning_layout.addRow(self.bangumi_data_danmaku_checkbox)

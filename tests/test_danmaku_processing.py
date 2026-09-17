@@ -1,6 +1,9 @@
+import re
+
 from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.processing import (
     apply_time_offset,
+    build_blocked_matchers,
     clean_records,
     convert_top_bottom_to_scroll,
     group_by_time_window,
@@ -83,3 +86,63 @@ def test_apply_time_offset_shifts_seconds_and_clamps_to_zero() -> None:
 def test_apply_time_offset_zero_is_noop() -> None:
     records = [_r(5, "a")]
     assert apply_time_offset(records, offset_seconds=0) == records
+
+
+def test_clean_records_supports_regex_blocked_words() -> None:
+    records = [
+        _r(1, "广告123点链接"),
+        _r(2, "正常弹幕"),
+        _r(3, "广告链接"),
+    ]
+
+    cleaned = clean_records(
+        records,
+        blocked_words=[r"/广告\d+/"],
+        duplicate_window_minutes=0,
+        convert_top_bottom=False,
+    )
+
+    assert [record.content for record in cleaned] == ["正常弹幕", "广告链接"]
+
+
+def test_clean_records_regex_flags_control_case_sensitivity() -> None:
+    records = [_r(1, "SPAM link"), _r(2, "spam link")]
+
+    cleaned = clean_records(
+        records,
+        blocked_words=["/spam/"],
+        duplicate_window_minutes=0,
+        convert_top_bottom=False,
+    )
+    assert [record.content for record in cleaned] == ["SPAM link"]
+
+    cleaned = clean_records(
+        records,
+        blocked_words=["/spam/i"],
+        duplicate_window_minutes=0,
+        convert_top_bottom=False,
+    )
+    assert [record.content for record in cleaned] == []
+
+
+def test_clean_records_degrades_invalid_regex_to_literal_match() -> None:
+    records = [_r(1, "看/[/广告]"), _r(2, "正常")]
+
+    cleaned = clean_records(
+        records,
+        blocked_words=["/[/", "正常"],
+        duplicate_window_minutes=0,
+        convert_top_bottom=False,
+    )
+
+    # "/[/" 不是合法正则，按字面量处理仍能命中 "/[/" 子串
+    assert [record.content for record in cleaned] == []
+
+
+def test_build_blocked_matchers_keeps_plain_words_casefolded() -> None:
+    matchers = build_blocked_matchers(["  SPAM  ", "", "/ok/i"])
+
+    assert matchers == [
+        ("text", "spam"),
+        ("regex", re.compile("ok", re.IGNORECASE)),
+    ]
