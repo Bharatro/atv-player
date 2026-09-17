@@ -6,6 +6,8 @@ import html
 import json
 import math
 import re
+import secrets
+import string
 import time
 from dataclasses import replace
 from html.parser import HTMLParser
@@ -60,6 +62,9 @@ class YoukuDanmakuProvider:
     def __init__(self, get=httpx.get, post=httpx.post) -> None:
         self._get = get
         self._post = post
+        # mmstat 取 cna 失败一次后置 true，后续直接复用本地 cna，不再等待该域名超时
+        self._use_fallback_cna = False
+        self._fallback_cna: str | None = None
 
     def supports(self, page_url: str) -> bool:
         return "youku.com" in page_url
@@ -98,7 +103,7 @@ class YoukuDanmakuProvider:
             raise DanmakuResolveError("优酷页面缺少 vid")
         duration = self._fetch_duration_seconds(vid)
         cna, tk, tk_enc = self._fetch_danmaku_tokens()
-        if not cna or not tk or not tk_enc:
+        if not tk or not tk_enc:
             raise DanmakuResolveError("优酷弹幕鉴权失败")
         items = self._fetch_all_danmaku_items(page_url, vid, duration, cna, tk, tk_enc)
         records: list[DanmakuRecord] = []
@@ -155,14 +160,31 @@ class YoukuDanmakuProvider:
         except (TypeError, ValueError):
             raise DanmakuResolveError("优酷视频信息缺少时长")
 
+    def _local_cna(self) -> str:
+        # 优酷弹幕接口只把 cna 当请求体里的客户端标识（guid）回传，不校验其来源；
+        # mmstat 域名被广告过滤/私人 DNS 拦截时用本地生成的同格式随机值兜底
+        if self._fallback_cna is None:
+            alphabet = string.ascii_letters + string.digits
+            self._fallback_cna = "".join(secrets.choice(alphabet) for _ in range(24))
+        return self._fallback_cna
+
     def _fetch_danmaku_tokens(self) -> tuple[str, str, str]:
-        cna_response = self._get(
-            self._CNA_URL,
-            headers={"user-agent": self._SEARCH_USER_AGENT},
-            follow_redirects=False,
-            timeout=10.0,
-        )
-        cna = str(cna_response.headers.get("etag") or "").strip().strip('"')
+        if self._use_fallback_cna:
+            cna = self._local_cna()
+        else:
+            try:
+                cna_response = self._get(
+                    self._CNA_URL,
+                    headers={"user-agent": self._SEARCH_USER_AGENT},
+                    follow_redirects=False,
+                    timeout=10.0,
+                )
+                cna = str(cna_response.headers.get("etag") or "").strip().strip('"')
+            except httpx.HTTPError:
+                cna = ""
+            if not cna:
+                self._use_fallback_cna = True
+                cna = self._local_cna()
         weakget_response = self._get(
             self._WEAKGET_URL,
             headers={"user-agent": self._SEARCH_USER_AGENT},

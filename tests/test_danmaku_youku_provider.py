@@ -863,3 +863,59 @@ def test_youku_provider_resolve_downloads_segments_with_max_concurrency_of_four(
 
     assert len(records) == 6
     assert state["max_active"] == 4
+
+
+def test_youku_provider_resolve_falls_back_to_local_cna_when_mmstat_is_blocked() -> None:
+    state = {"mmstat_calls": 0, "guids": []}
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://v.youku.com/v_show/id_demo123.html":
+            return httpx.Response(200, text="<html><title>demo</title></html>")
+        if url == (
+            "https://openapi.youku.com/v2/videos/show.json"
+            "?client_id=53e6cc67237fc59a&video_id=demo123&package=com.huawei.hwvplayer.youku&ext=show"
+        ):
+            return httpx.Response(200, json={"duration": "61.0"})
+        if url == "https://log.mmstat.com/eg.js":
+            state["mmstat_calls"] += 1
+            raise httpx.ConnectError("mmstat blocked by dns")
+        if url == "https://acs.youku.com/h5/mtop.com.youku.aplatform.weakget/1.0/?jsv=2.5.1&appKey=24679788":
+            return httpx.Response(
+                200,
+                headers={
+                    "set-cookie": (
+                        "_m_h5_tk=abcdefghijklmnopqrstuvwxyz123456_123;Path=/;Domain=youku.com;Max-Age=86400, "
+                        "_m_h5_tk_enc=enc-cookie;Path=/;Domain=youku.com;Max-Age=86400"
+                    )
+                },
+            )
+        raise AssertionError(url)
+
+    def fake_post(url: str, **kwargs):
+        assert url == "https://acs.youku.com/h5/mopen.youku.danmu.list/1.0/"
+        payload = json.loads(kwargs["data"]["data"])
+        state["guids"].append(payload["guid"])
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "result": json.dumps(
+                        {
+                            "code": 1,
+                            "data": {"result": []},
+                        }
+                    )
+                }
+            },
+        )
+
+    provider = YoukuDanmakuProvider(get=fake_get, post=fake_post)
+
+    assert provider.resolve("https://v.youku.com/v_show/id_demo123.html") == []
+    assert provider.resolve("https://v.youku.com/v_show/id_demo123.html") == []
+
+    # 首次失败后进程内复用本地 cna，后续不再访问 mmstat
+    assert state["mmstat_calls"] == 1
+    assert state["guids"], "danmaku segments should still be requested"
+    assert all(len(guid) == 24 and guid.isalnum() for guid in state["guids"])
+    assert len(set(state["guids"])) == 1
