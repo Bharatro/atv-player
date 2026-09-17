@@ -1,5 +1,6 @@
 import httpx
 import pytest
+import hashlib
 import json
 import threading
 import time
@@ -14,8 +15,8 @@ def test_sohu_search_filters_trailer_noise_and_expands_episode_candidates() -> N
             assert kwargs["params"]["key"] == "剑来"
             assert kwargs["params"]["tabsChosen"] == "0"
             assert kwargs["params"]["page_size"] == "20"
-            assert kwargs["headers"]["Referer"] == "https://so.tv.sohu.com/"
-            assert kwargs["headers"]["Origin"] == "https://so.tv.sohu.com"
+            assert kwargs["headers"]["Referer"] == "https://tv.sohu.com/"
+            assert kwargs["headers"]["Origin"] == "https://tv.sohu.com"
             return httpx.Response(
                 200,
                 json={
@@ -430,6 +431,115 @@ def test_sohu_search_ignores_non_mapping_search_items_and_embedded_videos() -> N
     assert [(item.name, item.url) for item in items] == [
         ("谁动了我的隐私 第1集", "https://m.tv.sohu.com/v10234237.shtml"),
     ]
+
+
+def test_sohu_search_signs_request_with_fpc_timestamp_and_code() -> None:
+    captured: dict[str, dict] = {}
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            captured.update(kwargs["params"])
+            return httpx.Response(200, json={"data": {"items": []}})
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    assert provider.search("剑来") == []
+
+    params = captured
+    assert params["fpc"] and params["timeStamp"]
+    expected_code = hashlib.md5(
+        f"{params['timeStamp']}{params['fpc']}vxWaXm3C5SA9&fpc".encode()
+    ).hexdigest()
+    assert params["code"] == expected_code
+
+
+def test_sohu_search_accepts_video_only_items_without_album_fields() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "vid": "700001",
+                                "video_name": "剑来第1集",
+                                "year_name": "2026",
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            assert kwargs["params"]["playlistid"] == "700001"
+            return httpx.Response(
+                200,
+                json={
+                    "videos": [
+                        {
+                            "vid": "700001",
+                            "name": "剑来第1集",
+                            "pageUrl": "https://tv.sohu.com/v/700001.html",
+                            "playLength": 1420,
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("剑来", original_name="剑来 1集")
+
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("剑来 第1集", "https://tv.sohu.com/v/700001.html", 1420),
+    ]
+    assert items[0].resolve_context["aid"] == "700001"
+    assert items[0].resolve_context["year"] == 2026
+
+
+def test_sohu_playlist_decodes_gbk_encoded_titles() -> None:
+    payload = {
+        "videos": [
+            {
+                "vid": "800001",
+                "video_name": "难哄第1集",
+                "url_html5": "https://tv.sohu.com/v/800001.html",
+                "playLength": 1420,
+            }
+        ]
+    }
+
+    def fake_get(url: str, **kwargs):
+        if url == "https://m.so.tv.sohu.com/search/pc/keyword":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "items": [
+                            {
+                                "aid": "800001",
+                                "album_name": "难哄",
+                                "meta": ["2026年", "电视剧 | 内地"],
+                            }
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            return httpx.Response(
+                200,
+                content=json.dumps(payload, ensure_ascii=False).encode("gbk"),
+            )
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+
+    items = provider.search("难哄", original_name="难哄 1集")
+
+    assert [(item.name, item.duration_seconds) for item in items] == [("难哄 第1集", 1420)]
+    assert items[0].resolve_context["year"] == 2026
 
 
 def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:

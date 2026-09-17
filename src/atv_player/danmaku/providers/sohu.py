@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import re
 import time
 
@@ -16,6 +18,7 @@ class SohuDanmakuProvider:
     key = "sohu"
     _SEARCH_URL = "https://m.so.tv.sohu.com/search/pc/keyword"
     _PLAYLIST_URL = "https://pl.hd.sohu.com/videolist"
+    _SEARCH_SECRET = "vxWaXm3C5SA9&fpc"
     _NOISE_KEYWORDS = ("预告", "花絮", "片段", "特辑", "采访", "速看", "解说")
     _POSITION_MAP = {1: 1, 4: 5, 5: 4}
 
@@ -32,30 +35,13 @@ class SohuDanmakuProvider:
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         response = self._get(
             self._SEARCH_URL,
-            params={
-                "key": name,
-                "type": "1",
-                "page": "1",
-                "page_size": "20",
-                "user_id": "",
-                "tabsChosen": "0",
-                "poster": "4",
-                "tuple": "6",
-                "extSource": "1",
-                "show_star_detail": "3",
-                "pay": "1",
-                "hl": "3",
-                "uid": str(int(time.time() * 1000)),
-                "passport": "",
-                "plat": "-1",
-                "ssl": "0",
-            },
+            params=self._signed_search_params(name),
             headers={
                 "User-Agent": "Mozilla/5.0",
                 "Accept": "application/json, text/plain, */*",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": "https://so.tv.sohu.com/",
-                "Origin": "https://so.tv.sohu.com",
+                "Referer": "https://tv.sohu.com/",
+                "Origin": "https://tv.sohu.com",
             },
             follow_redirects=True,
             timeout=10.0,
@@ -74,6 +60,35 @@ class SohuDanmakuProvider:
         if not isinstance(items, list):
             raise DanmakuSearchError("搜狐弹幕搜索结果解析失败")
         return self._expand_search_items(items, query_name=name, original_name=original_name or name)
+
+    def _signed_search_params(self, name: str) -> dict[str, str]:
+        now_ms = int(time.time() * 1000)
+        params = {
+            "key": name,
+            "type": "1",
+            "page": "1",
+            "page_size": "20",
+            "user_id": "",
+            "tabsChosen": "0",
+            "poster": "4",
+            "tuple": "6",
+            "extSource": "1",
+            "show_star_detail": "3",
+            "pay": "1",
+            "hl": "3",
+            "uid": str(now_ms),
+            "passport": "",
+            "plat": "-1",
+            "ssl": "0",
+        }
+        # 新版接口要求 fpc/timeStamp/code 签名：fpc 不校验真实性，
+        # 但 code 必须由同一组 fpc + timeStamp 计算，服务端会复核
+        fpc = hashlib.md5(f"sohu-{random.random()}{now_ms}".encode()).hexdigest()
+        timestamp = str(now_ms)
+        params["fpc"] = fpc
+        params["timeStamp"] = timestamp
+        params["code"] = hashlib.md5(f"{timestamp}{fpc}{self._SEARCH_SECRET}".encode()).hexdigest()
+        return params
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         context = dict(self._resolve_context_by_url.get(page_url) or {})
@@ -113,8 +128,9 @@ class SohuDanmakuProvider:
         return candidates
 
     def _normalize_album(self, raw: dict) -> dict[str, str | int] | None:
-        aid = str(raw.get("aid") or "").strip()
-        title = str(raw.get("album_name") or "").replace("<<<", "").replace(">>>", "").strip()
+        # 搜索接口同时返回专辑项和视频项；视频项可能只有 vid/video_name
+        aid = str(raw.get("aid") or raw.get("vid") or "").strip()
+        title = str(raw.get("album_name") or raw.get("video_name") or "").replace("<<<", "").replace(">>>", "").strip()
         if not aid or not title:
             return None
         if int(raw.get("is_trailer") or 0) == 1:
@@ -127,14 +143,38 @@ class SohuDanmakuProvider:
         return {
             "aid": aid,
             "title": title,
-            "year": int(raw.get("year") or 0),
+            "year": self._album_year(raw),
             "category_name": self._category_name(raw),
             "videos": self._mapping_list(raw.get("videos"), context=f"album videos aid={aid}"),
         }
 
+    def _meta_texts(self, raw: dict) -> list[str]:
+        # meta 条目可能是字符串或 {"txt": ...} 对象
+        meta = raw.get("meta")
+        if not isinstance(meta, list):
+            return []
+        texts: list[str] = []
+        for item in meta:
+            if isinstance(item, str):
+                texts.append(item)
+            elif isinstance(item, dict):
+                texts.append(str(item.get("txt") or ""))
+        return texts
+
+    def _album_year(self, raw: dict) -> int:
+        for key in ("year", "year_name"):
+            try:
+                return int(str(raw.get(key)).strip())
+            except (TypeError, ValueError):
+                continue
+        for text in self._meta_texts(raw):
+            match = re.search(r"((?:19|20)\d{2})", text)
+            if match:
+                return int(match.group(1))
+        return 0
+
     def _category_name(self, raw: dict) -> str:
-        for meta in self._mapping_list(raw.get("meta"), context=f"album meta aid={raw.get('aid') or ''}"):
-            text = str(meta.get("txt") or "")
+        for text in self._meta_texts(raw):
             if "|" not in text:
                 continue
             parts = [part.strip() for part in text.split("|")]
@@ -189,24 +229,30 @@ class SohuDanmakuProvider:
             follow_redirects=True,
             timeout=10.0,
         )
+        text = self._decode_playlist_text(response).strip()
+        if text.startswith("jsonp"):
+            start = text.find("(")
+            end = text.rfind(")")
+            if start > 0 and end > start:
+                text = text[start + 1 : end]
         try:
-            payload = response.json()
+            payload = json.loads(text)
         except Exception as exc:
-            text = response.text.strip()
-            if text.startswith("jsonp(") and text.endswith(")"):
-                try:
-                    payload = json.loads(text[text.find("(") + 1 : text.rfind(")")])
-                except Exception:
-                    raise DanmakuSearchError("搜狐播放列表解析失败") from exc
-            else:
-                try:
-                    payload = json.loads(text)
-                except Exception:
-                    raise DanmakuSearchError("搜狐播放列表解析失败") from exc
+            raise DanmakuSearchError("搜狐播放列表解析失败") from exc
         if not isinstance(payload, dict):
             return []
         videos = payload.get("videos")
         return self._mapping_list(videos, context=f"playlist videos aid={aid}")
+
+    def _decode_playlist_text(self, response: httpx.Response) -> str:
+        # videolist 历史接口常以 GBK 返回中文标题且常缺 charset 头，直接按 UTF-8 解会乱码
+        content_type = str(response.headers.get("content-type") or "").lower()
+        if "gbk" in content_type or "gb2312" in content_type:
+            return response.content.decode("gbk", errors="replace")
+        try:
+            return response.content.decode("utf-8")
+        except UnicodeDecodeError:
+            return response.content.decode("gbk", errors="replace")
 
     def _extract_ids_from_page(self, page_url: str) -> tuple[str, str]:
         response = self._get(
@@ -287,7 +333,7 @@ class SohuDanmakuProvider:
         candidates = [
             video
             for video in videos
-            if isinstance(video, dict) and not self._is_noise_title(str(video.get("video_name") or ""))
+            if isinstance(video, dict) and not self._is_noise_title(str(video.get("video_name") or video.get("name") or ""))
         ]
         if not candidates:
             return None
@@ -316,7 +362,9 @@ class SohuDanmakuProvider:
         if "sohu.com" not in url:
             return None
         album_title = self._normalize_display_title(str(album["title"]))
-        video_name = self._normalize_display_title(str(video.get("video_name") or "").strip())
+        video_name = self._normalize_display_title(
+            str(video.get("video_name") or video.get("name") or "").strip()
+        )
         candidate_name = album_title
         if video_name and video_name != album_title:
             if video_name.startswith(album_title):
