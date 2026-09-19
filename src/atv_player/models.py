@@ -207,6 +207,15 @@ class PlaybackDetailField:
 
 
 @dataclass(slots=True)
+class PlayChapter:
+    """外部章节(B站 view_points 等),start/end 单位秒。"""
+
+    title: str
+    start_seconds: float
+    end_seconds: float = 0.0
+
+
+@dataclass(slots=True)
 class PlayItem:
     title: str
     url: str
@@ -230,6 +239,7 @@ class PlayItem:
     audio_tracks: list["YtdlpAudioTrackOption"] = field(default_factory=list)
     selected_audio_track_id: str = ""
     external_subtitles: list[ExternalSubtitleOption] = field(default_factory=list)
+    chapters: list[PlayChapter] = field(default_factory=list)
     playback_qualities: list["VideoQualityOption"] = field(default_factory=list)
     selected_playback_quality_id: str = ""
     ytdl_format: str = ""

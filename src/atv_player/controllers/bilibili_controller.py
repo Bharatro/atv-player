@@ -16,6 +16,7 @@ from atv_player.models import (
     ExternalSubtitleOption,
     HistoryRecord,
     OpenPlayerRequest,
+    PlayChapter,
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailField,
@@ -63,6 +64,34 @@ def _parse_bilibili_headers(headers: object) -> dict[str, str]:
         if key:
             parsed[key] = value
     return parsed
+
+
+def _parse_bilibili_chapters(raw: object) -> list[PlayChapter]:
+    if not isinstance(raw, list):
+        return []
+    chapters: list[PlayChapter] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        raw_from = entry.get("from")
+        if isinstance(raw_from, bool) or raw_from is None:
+            continue
+        try:
+            start = float(raw_from)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            continue
+        try:
+            end = float(entry.get("to") or 0)
+        except (TypeError, ValueError, OverflowError):
+            end = 0.0
+        chapters.append(
+            PlayChapter(title=title, start_seconds=max(0.0, start), end_seconds=max(0.0, end))
+        )
+    chapters.sort(key=lambda chapter: chapter.start_seconds)
+    return chapters
 
 
 def _map_detail_actions(payload: object) -> list[PlaybackDetailAction]:
@@ -313,6 +342,7 @@ class BilibiliController:
         item.headers = _parse_bilibili_headers(payload.get("header") or {})
         item.detail_actions = _map_detail_actions(payload.get("actions"))
         item.external_subtitles = self._parse_bilibili_subtitles(payload)
+        item.chapters = _parse_bilibili_chapters(payload.get("chapters"))
         self._load_bilibili_danmaku(item, payload)
 
     def _run_detail_action(self, vod_id: str, action_id: str) -> list[PlaybackDetailAction]:

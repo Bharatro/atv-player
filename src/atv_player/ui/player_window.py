@@ -10013,6 +10013,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addMenu(self._build_shader_menu(menu))
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
+        menu.addMenu(self._build_chapter_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
         menu.addAction("刮削", self._open_metadata_scrape_dialog)
         menu.addAction("重写剧集标题", self._rerun_episode_title_enhancement)
@@ -11906,6 +11907,24 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
         return menu
 
+    def _build_chapter_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("章节", parent)
+        chapters = self._current_chapters
+        if not chapters:
+            menu.setEnabled(False)
+            return menu
+        position = self.video.position_seconds() if hasattr(self.video, "position_seconds") else None
+        current = self._chapter_at(int(position)) if position is not None else None
+        for chapter in chapters:
+            label = f"{self._format_time(int(chapter.start_seconds))}  {chapter.title}".rstrip()
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(chapter is current)
+            action.triggered.connect(
+                lambda _checked=False, seconds=int(chapter.start_seconds): self._seek_to_position(seconds)
+            )
+        return menu
+
     def _build_subtitle_delay_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("字幕延迟", parent)
         group = QActionGroup(menu)
@@ -12857,17 +12876,36 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.progress.set_chapter_positions([])
 
     def _refresh_chapter_markers(self) -> None:
-        if not hasattr(self.video, "chapters"):
-            self._clear_chapter_markers()
-            return
-        try:
-            chapters = list(self.video.chapters() or [])
-        except Exception:
-            chapters = []
+        chapters = self._current_item_chapters()
+        if not chapters and hasattr(self.video, "chapters"):
+            try:
+                chapters = list(self.video.chapters() or [])
+            except Exception:
+                chapters = []
         self._current_chapters = chapters
         self.progress.set_chapter_positions(
             chapter.start_seconds for chapter in chapters
         )
+
+    def _current_item_chapters(self) -> list[Chapter]:
+        """B站等来源的章节随 PlayItem 下发,优先于 mpv 内嵌章节。"""
+        item = self._current_play_item()
+        entries = item.chapters if item is not None else []
+        if not entries:
+            return []
+        chapters: list[Chapter] = []
+        ordered = sorted(entries, key=lambda chapter: chapter.start_seconds)
+        for index, entry in enumerate(ordered):
+            title = entry.title.strip()
+            chapters.append(
+                Chapter(
+                    index=index,
+                    title=title,
+                    start_seconds=max(0.0, entry.start_seconds),
+                    label=title or f"章节 {index + 1}",
+                )
+            )
+        return chapters
 
     def _restore_main_splitter_state(self) -> None:
         if self.config is None or not self.config.player_main_splitter_state:

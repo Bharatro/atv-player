@@ -3,6 +3,7 @@ from atv_player.models import (
     CategoryFilter,
     CategoryFilterOption,
     DoubanCategory,
+    PlayChapter,
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailField,
@@ -553,3 +554,38 @@ def test_load_playback_item_raises_when_vod_id_missing() -> None:
         assert str(exc) == "缺少 B站 播放 ID"
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_load_playback_item_parses_chapters_from_payload() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": "http://127.0.0.1:2323/dash/demo.mpd",
+        "header": {"Referer": "https://www.bilibili.com"},
+        "chapters": [
+            {"from": 522, "to": 1039, "title": "第二集"},
+            {"from": 0, "to": 37, "title": " 片头 "},
+            {"from": "bad"},
+            {"title": "无起点"},
+            "junk",
+            {"from": 999, "to": 1200, "title": "  "},
+        ],
+    }
+    controller = BilibiliController(api)
+    item = PlayItem(title="视频", url="", vod_id="BV195KY6YEeY")
+
+    controller.load_playback_item(item)
+
+    assert item.chapters == [
+        PlayChapter(title="片头", start_seconds=0.0, end_seconds=37.0),
+        PlayChapter(title="第二集", start_seconds=522.0, end_seconds=1039.0),
+    ]
+
+
+def test_load_playback_item_without_chapters_key_keeps_empty_list() -> None:
+    api = FakeApiClient()
+    controller = BilibiliController(api)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD")
+
+    controller.load_playback_item(item)
+
+    assert item.chapters == []

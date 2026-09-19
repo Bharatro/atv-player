@@ -22,6 +22,7 @@ from atv_player.models import (
     HistoryRecord,
     PlaybackSource,
     PlaybackSourceGroup,
+    PlayChapter,
     PlayItem,
     PlaybackDetailAction,
     PlaybackDetailFieldAction,
@@ -13722,6 +13723,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "音频延迟",
         "画面调节",
         "着色器",
+        "章节",
         "弹幕配置",
         "刮削",
         "重写剧集标题",
@@ -14611,6 +14613,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "音频延迟",
         "画面调节",
         "着色器",
+        "章节",
         "弹幕配置",
         "刮削",
         "重写剧集标题",
@@ -26703,6 +26706,78 @@ def test_player_window_progress_tooltip_without_leading_chapter(qtbot) -> None:
 
     assert window._format_progress_tooltip(10) == "00:10"
     assert window._format_progress_tooltip(200) == "03:20 · 正片"
+
+
+def test_player_window_prefers_play_item_chapters_over_video_chapters(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="BV195KY6YEeY", vod_name="归墟"),
+        playlist=[
+            PlayItem(
+                title="归墟 1-9",
+                url="http://m/1.m3u8",
+                chapters=[
+                    PlayChapter(title="第五集", start_seconds=2075.0, end_seconds=2550.0),
+                    PlayChapter(title="片头", start_seconds=0.0, end_seconds=37.0),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+    )
+    window.current_index = 0
+    video_chapters = [Chapter(index=0, title="mpv章", start_seconds=50.0, label="mpv章")]
+    window.video = type("Video", (), {"chapters": lambda _self: video_chapters})()
+
+    window._refresh_chapter_markers()
+
+    assert [chapter.label for chapter in window._current_chapters] == ["片头", "第五集"]
+    assert window.progress._chapter_positions == [0.0, 2075.0]
+
+    # 无外部章节时回落到 mpv 内嵌章节
+    window.session.playlist[0].chapters = []
+    window._refresh_chapter_markers()
+
+    assert [chapter.label for chapter in window._current_chapters] == ["mpv章"]
+    assert window.progress._chapter_positions == [50.0]
+
+
+def test_player_window_chapter_menu_lists_and_seeks_chapters(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window._current_chapters = [
+        Chapter(index=0, title="片头", start_seconds=0.0, label="片头"),
+        Chapter(index=1, title="正片", start_seconds=92.0, label="正片"),
+    ]
+    window.video = type("Video", (), {"position_seconds": lambda _self: 120})()
+    seeks: list[int] = []
+    monkeypatch.setattr(window, "_seek_to_position", seeks.append)
+
+    menu = window._build_chapter_menu(window)
+
+    assert [action.text() for action in menu.actions()] == ["00:00  片头", "01:32  正片"]
+    assert [action.isChecked() for action in menu.actions()] == [False, True]
+
+    menu.actions()[0].trigger()
+
+    assert seeks == [0]
+
+
+def test_player_window_chapter_menu_disabled_without_chapters(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+    window._current_chapters = []
+
+    menu = window._build_chapter_menu(window)
+
+    assert not menu.isEnabled()
+    assert menu.actions() == []
 
 
 def test_sync_progress_slider_handles_missing_cache_method(qtbot) -> None:
