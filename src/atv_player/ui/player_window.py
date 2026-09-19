@@ -3752,8 +3752,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not (0 <= self.current_index < len(self.session.playlist)):
             return
         current_item = self.session.playlist[self.current_index]
+        runner = self.session.detail_field_runner
+        # 站内跳转(分类/搜索/详情)先退出播放回到主窗口,避免主窗口在播放器仍开着时弹出
+        self._return_to_main()
         try:
-            self.session.detail_field_runner(current_item, action)
+            runner(current_item, action)
         except Exception as exc:
             self._append_log(f"详情跳转失败[{action.type}]: {exc}")
 
@@ -3879,9 +3882,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if action is None:
                 parts.append(html.escape(match.group(0)).replace("\n", "<br>"))
             else:
-                href = html.escape(self._metadata_action_url(action).toString())
-                label = html.escape(match.group("label"))
-                parts.append(f'<a href="{href}">{label}</a>')
+                # 与 BVID 等外部链接同款样式(accent 色/加粗/无下划线)
+                href = self._metadata_action_url(action).toString()
+                parts.append(external_link_html(href, match.group("label")))
             start = match.end()
 
         tail = text[start:]

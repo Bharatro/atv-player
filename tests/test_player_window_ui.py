@@ -10201,6 +10201,8 @@ def test_player_window_renders_bilibili_cr_link_inside_metadata_value(qtbot) -> 
     assert "action_target=bilibili" in html
     assert "action_type=category" in html
     assert "action_value=up:378885845" in html
+    # 与 BVID 等外部链接同款样式(QTextBrowser.toHtml 会归一化,保留加粗与主题色)
+    assert "font-weight:600" in html
 
 
 def test_player_window_renders_multiple_cr_links_with_plain_separators(qtbot) -> None:
@@ -10279,6 +10281,30 @@ def test_player_window_metadata_link_dispatches_action_target(qtbot) -> None:
     assert clicked == [
         PlaybackDetailFieldAction(target="bilibili", type="category", value="up:378885845")
     ]
+
+
+def test_player_window_detail_field_action_returns_to_main_before_running(qtbot, monkeypatch) -> None:
+    """站内跳转(如导演→UP主视频列表)须先退出播放回到主窗口,避免主窗口在播放器仍开着时弹出。"""
+    events: list[str] = []
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_field_runner=lambda _item, action: events.append(f"run:{action.value}"),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_return_to_main", lambda: events.append("return_to_main"))
+
+    window.open_session(session)
+
+    window._run_detail_field_action(
+        PlaybackDetailFieldAction(target="bilibili", type="category", value="up:378885845")
+    )
+
+    assert events == ["return_to_main", "run:up:378885845"]
 
 
 def test_player_window_renders_external_metadata_links_for_known_ids(qtbot) -> None:
