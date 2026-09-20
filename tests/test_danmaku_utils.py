@@ -24,6 +24,7 @@ from atv_player.danmaku.utils import (
     normalize_name,
     should_filter_name,
     strip_episode_suffix,
+    strip_season_suffix,
     strip_variety_issue_suffix,
 )
 from atv_player.models import (
@@ -582,3 +583,27 @@ def test_is_stale_other_fallback_result_flags_foreign_reg_src_entries() -> None:
     # 候选 URL 与当前 reg_src 一致 → 自洽条目，保留。
     assert is_stale_other_fallback_result(poisoned, "https://pan.baidu.com/s/1demo?pwd=9527") is False
     assert is_stale_other_fallback_result(_source_search_result("tencent", "https://v.qq.com/x/1"), "") is False
+
+
+def test_strip_season_suffix_strips_netdisk_season_markers() -> None:
+    # 网盘资源名自造的季名后缀(实测:凡人修仙传 年番4 → B站单条目《凡人修仙传》)
+    assert strip_season_suffix("凡人修仙传 年番4") == "凡人修仙传"
+    assert strip_season_suffix("凡人修仙传年番4") == "凡人修仙传"
+    assert strip_season_suffix("凡人修仙传 第4季") == "凡人修仙传"
+    assert strip_season_suffix("凡人修仙传 第二季") == "凡人修仙传"
+    assert strip_season_suffix("斗罗大陆 第二部") == "斗罗大陆"
+    assert strip_season_suffix("Show S02") == "Show"
+    assert strip_season_suffix("Show Season 2") == "Show"
+    assert strip_season_suffix("凡人修仙传 - 第三季") == "凡人修仙传"
+    # 叠双层季名也能剥干净
+    assert strip_season_suffix("凡人修仙传 第2季 年番3") == "凡人修仙传"
+
+
+def test_strip_season_suffix_keeps_real_title_suffixes() -> None:
+    # 裸"年番"可以是真实站点条目名,必须带序号才剥
+    assert strip_season_suffix("斗罗大陆 年番") == "斗罗大陆 年番"
+    # 季名后缀不在尾部不剥;普通标题、电影第2部连写不误伤
+    assert strip_season_suffix("第2季 精修版") == "第2季 精修版"
+    assert strip_season_suffix("凡人修仙传") == "凡人修仙传"
+    assert strip_season_suffix("流浪地球2") == "流浪地球2"
+    assert strip_season_suffix("") == ""

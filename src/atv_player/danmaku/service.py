@@ -676,6 +676,9 @@ class DanmakuService:
         for batch in iter_bounded_settled(
             provider_keys,
             lambda key: (key, self._providers[key].search(query_name, original_name=original_name)),
+            # 搜索轮次的耗时应由最慢单个源决定:批并发 4 时 12 源要排 3 批,
+            # 空结果轮次最坏 3×10s 超时,0 结果兜底链会被拖到半分钟。
+            max_workers=max(1, len(provider_keys)),
         ):
             for settled in batch:
                 if settled.error is not None:

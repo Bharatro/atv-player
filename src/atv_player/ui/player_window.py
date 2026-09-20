@@ -6523,7 +6523,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     self._configure_danmaku_for_current_item()
             return
         current_item = self.session.playlist[self.current_index]
-        self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
         if self._should_delay_ytdlp_metadata_hydration(current_item):
             self._schedule_ytdlp_metadata_hydration(
                 expected_item=current_item,
@@ -6546,6 +6545,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 start_position_seconds=pending_loader.start_position_seconds,
                 pause=resume_pause,
             ):
+                # 弹幕任务必须晚于播放地址预处理入队:两者共用单线程控制器队列
+                # (先进先出),弹幕排前面时慢搜索会把出画卡在自己后面。
+                self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
                 return
             self._start_current_item_playback(
                 start_position_seconds=pending_loader.start_position_seconds,
@@ -6554,6 +6556,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         except Exception as exc:
             self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: {exc}")
+            return
+        self._maybe_restore_cached_danmaku_for_current_item(allow_with_playback_loader=True)
 
     def _handle_playback_loader_failed(self, request_id: int, message: str) -> None:
         if request_id != self._playback_loader_request_id:
@@ -8998,6 +9002,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _should_retry_danmaku_load(self, exc: Exception) -> bool:
         if self._danmaku_retry_attempts >= 3:
             return False
+        if "播放器未返回弹幕轨道" in str(exc):
+            # 弹幕后台任务完成后 mpv 可能尚未完成 loadfile:轮询等轨道出现,
+            # 而不是直接判失败(拉序后弹幕会先于出画就绪)。
+            return True
         return self._is_mpv_command_error(exc)
 
     def _is_mpv_command_error(self, exc: Exception) -> bool:

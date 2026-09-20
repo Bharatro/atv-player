@@ -31,6 +31,7 @@ from atv_player.danmaku.utils import (
     is_other_fallback_only_result,
     is_stale_other_fallback_result,
     is_variety_collection,
+    strip_season_suffix,
 )
 from atv_player.models import PlayItem
 
@@ -228,6 +229,42 @@ class GenericDanmakuController:
             media_duration_seconds=media_duration_seconds,
         )
 
+    def _fallback_search_queries(
+        self,
+        item: PlayItem,
+        primary_query: str,
+        provider_filter: str = "",
+    ) -> list[str]:
+        """0 结果后的降级查询序列:季名剥除标题(+集数)→ 剥除标题 → 纯标题。
+
+        网盘资源名自带的"年番N/第N季"后缀在弹幕库往往没有同名条目,整季 0
+        结果;先试剥掉季名并保留集数锚点,再退到纯标题。按源过滤(用户定向
+        搜索)或手动指定过与自动组合不同的查询时不降级,尊重显式意图。
+        """
+        if provider_filter:
+            return []
+        title = item.danmaku_search_title.strip()
+        episode = item.danmaku_search_episode.strip()
+        if not title:
+            return []
+        if item.danmaku_search_query_overridden and item.danmaku_search_query.strip() != _compose_danmaku_search_query(
+            title, episode
+        ):
+            return []
+        stripped_title = strip_season_suffix(title)
+        candidates: list[str] = []
+        if stripped_title and stripped_title != title:
+            if episode:
+                candidates.append(_compose_danmaku_search_query(stripped_title, episode))
+            candidates.append(stripped_title)
+        if episode:
+            candidates.append(title)
+        queries: list[str] = []
+        for candidate in candidates:
+            if candidate and candidate != primary_query and candidate not in queries:
+                queries.append(candidate)
+        return queries
+
     def _search_sources(
         self,
         query_name: str,
@@ -331,25 +368,23 @@ class GenericDanmakuController:
             media_duration_seconds=media_duration_seconds,
             provider_filter=provider_filter,
         )
-        if (
-            not result.groups
-            and item.danmaku_search_episode.strip()
-            and item.danmaku_search_title.strip()
-            and query_name == _compose_danmaku_search_query(item.danmaku_search_title, item.danmaku_search_episode)
-        ):
-            self._log_danmaku_event("弹幕搜索中", detail=item.danmaku_search_title.strip())
-            result = self._search_sources(
-                item.danmaku_search_title.strip(),
-                reg_src,
-                media_duration_seconds=media_duration_seconds,
-                provider_filter=provider_filter,
-            )
-            result = self._rerank_source_search_result(
-                result,
+        for fallback_query in self._fallback_search_queries(item, query_name, provider_filter):
+            if result.groups:
+                break
+            self._log_danmaku_event("弹幕搜索中", detail=fallback_query)
+            fallback_result = self._rerank_source_search_result(
+                self._search_sources(
+                    fallback_query,
+                    reg_src,
+                    media_duration_seconds=media_duration_seconds,
+                    provider_filter=provider_filter,
+                ),
                 query_name=query_name,
                 reg_src=reg_src,
                 media_duration_seconds=media_duration_seconds,
             )
+            if fallback_result.groups:
+                result = fallback_result
         if not provider_filter and not is_other_fallback_only_result(result):
             self._save_source_search_result(query_name, reg_src, result)
         self._apply_source_search_result(item, result)

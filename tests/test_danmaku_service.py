@@ -275,7 +275,7 @@ def test_create_default_danmaku_service_can_disable_renren_provider() -> None:
     assert "renren" not in service.provider_order
 
 
-def test_search_danmu_searches_providers_with_max_concurrency_of_four() -> None:
+def test_search_danmu_runs_all_providers_in_one_concurrent_round() -> None:
     state = {"active": 0, "max_active": 0}
     lock = threading.Lock()
     providers = {}
@@ -294,7 +294,9 @@ def test_search_danmu_searches_providers_with_max_concurrency_of_four() -> None:
     results = service.search_danmu("剑来")
 
     assert len(results) == 5
-    assert state["max_active"] == 4
+    # 搜索面向不同源站点,单轮并发上限=源数:批 4 会把 12 源排成 3 批,
+    # 空结果轮最坏 3×10s 超时,0 结果兜底链被拖到半分钟。
+    assert state["max_active"] == len(providers)
 
 
 def test_search_danmu_sources_groups_results_by_provider_and_marks_default() -> None:
@@ -2083,3 +2085,29 @@ def test_service_applies_persisted_danmaku_cleaning_in_order() -> None:
     assert xml.count(">duplicate</d>") == 2
     assert 'p="2.0,1,' in xml
     assert 'p="70.0,1,' in xml
+
+
+def test_search_danmu_queries_all_providers_in_one_concurrent_round(monkeypatch) -> None:
+    # 12 源在批并发 4 下要排 3 批,空结果轮次最坏 3×10s 超时;搜索轮的并发
+    # 上限应等于源数量,让单轮耗时只由最慢单源决定。
+    import atv_player.danmaku.service as service_module
+
+    providers = {
+        key: FakeProvider(key, [], [])
+        for key in ("tencent", "youku", "iqiyi", "mgtv", "bilibili", "sohu")
+    }
+    service = DanmakuService(providers, provider_order=list(providers))
+
+    observed_max_workers: list[int] = []
+    real_iter_bounded_settled = service_module.iter_bounded_settled
+
+    def recording_iter_bounded_settled(items, worker, **kwargs):
+        observed_max_workers.append(int(kwargs.get("max_workers", 0)))
+        yield from real_iter_bounded_settled(items, worker, **kwargs)
+
+    monkeypatch.setattr(service_module, "iter_bounded_settled", recording_iter_bounded_settled)
+
+    results = service.search_danmu("冷门剧 1集")
+
+    assert results == []
+    assert observed_max_workers == [len(providers)]

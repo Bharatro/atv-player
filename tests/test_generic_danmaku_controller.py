@@ -623,3 +623,136 @@ def test_generic_danmaku_controller_rejects_stale_other_fallback_cache(monkeypat
 
     # 历史污染缓存（other 候选指向别的 reg_src）被拒用，回退到新搜索。
     assert service.search_calls == ["冷门剧 1集", "冷门剧"]
+
+
+def _season_ladder_monkeypatch(monkeypatch) -> None:
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_source_search_result", lambda *_args: None)
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", lambda *_args: "")
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", lambda *_args: None)
+
+
+def _make_season_suffixed_item() -> PlayItem:
+    item = PlayItem(
+        title="第177集 慕兰之战01",
+        url="https://media.example/177.mp4",
+        vod_id="drive-episode-177",
+        media_title="凡人修仙传 年番4",
+        index=176,
+    )
+    item.danmaku_search_episode = "177集"
+    return item
+
+
+def test_generic_danmaku_controller_falls_back_to_season_stripped_query(monkeypatch) -> None:
+    class SeasonSuffixService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.search_calls.append(name)
+            if name != "凡人修仙传 177集":
+                return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="bilibili",
+                        provider_label="B站",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="bilibili",
+                                name="《凡人修仙传》第177话 慕兰之战01",
+                                url="https://www.bilibili.com/bangumi/play/ep177",
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://www.bilibili.com/bangumi/play/ep177",
+                default_provider="bilibili",
+            )
+
+    _season_ladder_monkeypatch(monkeypatch)
+    controller = GenericDanmakuController(SeasonSuffixService())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = _make_season_suffixed_item()
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    # 网盘季名"年番4"整季 0 结果 → 剥季名保集数锚点重搜,命中 B站连续集数条目。
+    assert controller._danmaku_service.search_calls == [
+        "凡人修仙传 年番4 177集",
+        "凡人修仙传 177集",
+    ]
+    assert logs == [
+        "弹幕搜索中: 凡人修仙传 年番4 177集",
+        "弹幕搜索中: 凡人修仙传 177集",
+        "弹幕搜索成功: 找到 1 个候选",
+    ]
+    assert item.selected_danmaku_url == "https://www.bilibili.com/bangumi/play/ep177"
+    assert item.selected_danmaku_provider == "bilibili"
+
+
+def test_generic_danmaku_controller_season_ladder_exhausts_to_suffixed_title(monkeypatch) -> None:
+    class EmptyResultService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    _season_ladder_monkeypatch(monkeypatch)
+    controller = GenericDanmakuController(EmptyResultService())
+    logs: list[str] = []
+    controller.set_danmaku_log_handler(logs.append)
+    item = _make_season_suffixed_item()
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    # 全链降级:剥季名+集数 → 剥季名 → 纯标题,耗尽后仍如实报 0 候选。
+    assert controller._danmaku_service.search_calls == [
+        "凡人修仙传 年番4 177集",
+        "凡人修仙传 177集",
+        "凡人修仙传",
+        "凡人修仙传 年番4",
+    ]
+    assert logs[-1] == "弹幕搜索成功: 找到 0 个候选"
+    assert item.danmaku_candidates == []
+
+
+def test_generic_danmaku_controller_respects_user_query_override_without_ladder(monkeypatch) -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    _season_ladder_monkeypatch(monkeypatch)
+    controller = GenericDanmakuController(RecordingService())
+    item = _make_season_suffixed_item()
+
+    controller.refresh_danmaku_sources(item, query_override="自定义 查询", playlist=[item], force_refresh=True)
+
+    # 手动指定的查询是显式意图:0 结果也不悄悄换词重搜。
+    assert controller._danmaku_service.search_calls == ["自定义 查询"]

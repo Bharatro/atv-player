@@ -27516,3 +27516,64 @@ def test_player_window_syncs_play_button_from_mpv_pause_state(qtbot) -> None:
 
     window.video_widget.pause_state_changed.emit(False)
     assert window.is_playing is True
+
+
+@pytest.mark.parametrize(
+    ("prepare_succeeds", "expected_order"),
+    [
+        (True, ["prepare", "restore-danmaku"]),
+        (False, ["prepare", "start-playback", "restore-danmaku"]),
+    ],
+)
+def test_player_window_enqueues_danmaku_restore_after_playback_prepare(
+    qtbot,
+    monkeypatch,
+    prepare_succeeds: bool,
+    expected_order: list[str],
+) -> None:
+    # 弹幕自动搜索与播放地址预处理共用单线程控制器队列(先进先出):
+    # 弹幕先入队时慢搜索会把出画卡在队列后面(实测 33s 弹幕搜索顶住直链解析)。
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=1)
+    window.current_index = 1
+    window._playback_loader_request_id = 9
+    window._pending_playback_loader = player_window_module._PendingPlaybackLoader(
+        index=1,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        window,
+        "_start_playback_prepare",
+        lambda **_kwargs: calls.append("prepare") or prepare_succeeds,
+    )
+    monkeypatch.setattr(
+        window,
+        "_start_current_item_playback",
+        lambda **_kwargs: calls.append("start-playback"),
+    )
+    monkeypatch.setattr(
+        window,
+        "_maybe_restore_cached_danmaku_for_current_item",
+        lambda **_kwargs: calls.append("restore-danmaku"),
+    )
+
+    window._handle_playback_loader_succeeded(window._playback_loader_request_id, None)
+
+    assert calls == expected_order
+
+
+def test_player_window_retries_danmaku_attach_while_player_track_pending(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window._should_retry_danmaku_load(RuntimeError("播放器未返回弹幕轨道")) is True
+    assert window._should_retry_danmaku_load(RuntimeError("Error running mpv command sub-add")) is True
+    assert window._should_retry_danmaku_load(RuntimeError("弹幕渲染失败")) is False
+
+    window._danmaku_retry_attempts = 3
+    assert window._should_retry_danmaku_load(RuntimeError("播放器未返回弹幕轨道")) is False

@@ -498,6 +498,31 @@ def strip_episode_suffix(name: str) -> str:
             return value
 
 
+_SEASON_SUFFIX_PATTERN = re.compile(
+    r"(?:\s*[-—:：]\s*)?"
+    r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*[季部]|season\s*\d+|s\d+|年番\s*[0-9零一二两三四五六七八九十百]+)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_season_suffix(name: str) -> str:
+    """剥掉标题尾部的季名后缀("凡人修仙传 年番4"→"凡人修仙传")。
+
+    网盘资源名常自造"年番N/第N季/S2"季名,而弹幕库站点多为连续集数的单条目,
+    带这种后缀整季搜不到。只匹配尾部且"年番"必须带序号(裸"年番"本身可以是
+    站点条目名),避免误剥真实标题。
+    """
+    value = normalize_name(name)
+    if not value:
+        return ""
+    while True:
+        stripped = _SEASON_SUFFIX_PATTERN.sub("", value).strip()
+        if not stripped or stripped == value:
+            return value
+        value = stripped
+
+
 def _extract_variety_date_key(name: str) -> str | None:
     value = normalize_name(name)
     match = re.search(
