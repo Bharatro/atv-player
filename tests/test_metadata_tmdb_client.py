@@ -31,6 +31,7 @@ def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["query"] = dict(request.url.params)
+        seen["api_key_header"] = request.headers.get("X-TMDB-API-Key")
         if request.url.path == "/3/search/movie":
             return httpx.Response(200, json={"results": [{"id": 1, "title": "深空彼岸"}]})
         raise AssertionError(request.url.path)
@@ -47,6 +48,7 @@ def test_tmdb_client_search_movie_sends_api_key_language_and_year() -> None:
         "query": "深空彼岸",
         "year": "2026",
     }
+    assert seen["api_key_header"] == "tmdb-key"
 
 
 def test_tmdb_client_uses_proxy_base_url_for_api_and_images_without_local_api_key() -> None:
@@ -55,6 +57,7 @@ def test_tmdb_client_uses_proxy_base_url_for_api_and_images_without_local_api_ke
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         assert "api_key" not in request.url.params
+        assert request.headers.get("X-TMDB-API-Key") is None
         if request.url.path == "/3/configuration":
             return httpx.Response(
                 200,

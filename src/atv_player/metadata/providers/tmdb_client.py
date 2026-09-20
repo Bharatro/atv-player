@@ -5,7 +5,12 @@ from typing import Any
 
 import httpx
 
-from atv_player.metadata.tmdb_pool import OFFICIAL_API_BASE, OFFICIAL_IMAGE_BASE, build_mirror_pool
+from atv_player.metadata.tmdb_pool import (
+    OFFICIAL_API_BASE,
+    OFFICIAL_IMAGE_BASE,
+    build_mirror_pool,
+    tmdb_auth_headers,
+)
 from atv_player.network_proxy import ProxyDecider, build_httpx_kwargs_for_url
 
 
@@ -39,7 +44,7 @@ class TMDBClient:
             query["api_key"] = self._api_key
         query.update({key: value for key, value in params.items() if value not in ("", None)})
         api_base = f"{self._mirror_pool.next_api_base()}/3"
-        response = self._client.get(f"{api_base}{path}", params=query)
+        response = self._client.get(f"{api_base}{path}", params=query, headers=tmdb_auth_headers(self._api_key))
         response.raise_for_status()
         return dict(response.json())
 

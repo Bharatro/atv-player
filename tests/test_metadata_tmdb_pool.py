@@ -6,6 +6,7 @@ from atv_player.metadata.tmdb_pool import (
     canonicalize_mirror_value,
     normalize_mirror_host,
     parse_mirror_pool,
+    tmdb_auth_headers,
 )
 
 
@@ -78,3 +79,9 @@ def test_empty_pool_falls_back_to_official() -> None:
     assert not pool
     assert pool.next_api_base() == OFFICIAL_API_BASE
     assert pool.next_image_base() is None
+
+
+def test_tmdb_auth_headers_carries_key_and_drops_empty() -> None:
+    assert tmdb_auth_headers(" tmdb-key ") == {"X-TMDB-API-Key": "tmdb-key"}
+    assert tmdb_auth_headers("") == {}
+    assert tmdb_auth_headers(None) == {}

@@ -50,6 +50,7 @@ def test_global_catalog_tmdb_anime_maps_discover_results_to_vod_items() -> None:
         requests.append(request)
         assert request.url.path == "/3/discover/tv"
         assert request.url.params["api_key"] == "tmdb-key"
+        assert request.headers.get("X-TMDB-API-Key") == "tmdb-key"
         assert request.url.params["with_genres"] == "16"
         return httpx.Response(
             200,
@@ -92,6 +93,7 @@ def test_global_catalog_service_uses_tmdb_proxy_base_for_api_and_images() -> Non
         seen_urls.append(str(request.url))
         assert request.url.path == "/3/movie/popular"
         assert "api_key" not in request.url.params
+        assert request.headers.get("X-TMDB-API-Key") is None
         return httpx.Response(
             200,
             json={

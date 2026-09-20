@@ -41,6 +41,7 @@ from atv_player.metadata.tmdb_pool import (
     BUILTIN_WORKER_POOL,
     WORKER_POOL_VALUE,
     canonicalize_mirror_value,
+    tmdb_auth_headers,
 )
 from atv_player.models import AppConfig
 from atv_player.network_proxy import ProxyConfig, ProxyDecider, ProxyRuleError
@@ -1115,6 +1116,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             response = httpx.get(
                 f"{speed_base_url.rstrip('/')}/3/configuration",
                 params=params,
+                headers=tmdb_auth_headers(api_key),
                 timeout=5.0,
             )
             elapsed_ms = max(0, round((time.perf_counter() - started_at) * 1000))

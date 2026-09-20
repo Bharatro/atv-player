@@ -20,6 +20,14 @@ from urllib.parse import urlparse, urlunparse
 WORKER_POOL_VALUE = "worker-pool"
 OFFICIAL_API_BASE = "https://api.themoviedb.org"
 OFFICIAL_IMAGE_BASE = "https://image.tmdb.org/t/p/"
+TMDB_API_KEY_HEADER = "X-TMDB-API-Key"
+
+
+def tmdb_auth_headers(api_key: object) -> dict[str, str]:
+    """API 请求携带 key 的请求头:新式 Worker 只认 ``X-TMDB-API-Key`` 头,仅 query 传 key 返回 401;
+    官方与老式 Worker 对多余头部无感。与 query ``api_key`` 同时发送以兼容全池。"""
+    key = str(api_key or "").strip()
+    return {TMDB_API_KEY_HEADER: key} if key else {}
 
 #: 内置 Worker 轮询池(免费额度分摊);构造时洗牌,此处书写顺序无关紧要。
 BUILTIN_WORKER_POOL: tuple[str, ...] = (
