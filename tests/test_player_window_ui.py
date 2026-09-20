@@ -10626,6 +10626,76 @@ def test_player_window_renders_plain_multi_value_detail_fields_inside_metadata(q
     assert "标签: 动作 / 冒险" in window.metadata_view.toPlainText()
 
 
+def test_player_window_renders_detail_action_state_icons(qtbot) -> None:
+    """点赞/投币/收藏状态经 SVG 图标呈现(filled+高亮=已操作),不依赖跨平台不一致的 emoji。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="bv-1", vod_name="归墟"),
+        playlist=[
+            PlayItem(
+                title="归墟",
+                url="http://m/1.m3u8",
+                detail_actions=[
+                    PlaybackDetailAction(id="like", label="已点赞", active=True, icon="like"),
+                    PlaybackDetailAction(id="coin", label="投币", icon="coin"),
+                    PlaybackDetailAction(id="other", label="无图标"),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    liked_button = window.detail_actions_layout.itemAt(0).widget()
+    coin_button = window.detail_actions_layout.itemAt(1).widget()
+    plain_button = window.detail_actions_layout.itemAt(2).widget()
+    assert liked_button.property("icon_name") == "like-filled.svg"
+    assert not liked_button.icon().isNull()
+    assert coin_button.property("icon_name") == "coin.svg"
+    assert not coin_button.icon().isNull()
+    assert plain_button.property("icon_name") is None
+
+
+def test_player_window_disabled_detail_action_keeps_state_icon_color(qtbot) -> None:
+    """投满 2 枚后按钮禁用,Qt 默认派生灰色 Disabled 图标 —— 状态色(红)必须在禁用态保留。"""
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QIcon
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="bv-1", vod_name="归墟"),
+        playlist=[
+            PlayItem(
+                title="归墟",
+                url="http://m/1.m3u8",
+                detail_actions=[
+                    PlaybackDetailAction(id="coin", label="已投币×2", active=True, enabled=False, icon="coin"),
+                ],
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    button = window.detail_actions_layout.itemAt(0).widget()
+    assert button.isEnabled() is False
+    image = button.icon().pixmap(QSize(16, 16), QIcon.Mode.Disabled).toImage()
+    opaque = [image.pixelColor(x, y) for y in range(image.height()) for x in range(image.width()) if image.pixelColor(x, y).alpha() > 0]
+    assert opaque, "禁用态图标不应为空"
+    red_pixels = [c for c in opaque if c.red() > 180 and c.green() < 110 and c.blue() < 110]
+    assert red_pixels, "禁用态图标应保持红色(filled+active),而不是 Qt 默认灰化"
+
+
 def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -10656,6 +10726,24 @@ def test_player_window_renders_current_item_detail_actions_in_order(qtbot) -> No
     ]
     assert window.detail_actions_layout.itemAt(0).widget().toolTip() == "已收藏"
     assert window.detail_actions_layout.itemAt(1).widget().isEnabled() is False
+
+
+def test_player_window_hides_local_favorite_buttons_for_bilibili_session(qtbot) -> None:
+    """B站会话的点赞/投币/收藏由后端 detail_actions 承担,本地追更/收藏按钮让位。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    window.open_session(make_bilibili_grouped_session())
+
+    assert window.favorite_button.isHidden()
+    assert window.following_button.isHidden()
+
+    session = make_player_session(start_index=0)
+    window.open_session(session)
+
+    assert not window.favorite_button.isHidden()
+    assert not window.following_button.isHidden()
 
 
 def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:

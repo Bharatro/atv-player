@@ -3571,14 +3571,45 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             button.setCheckable(True)
             button.setChecked(action.active)
             button.setProperty("detail_action_base_enabled", action.enabled)
+            self._apply_detail_action_icon(button, action)
             button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
             self.detail_actions_layout.addWidget(button)
+
+    def _apply_detail_action_icon(self, button: QPushButton, action: PlaybackDetailAction) -> None:
+        """按 active 切换 filled/outline 图标(emoji 跨平台渲染不一致,统一走 SVG 资产 + 主题染色)。"""
+        icon_name = action.icon.strip()
+        if not icon_name:
+            return
+        file_name = f"{icon_name}-filled.svg" if action.active else f"{icon_name}.svg"
+        path = self._icons_dir / file_name
+        if not path.exists():
+            return
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        color = self._FAVORITE_ACTIVE_ICON_COLOR if action.active else tokens.text_secondary
+        button.setProperty("icon_name", file_name)
+        button.setIcon(self._stateful_action_icon(path, color))
+        button.setIconSize(QSize(16, 16))
+
+    def _stateful_action_icon(self, path, color: str) -> QIcon:
+        """投满上限等场景按钮禁用,Qt 会自动派生灰色 Disabled 图标 —— 显式注册各模式同色 pixmap 保持状态色。"""
+        tinted = tint_icon(load_icon(path), color, size=16)
+        pixmap = tinted.pixmap(QSize(16, 16))
+        icon = QIcon()
+        for mode in (QIcon.Mode.Normal, QIcon.Mode.Active, QIcon.Mode.Disabled, QIcon.Mode.Selected):
+            icon.addPixmap(pixmap, mode, QIcon.State.Off)
+            icon.addPixmap(pixmap, mode, QIcon.State.On)
+        return icon
+
+    def _hides_local_favorite_buttons(self) -> bool:
+        """B站会话的点赞/投币/收藏走后端 detail_actions(B站账号),本地追更/收藏按钮让位。"""
+        session = self.session
+        return session is not None and str(getattr(session, "source_kind", "") or "") == "bilibili"
 
     def _refresh_favorite_button(self) -> None:
         item = self._current_play_item()
         active = item is not None and self._favorite_is_active(item)
         tooltip = "取消收藏" if active else "加入收藏"
-        self.favorite_button.setHidden(item is None)
+        self.favorite_button.setHidden(item is None or self._hides_local_favorite_buttons())
         self.favorite_button.setToolTip(tooltip)
         self.favorite_button.setAccessibleName(tooltip)
         self.favorite_button.setProperty("favorite_active", active)
@@ -3588,7 +3619,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         item = self._current_play_item()
         active = item is not None and self._following_is_active(item)
         tooltip = "取消追更" if active else "加入追更"
-        self.following_button.setHidden(item is None)
+        self.following_button.setHidden(item is None or self._hides_local_favorite_buttons())
         self.following_button.setToolTip(tooltip)
         self.following_button.setAccessibleName(tooltip)
         self.following_button.setProperty("following_active", active)

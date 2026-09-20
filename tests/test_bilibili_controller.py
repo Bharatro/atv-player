@@ -589,3 +589,34 @@ def test_load_playback_item_without_chapters_key_keeps_empty_list() -> None:
     controller.load_playback_item(item)
 
     assert item.chapters == []
+
+
+def test_build_request_detail_action_runner_uses_current_item_vod_id() -> None:
+    """相关/UP 主播放组逐条播放时,点赞/投币/收藏必须作用于当前播放条目而非打开时的视频。"""
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [{"vod_id": "BV1xx411c7mD", "vod_name": "孤独摇滚", "vod_play_url": "第1话$BV1xx411c7mD"}]
+    }
+    controller = BilibiliController(api)
+    request = controller.build_request("BV1xx411c7mD")
+    related = PlayItem(title="相关视频", url="http://b/2.mp4", vod_id="111-222")
+
+    request.detail_action_runner(related, "like")
+
+    assert api.detail_action_calls == [("111-222", "like")]
+
+
+def test_map_detail_actions_parses_icon_field() -> None:
+    from atv_player.controllers.bilibili_controller import _map_detail_actions
+
+    actions = _map_detail_actions(
+        [
+            {"id": "like", "label": "已点赞", "active": True, "icon": "like"},
+            {"id": "coin", "label": "投币", "icon": 123},
+            {"id": "favorite", "label": "收藏"},
+        ]
+    )
+
+    assert actions[0].icon == "like"
+    assert actions[1].icon == "123"
+    assert actions[2].icon == ""

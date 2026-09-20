@@ -115,6 +115,7 @@ def _map_detail_actions(payload: object) -> list[PlaybackDetailAction]:
                 active=bool(raw_action.get("active")),
                 enabled=bool(raw_action.get("enabled", True)),
                 tooltip=str(raw_action.get("tooltip") or "").strip(),
+                icon=str(raw_action.get("icon") or "").strip(),
             )
         )
     return actions
@@ -416,8 +417,8 @@ class BilibiliController:
             detail_resolver=self.resolve_playlist_item,
             playback_loader=self.load_playback_item,
             async_playback_loader=True,
-            detail_action_runner=lambda _item, action_id, source_vod_id=detail.vod_id: self._run_detail_action(
-                source_vod_id,
+            detail_action_runner=lambda item, action_id, source_vod_id=detail.vod_id: self._run_detail_action(
+                str(getattr(item, "vod_id", "") or source_vod_id),
                 action_id,
             ),
             playback_history_loader=history_loader,

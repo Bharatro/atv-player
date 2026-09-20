@@ -168,6 +168,7 @@ class PlaybackDetailAction:
     enabled: bool = True
     visible: bool = True
     tooltip: str = ""
+    icon: str = ""
 
 
 @dataclass(slots=True)
