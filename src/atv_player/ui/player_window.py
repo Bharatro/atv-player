@@ -76,6 +76,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.chapter_skip import (
+    SkipChapter,
+    intro_skip_target,
+    normalize_chapters,
+    outro_skip_target,
+)
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_episode_number
@@ -1222,6 +1228,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._intro_skip_skipped_seconds = 0
         self._observed_media_duration_seconds = 0
         self._current_chapters: list[Chapter] = []
+        # 章节片尾已触发过跳章(非末章跳彩蛋场景)的章节键,防用户拖回后再被弹走。
+        self._chapter_outro_seek_fired_keys: set[tuple[int, float]] = set()
         self._last_playback_position_seconds = 0
         self._premature_finish_recovery_attempts = 0
         self._ignore_playback_finished_until = 0.0
@@ -4947,6 +4955,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             effective_start_seconds = start_position_seconds
         else:
             effective_start_seconds = self.opening_spin.value()
+        if self._chapter_auto_skip_enabled():
+            chapter_intro_end = self._chapter_intro_skip_end(
+                current_item, position_seconds=float(effective_start_seconds)
+            )
+            if chapter_intro_end is not None:
+                effective_start_seconds = max(
+                    effective_start_seconds, int(chapter_intro_end)
+                )
         if effective_start_seconds > start_position_seconds:
             # 片头直跳生效:记录原进度,待 file_loaded 后展示"返回原进度"横幅。
             self._pending_intro_skip = (
@@ -5054,6 +5070,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_video_file_loaded(self) -> None:
         self._refresh_chapter_markers()
+        self._maybe_chapter_intro_skip_after_load()
         self._maybe_show_intro_restore_banner()
         self._schedule_window_single_shot(1500, self._start_pending_ytdlp_metadata_hydration_if_current)
         pending_danmaku_item = self._pending_file_loaded_danmaku_item
@@ -12619,7 +12636,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             or self.session.playlist[self.current_index] is not item
         ):
             return
-        self._skip_banner_kind = "intro"
+        self._show_restore_banner("intro", original_position, skipped_seconds)
+        logger.info(
+            "PlayerWindow intro skip banner shown index=%s skipped=%ss "
+            "restore_position=%ss",
+            self.current_index,
+            skipped_seconds,
+            original_position,
+        )
+
+    def _show_restore_banner(
+        self, kind: str, original_position: int, skipped_seconds: int
+    ) -> None:
+        """跳片头/片尾后的"返回原进度"横幅(kind: intro / outro)。"""
+        self._skip_banner_kind = kind
         self._skip_banner_remaining_seconds = float(self._INTRO_RESTORE_BANNER_SECONDS)
         self._skip_banner_last_tick = time.monotonic()
         self._intro_restore_position = original_position
@@ -12627,20 +12657,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.skip_banner_button.setText("返回原进度")
         self._render_skip_banner_label()
         self._show_skip_banner()
-        logger.info(
-            "PlayerWindow intro skip banner shown index=%s skipped=%ss restore_position=%ss",
-            self.current_index,
-            skipped_seconds,
-            original_position,
-        )
 
     def _render_skip_banner_label(self) -> None:
         if self._skip_banner_kind == "ending":
             remaining = max(0, int(self._skip_banner_remaining_seconds + 0.999))
             self.skip_banner_label.setText(f"{remaining} 秒后跳过片尾，进入下一集")
-        elif self._skip_banner_kind == "intro":
+        elif self._skip_banner_kind in ("intro", "outro"):
+            label = "片头" if self._skip_banner_kind == "intro" else "片尾"
             self.skip_banner_label.setText(
-                f"已跳过片头 {self._format_time(self._intro_skip_skipped_seconds)}"
+                f"已跳过{label} {self._format_time(self._intro_skip_skipped_seconds)}"
             )
 
     def _show_skip_banner(self) -> None:
@@ -12708,12 +12733,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._hide_skip_banner()
             self._append_log("已取消跳过片尾，将继续播放本集")
             return
-        if kind == "intro":
+        if kind in ("intro", "outro"):
             restore_position = self._intro_restore_position
             self._hide_skip_banner()
             if restore_position is None:
                 return
-            self._append_log(f"已返回片头原进度: {self._format_time(restore_position)}")
+            label = "片头" if kind == "intro" else "片尾"
+            self._append_log(
+                f"已返回{label}原进度: {self._format_time(restore_position)}"
+            )
             self._seek_to_position(int(restore_position))
 
     def _update_telemetry_badge(self) -> None:
@@ -12753,6 +12781,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             position=int(position),
             duration=int(duration),
         )
+        if self._maybe_begin_chapter_outro_skip(int(position), effective_duration):
+            return
         if (
             not self._auto_advance_locked
             and self.session is not None
@@ -12917,9 +12947,138 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             except Exception:
                 chapters = []
         self._current_chapters = chapters
+        self._chapter_outro_seek_fired_keys.clear()
         self.progress.set_chapter_positions(
             chapter.start_seconds for chapter in chapters
         )
+
+    def _chapter_auto_skip_enabled(self) -> bool:
+        # config 缺省(测试注入)时跟随 AppConfig 默认值:开启。
+        return self.config is None or bool(
+            getattr(self.config, "chapter_auto_skip_enabled", True)
+        )
+
+    def _skip_chapters_from_current(self) -> list[SkipChapter]:
+        """当前媒体的章节统一为带 end 的 SkipChapter(end 缺失按次章/时长推)。"""
+        if not self._current_chapters:
+            return []
+        try:
+            duration = float(self._current_media_duration_seconds() or 0)
+        except Exception:
+            duration = 0.0
+        return normalize_chapters(self._current_chapters, duration)
+
+    def _chapter_intro_skip_end(
+        self, item: PlayItem, *, position_seconds: float
+    ) -> float | None:
+        """随 PlayItem 下发的章节(B站 view_points)标注的片头直跳终点。"""
+        entries = item.chapters if item is not None else []
+        if not entries:
+            return None
+        duration = float(getattr(item, "duration_seconds", 0) or 0)
+        chapters = normalize_chapters(entries, duration)
+        return intro_skip_target(
+            chapters,
+            position_seconds=position_seconds,
+            duration_seconds=duration,
+        )
+
+    def _maybe_chapter_intro_skip_after_load(self) -> None:
+        """mpv 内嵌章节 file_loaded 后才可知:起点落在片头章节内则补跳。
+
+        外部章节(B站 view_points)已在 _start_current_item_playback 起播直跳,
+        此处只兜 mpv 一侧;复用片头"返回原进度"横幅(与固定秒数片头共用)。
+        """
+        if not self._chapter_auto_skip_enabled() or self._current_item_chapters():
+            return
+        chapters = self._skip_chapters_from_current()
+        if not chapters:
+            return
+        try:
+            position = float(self.video.position_seconds() or 0)
+        except Exception:
+            position = 0.0
+        target = intro_skip_target(
+            chapters,
+            position_seconds=position,
+            duration_seconds=float(self._current_media_duration_seconds() or 0),
+        )
+        if target is None:
+            return
+        item = self._current_play_item()
+        if item is None:
+            return
+        pending = self._pending_intro_skip
+        # 固定秒数片头若已先行直跳,合并为一次跳过(原进度取更早者)。
+        original_position = pending[1] if pending is not None else int(position)
+        self._pending_intro_skip = (
+            item,
+            original_position,
+            int(target) - original_position,
+        )
+        logger.info(
+            "PlayerWindow chapter intro skip after load index=%s position=%s "
+            "target=%s chapter_count=%s",
+            self.current_index,
+            int(position),
+            int(target),
+            len(chapters),
+        )
+        self.controls.seek(int(target))
+
+    def _maybe_begin_chapter_outro_skip(self, position: int, duration: int) -> bool:
+        """片尾章节触发点:末章走既有 5 秒倒计时切集;其后仍有章节则跳到下一章。
+
+        返回 True 表示本帧已处理(调用方跳过本次进度条刷新)。
+        """
+        if not self._chapter_auto_skip_enabled():
+            return False
+        if duration > 0 and position >= duration:
+            return False
+        chapters = self._skip_chapters_from_current()
+        if not chapters:
+            return False
+        skip = outro_skip_target(chapters, position_seconds=float(position))
+        if skip is None:
+            return False
+        if skip.is_last:
+            if (
+                self._auto_advance_locked
+                or self._skip_banner_kind == "ending"
+                or self.session is None
+                or self.current_index + 1 >= len(self.session.playlist)
+            ):
+                return False
+            logger.info(
+                "PlayerWindow chapter outro countdown scheduled "
+                "index=%s position=%s chapter=%r",
+                self.current_index,
+                position,
+                skip.chapter.title,
+            )
+            self._auto_advance_locked = True
+            self._begin_ending_skip_countdown()
+            return True
+        next_start = skip.next_start_seconds
+        if next_start is None or next_start <= position or (
+            duration > 0 and next_start >= duration - 5
+        ):
+            return False
+        key = (skip.chapter_index, round(skip.chapter.start_seconds, 3))
+        if key in self._chapter_outro_seek_fired_keys:
+            return False
+        self._chapter_outro_seek_fired_keys.add(key)
+        logger.info(
+            "PlayerWindow chapter outro skip to next chapter "
+            "index=%s position=%s target=%s chapter=%r",
+            self.current_index,
+            position,
+            int(next_start),
+            skip.chapter.title,
+        )
+        self._show_restore_banner("outro", position, int(next_start) - position)
+        self.controls.seek(int(next_start))
+        return True
 
     def _current_item_chapters(self) -> list[Chapter]:
         """B站等来源的章节随 PlayItem 下发,优先于 mpv 内嵌章节。"""

@@ -12235,6 +12235,241 @@ def test_player_window_intro_skip_banner_not_shown_without_intro_jump(qtbot) -> 
     assert window.skip_banner.isHidden()
 
 
+class ChapterSeekVideo(RecordingVideo):
+    def __init__(self, position: int = 0, duration: int = 0) -> None:
+        super().__init__()
+        self.position = position
+        self.duration = duration
+        self.seek_calls: list[int] = []
+
+    def position_seconds(self) -> int:
+        return self.position
+
+    def duration_seconds(self) -> int:
+        return self.duration
+
+    def seek(self, seconds: int) -> None:
+        self.seek_calls.append(seconds)
+        self.position = seconds
+
+
+def _chapter_session(**item_kwargs) -> PlayerSession:
+    return PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(title="Episode 1", url="http://m/1.m3u8", **item_kwargs),
+            PlayItem(title="Episode 2", url="http://m/2.m3u8"),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+
+
+def test_player_window_chapter_intro_skip_at_start_with_ad_plus_intro(qtbot) -> None:
+    """十几秒"正片"(实为广告)+ 几十秒片头:起播直跳到片头章节末尾。"""
+    video = ChapterSeekVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(
+        _chapter_session(
+            chapters=[
+                PlayChapter(title="正片", start_seconds=0.0, end_seconds=15.0),
+                PlayChapter(title="片头", start_seconds=15.0, end_seconds=105.0),
+                PlayChapter(title="正片", start_seconds=105.0, end_seconds=2400.0),
+            ],
+            duration_seconds=2400,
+        )
+    )
+    video.load_calls.clear()
+
+    window._start_current_item_playback(start_position_seconds=0)
+
+    assert video.load_calls == [("http://m/1.m3u8", 105)]
+
+    # file_loaded 后弹出"已跳过片头 01:45 / 返回原进度"横幅。
+    window._handle_video_file_loaded()
+    assert not window.skip_banner.isHidden()
+    assert window.skip_banner_label.text() == "已跳过片头 01:45"
+    assert window.skip_banner_button.text() == "返回原进度"
+
+    window._handle_skip_banner_button()
+    assert window.skip_banner.isHidden()
+    assert video.seek_calls == [0]
+
+
+def test_player_window_chapter_intro_skip_disabled_by_config(qtbot) -> None:
+    from atv_player.models import AppConfig
+
+    video = ChapterSeekVideo()
+    window = PlayerWindow(
+        RecordingPlayerController(), AppConfig(chapter_auto_skip_enabled=False)
+    )
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(
+        _chapter_session(
+            chapters=[
+                PlayChapter(title="片头", start_seconds=0.0, end_seconds=90.0),
+                PlayChapter(title="正片", start_seconds=90.0, end_seconds=2400.0),
+            ],
+            duration_seconds=2400,
+        )
+    )
+    video.load_calls.clear()
+
+    window._start_current_item_playback(start_position_seconds=0)
+    window._handle_video_file_loaded()
+
+    assert video.load_calls == [("http://m/1.m3u8", 0)]
+    assert window.skip_banner.isHidden()
+
+
+def test_player_window_chapter_intro_skip_after_load_for_mpv_chapters(qtbot) -> None:
+    """mpv 内嵌章节 file_loaded 后才可知:起点在片头章节内则补跳。"""
+    from atv_player.player.mpv_widget import Chapter as MpvChapter
+
+    class EmbeddedChapterVideo(ChapterSeekVideo):
+        def __init__(self) -> None:
+            super().__init__(position=0, duration=2400)
+
+        def chapters(self) -> list:
+            return [
+                MpvChapter(
+                    index=0, title="Opening", start_seconds=0.0, label="Opening"
+                ),
+                MpvChapter(index=1, title="Main", start_seconds=90.0, label="Main"),
+                MpvChapter(
+                    index=2,
+                    title="End Credits",
+                    start_seconds=2280.0,
+                    label="End Credits",
+                ),
+            ]
+
+    video = EmbeddedChapterVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+
+    window._start_current_item_playback(start_position_seconds=0)
+    assert video.load_calls == [("http://m/1.m3u8", 0)]
+    assert video.seek_calls == []
+
+    window._handle_video_file_loaded()
+
+    assert video.seek_calls == [90]
+    assert not window.skip_banner.isHidden()
+    assert window.skip_banner_label.text() == "已跳过片头 01:30"
+
+
+def test_player_window_chapter_outro_last_chapter_triggers_ending_countdown(
+    qtbot,
+) -> None:
+    """片尾为末章且存在下一集:进入片尾章节触发 5 秒倒计时切集。"""
+    video = ChapterSeekVideo(position=2300, duration=2400)
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(
+        _chapter_session(
+            chapters=[
+                PlayChapter(title="正片", start_seconds=0.0, end_seconds=2280.0),
+                PlayChapter(
+                    title="End Credits", start_seconds=2280.0, end_seconds=2400.0
+                ),
+            ],
+            duration_seconds=2400,
+        )
+    )
+    video.load_calls.clear()
+    window._refresh_chapter_markers()
+
+    window._sync_progress_slider()
+
+    assert window.current_index == 0
+    assert not window.skip_banner.isHidden()
+    assert "5 秒后跳过片尾" in window.skip_banner_label.text()
+    assert window._auto_advance_locked is True
+
+    window._skip_banner_remaining_seconds = 0.0
+    window._tick_skip_banner()
+
+    assert window.current_index == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+
+
+def test_player_window_chapter_outro_skips_to_next_chapter_with_restore_banner(
+    qtbot,
+) -> None:
+    """片尾后仍有章节(彩蛋):跳到下一章开头,横幅可返回,且拖回不重复弹。"""
+    video = ChapterSeekVideo(position=2210, duration=2400)
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(
+        _chapter_session(
+            chapters=[
+                PlayChapter(title="正片", start_seconds=0.0, end_seconds=2200.0),
+                PlayChapter(title="片尾", start_seconds=2200.0, end_seconds=2300.0),
+                PlayChapter(title="彩蛋", start_seconds=2300.0, end_seconds=2400.0),
+            ],
+            duration_seconds=2400,
+        )
+    )
+    video.load_calls.clear()
+    window._refresh_chapter_markers()
+
+    window._sync_progress_slider()
+
+    assert video.seek_calls == [2300]
+    assert not window.skip_banner.isHidden()
+    assert window.skip_banner_label.text() == "已跳过片尾 01:30"
+    assert window.skip_banner_button.text() == "返回原进度"
+    assert window.current_index == 0
+
+    # 用户拖回片尾章节:已触发过,不再被自动弹走。
+    window._handle_skip_banner_button()
+    assert window.skip_banner.isHidden()
+    assert video.seek_calls == [2300, 2210]
+    video.position = 2215
+    window._sync_progress_slider()
+    assert video.seek_calls == [2300, 2210]
+    assert window.skip_banner.isHidden()
+
+
+def test_player_window_chapter_outro_mid_video_same_name_ignored(qtbot) -> None:
+    """中途同名章节("片尾花絮")不触发自动跳过。"""
+    video = ChapterSeekVideo(position=150, duration=2400)
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(
+        _chapter_session(
+            chapters=[
+                PlayChapter(title="正片", start_seconds=0.0, end_seconds=100.0),
+                PlayChapter(title="片尾花絮", start_seconds=100.0, end_seconds=200.0),
+                PlayChapter(title="正片", start_seconds=200.0, end_seconds=2280.0),
+                PlayChapter(title="片尾", start_seconds=2280.0, end_seconds=2400.0),
+            ],
+            duration_seconds=2400,
+        )
+    )
+    video.load_calls.clear()
+    window._refresh_chapter_markers()
+
+    window._sync_progress_slider()
+
+    assert video.seek_calls == []
+    assert window.skip_banner.isHidden()
+    assert window.current_index == 0
+
+
 def test_player_window_recovers_last_position_when_mpv_resets_before_premature_eof(qtbot) -> None:
     class ResettingPrematureEofVideo(RecordingVideo):
         def __init__(self) -> None:

@@ -384,6 +384,10 @@ def _normalize_next_episode_preload_enabled(value: object) -> bool:
     return bool(value)
 
 
+def _normalize_chapter_auto_skip_enabled(value: object) -> bool:
+    return bool(value)
+
+
 def _normalize_m3u_proxy_segment_prefetch_size(value: object) -> int:
     try:
         normalized = int(value)
@@ -522,6 +526,7 @@ class SettingsRepository:
                     m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
                     m3u8_ad_filter_mode TEXT NOT NULL DEFAULT 'smart',
                     next_episode_preload_enabled INTEGER NOT NULL DEFAULT 1,
+                    chapter_auto_skip_enabled INTEGER NOT NULL DEFAULT 1,
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
                     last_playback_source TEXT NOT NULL DEFAULT 'browse',
@@ -783,6 +788,11 @@ class SettingsRepository:
                     "ALTER TABLE app_config ADD COLUMN next_episode_preload_enabled "
                     "INTEGER NOT NULL DEFAULT 1"
                 )
+            if "chapter_auto_skip_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN chapter_auto_skip_enabled "
+                    "INTEGER NOT NULL DEFAULT 1"
+                )
             if "last_active_window" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_active_window TEXT NOT NULL DEFAULT 'main'"
@@ -1031,6 +1041,7 @@ class SettingsRepository:
                     m3u_proxy_segment_prefetch_size,
                     m3u8_ad_filter_mode,
                     next_episode_preload_enabled,
+                    chapter_auto_skip_enabled,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -1083,7 +1094,7 @@ class SettingsRepository:
                     home_mode
                 )
                     VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 0, 2, 'smart', 1, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, 0, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
@@ -1188,6 +1199,7 @@ class SettingsRepository:
                     m3u_proxy_segment_prefetch_size,
                     m3u8_ad_filter_mode,
                     next_episode_preload_enabled,
+                    chapter_auto_skip_enabled,
                     last_path,
                     last_active_window,
                     last_playback_source,
@@ -1296,6 +1308,7 @@ class SettingsRepository:
             m3u_proxy_segment_prefetch_size,
             m3u8_ad_filter_mode,
             next_episode_preload_enabled,
+            chapter_auto_skip_enabled,
             last_path,
             last_active_window,
             last_playback_source,
@@ -1424,6 +1437,9 @@ class SettingsRepository:
             m3u8_ad_filter_mode=_normalize_m3u8_ad_filter_mode(m3u8_ad_filter_mode),
             next_episode_preload_enabled=_normalize_next_episode_preload_enabled(
                 next_episode_preload_enabled
+            ),
+            chapter_auto_skip_enabled=_normalize_chapter_auto_skip_enabled(
+                chapter_auto_skip_enabled
             ),
             last_path=last_path,
             last_active_window=last_active_window,
@@ -1554,6 +1570,7 @@ class SettingsRepository:
                     m3u_proxy_segment_prefetch_size = ?,
                     m3u8_ad_filter_mode = ?,
                     next_episode_preload_enabled = ?,
+                    chapter_auto_skip_enabled = ?,
                     last_path = ?,
                     last_active_window = ?,
                     last_playback_source = ?,
@@ -1681,6 +1698,7 @@ class SettingsRepository:
                     _normalize_m3u_proxy_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size),
                     _normalize_m3u8_ad_filter_mode(config.m3u8_ad_filter_mode),
                     int(config.next_episode_preload_enabled),
+                    int(getattr(config, "chapter_auto_skip_enabled", True)),
                     config.last_path,
                     config.last_active_window,
                     config.last_playback_source,

@@ -72,6 +72,18 @@ def test_settings_repository_round_trips_next_episode_preload(tmp_path: Path) ->
     assert loaded.next_episode_preload_enabled is False
 
 
+def test_settings_repository_round_trips_chapter_auto_skip(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.chapter_auto_skip_enabled is True
+
+    config.chapter_auto_skip_enabled = False
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.chapter_auto_skip_enabled is False
+
+
 def test_settings_repository_round_trips_mpv_shader_preset(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()
