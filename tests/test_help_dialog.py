@@ -8,3 +8,11 @@ def test_shortcut_help_dialog_hides_maximize_button(qtbot) -> None:
     qtbot.addWidget(dialog)
 
     assert dialog.title_bar().maximize_button.isHidden() is True
+
+
+def test_player_window_shortcut_entries_include_chapter_navigation() -> None:
+    entries = shortcut_entries_for("player_window", QKeySequence("Ctrl+Q"))
+    pairs = [(entry.key, entry.description) for entry in entries]
+
+    assert ("Shift+Left", "上一章节") in pairs
+    assert ("Shift+Right", "下一章节") in pairs

@@ -14223,6 +14223,50 @@ def test_player_window_delay_shortcuts_drive_video(qtbot) -> None:
     assert window.video.audio_delay_calls == [-0.1]
 
 
+def test_player_window_chapter_navigation_shortcuts_seek_between_chapters(qtbot) -> None:
+    class ChapterPositionVideo:
+        def __init__(self) -> None:
+            self.position = 0
+
+        def position_seconds(self) -> int:
+            return self.position
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = ChapterPositionVideo()
+    window.video = video
+    window._current_chapters = [
+        Chapter(index=1, title="片头", start_seconds=0.0, label="第1章 片头"),
+        Chapter(index=2, title="正片", start_seconds=85.0, label="第2章 正片"),
+        Chapter(index=3, title="片尾", start_seconds=2700.0, label="第3章 片尾"),
+    ]
+    seeks: list[int] = []
+    window.controls.seek = lambda seconds: seeks.append(seconds)
+
+    video.position = 60
+    send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    assert seeks == [85]
+
+    # 深入当前章节时,上一章节先回到本章开头,连按两次才退到上一章。
+    video.position = 300
+    send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+    assert seeks == [85, 85]
+
+    video.position = 86
+    send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+    assert seeks == [85, 85, 0]
+
+    # 最后一章再按下一章节保持不动;无章节时按键也不产生跳转。
+    video.position = 2750
+    send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    assert seeks == [85, 85, 0]
+
+    window._current_chapters = []
+    send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ShiftModifier)
+    assert seeks == [85, 85, 0]
+
+
 def test_player_window_builds_video_context_menu_with_dash_quality_submenu(qtbot) -> None:
     class FakeM3U8AdFilter:
         def should_prepare(self, url: str) -> bool:

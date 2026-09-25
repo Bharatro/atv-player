@@ -959,6 +959,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     global_search_requested = Signal(str)
     _SEEK_SHORTCUT_SECONDS = 15
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
+    _CHAPTER_PREVIOUS_RESTART_SECONDS = 3
     _VOLUME_SHORTCUT_STEP = 5
     _PICTURE_ADJUSTMENT_PROPS: tuple[tuple[str, str], ...] = (
         ("brightness", "亮度"),
@@ -12578,6 +12579,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 QKeySequence("Ctrl+Right"),
                 lambda: self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS),
             ),
+            (QKeySequence("Shift+Left"), self._seek_previous_chapter),
+            (QKeySequence("Shift+Right"), self._seek_next_chapter),
             (QKeySequence(Qt.Key.Key_PageUp), self.play_previous),
             (QKeySequence(Qt.Key.Key_PageDown), self.play_next),
             (QKeySequence(Qt.Key.Key_Z), lambda: self._step_subtitle_delay(-0.1)),
@@ -12942,6 +12945,44 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 break
             matched = chapter
         return matched
+
+    def _current_position_seconds(self) -> float | None:
+        if not hasattr(self.video, "position_seconds"):
+            return None
+        try:
+            return float(self.video.position_seconds() or 0)
+        except Exception:
+            return None
+
+    def _seek_previous_chapter(self) -> None:
+        chapters = self._current_chapters
+        position = self._current_position_seconds()
+        if not chapters or position is None:
+            return
+        current_index: int | None = None
+        for index, chapter in enumerate(chapters):
+            if chapter.start_seconds > position:
+                break
+            current_index = index
+        if current_index is None:
+            self._seek_to_position(int(chapters[0].start_seconds))
+            return
+        current = chapters[current_index]
+        # 已深入当前章节时先回到本章开头(连按两次才退到上一章),对齐主流播放器行为。
+        if position - current.start_seconds > self._CHAPTER_PREVIOUS_RESTART_SECONDS:
+            target = current
+        else:
+            target = chapters[max(0, current_index - 1)]
+        self._seek_to_position(int(target.start_seconds))
+
+    def _seek_next_chapter(self) -> None:
+        position = self._current_position_seconds()
+        if position is None:
+            return
+        for chapter in self._current_chapters:
+            if chapter.start_seconds > position:
+                self._seek_to_position(int(chapter.start_seconds))
+                return
 
     def _clear_chapter_markers(self) -> None:
         self._current_chapters = []
@@ -13835,6 +13876,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         if event.key() == Qt.Key.Key_Right and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS)
+            event.accept()
+            return
+        shift_modifier = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        if event.key() == Qt.Key.Key_Left and shift_modifier:
+            self._seek_previous_chapter()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right and shift_modifier:
+            self._seek_next_chapter()
             event.accept()
             return
         if event.modifiers() & (

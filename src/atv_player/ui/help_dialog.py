@@ -59,6 +59,8 @@ _PLAYER_WINDOW_SHORTCUTS: tuple[ShortcutEntry, ...] = (
     ShortcutEntry("Right", "前进 15 秒"),
     ShortcutEntry("Ctrl+Left", "后退 60 秒"),
     ShortcutEntry("Ctrl+Right", "前进 60 秒"),
+    ShortcutEntry("Shift+Left", "上一章节"),
+    ShortcutEntry("Shift+Right", "下一章节"),
     ShortcutEntry("Up", "音量增加"),
     ShortcutEntry("Down", "音量减小"),
     ShortcutEntry("M", "静音"),
