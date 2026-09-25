@@ -3330,3 +3330,62 @@ def test_mpv_widget_reports_current_video_height_from_video_out_params(qtbot) ->
 
     widget._video_out_params = {"w": 1920, "h": 0}
     assert widget.current_video_height() is None
+
+
+def test_mpv_widget_shutdown_terminates_on_background_thread(
+    qtbot, monkeypatch
+) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    terminate_threads: list[str] = []
+
+    class OkPlayer:
+        core_shutdown = False
+
+        def terminate(self) -> None:
+            terminate_threads.append(threading.current_thread().name)
+
+    widget._player = OkPlayer()
+    monkeypatch.setattr(mpv_widget_module, "_MPV_TERMINATE_TIMEOUT_SECONDS", 5.0)
+
+    widget.shutdown()
+
+    assert widget._player is None
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not terminate_threads:
+        time.sleep(0.01)
+    assert terminate_threads == ["mpv-terminate"]
+
+
+def test_mpv_widget_shutdown_returns_promptly_when_terminate_hangs(
+    qtbot, monkeypatch, caplog
+) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    release = threading.Event()
+
+    class WedgedPlayer:
+        core_shutdown = False
+
+        def terminate(self) -> None:
+            release.wait(30)
+
+    widget._player = WedgedPlayer()
+    monkeypatch.setattr(mpv_widget_module, "_MPV_TERMINATE_TIMEOUT_SECONDS", 0.05)
+
+    try:
+        with caplog.at_level("ERROR", logger="atv_player.player.mpv_widget"):
+            started = time.monotonic()
+            widget.shutdown()
+            elapsed = time.monotonic() - started
+
+            assert elapsed < 5
+            assert widget._player is None
+            leak_logged = "leaking the player instance" in caplog.text
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and not leak_logged:
+                time.sleep(0.01)
+                leak_logged = "leaking the player instance" in caplog.text
+        assert "leaking the player instance" in caplog.text
+    finally:
+        release.set()

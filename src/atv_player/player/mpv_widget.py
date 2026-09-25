@@ -89,6 +89,10 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 }
 
 logger = logging.getLogger(__name__)
+# mpv_terminate_destroy 会同步等待全部内部线程退出;ffmpeg demuxer 卡死时永不返回。
+# shutdown() 在 GUI 线程被调用,terminate 挪到后台线程执行,
+# 超过该时长仍未返回则放弃等待(泄漏实例)。
+_MPV_TERMINATE_TIMEOUT_SECONDS = 10.0
 _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
@@ -669,14 +673,36 @@ class MpvWidget(QWidget):
         self._player_property_cache.clear()
         if getattr(player, "core_shutdown", False):
             return
-        try:
-            terminate = getattr(player, "terminate", None)
-            if terminate is not None:
-                terminate()
-        except Exception:
-            if getattr(player, "core_shutdown", False):
-                return
-            raise
+        self._terminate_player_off_thread(player)
+
+    def _terminate_player_off_thread(self, player: Any) -> None:
+        finished = threading.Event()
+
+        def _terminate() -> None:
+            try:
+                terminate = getattr(player, "terminate", None)
+                if terminate is not None:
+                    terminate()
+            except Exception:
+                if not getattr(player, "core_shutdown", False):
+                    logger.warning("MPV terminate raised", exc_info=True)
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=_terminate, name="mpv-terminate", daemon=True)
+        thread.start()
+
+        def _report_stuck_terminate() -> None:
+            if not finished.is_set():
+                logger.error(
+                    "MPV terminate still blocked after %.0fs (wedged demuxer?);"
+                    " leaking the player instance to keep the UI responsive",
+                    _MPV_TERMINATE_TIMEOUT_SECONDS,
+                )
+
+        timer = threading.Timer(_MPV_TERMINATE_TIMEOUT_SECONDS, _report_stuck_terminate)
+        timer.daemon = True
+        timer.start()
 
     def stop_media(self) -> None:
         if not self._on_widget_thread():

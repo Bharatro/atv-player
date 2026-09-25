@@ -43,6 +43,10 @@ from atv_player.request_headers import normalize_media_request_headers
 
 logger = logging.getLogger(__name__)
 
+# 客户端(mpv/应用自身)卡死后既不读也不关连接,流式写会永久挂住 handler 线程
+# 并泄漏 socket。给本地代理连接统一设置读写超时,超时后放弃该次传输。
+_CLIENT_STALL_TIMEOUT_SECONDS = 600.0
+
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_STREAM_CHUNK_SIZE = 256 * 1024
 _CENC_STREAM_CHUNK_SIZE = 256 * 1024
@@ -62,6 +66,10 @@ def _is_client_disconnect_error(exc: BaseException) -> bool:
     if isinstance(exc, socket.error):
         return True
     return False
+
+
+def _is_client_stall_timeout(exc: BaseException) -> bool:
+    return isinstance(exc, (socket.timeout, TimeoutError))
 
 
 def _summarize_range_proxy_url(url: str) -> str:
@@ -1606,6 +1614,8 @@ class LocalHlsProxyServer:
         parent = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = _CLIENT_STALL_TIMEOUT_SECONDS
+
             def do_GET(self) -> None:
                 try:
                     if parent._stream_range_proxy_response(self.path, dict(self.headers.items()), self):
@@ -1617,6 +1627,13 @@ class LocalHlsProxyServer:
                     if parent._stream_cenc_response(self.path, dict(self.headers.items()), self):
                         return
                 except Exception as exc:
+                    if _is_client_stall_timeout(exc):
+                        logger.warning(
+                            "Proxy client stalled for %.0fs, aborting transfer: %s",
+                            _CLIENT_STALL_TIMEOUT_SECONDS,
+                            self.path,
+                        )
+                        return
                     if _is_client_disconnect_error(exc):
                         return
                     payload = str(exc).encode("utf-8")

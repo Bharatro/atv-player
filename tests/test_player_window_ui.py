@@ -12571,6 +12571,35 @@ def test_player_window_stops_when_premature_eof_reload_fails(qtbot, monkeypatch)
     assert "播放提前结束，恢复失败: reload failed" in window.log_view.toPlainText()
 
 
+def test_player_window_skips_recovery_for_dash_manifest_premature_eof(qtbot) -> None:
+    class PrematureEofDashVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 107
+
+        def position_seconds(self) -> int:
+            return 92
+
+    video = PrematureEofDashVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    session = make_player_session(start_index=0)
+    session.playlist[0] = PlayItem(
+        title="Episode 1",
+        url="http://127.0.0.1:2323/dash/gaBO8V125HdZ.mpd",
+    )
+    window.open_session(session)
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert window.is_playing is False
+    assert video.load_calls == []
+    assert "DASH 流提前结束，跳过自动恢复" in window.log_view.toPlainText()
+
+
 def test_player_window_advances_when_eof_is_near_observed_end(qtbot) -> None:
     class NearEndVideo(RecordingVideo):
         def duration_seconds(self) -> int:

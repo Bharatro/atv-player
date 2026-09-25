@@ -268,6 +268,15 @@ def _is_backend_proxy_url(url: str) -> bool:
     return site_id.isdigit() and bool(proxy_id)
 
 
+def _is_dash_manifest_playback_url(url: str) -> bool:
+    if url.startswith("data:application/dash+xml"):
+        return True
+    parsed = urlparse(url or "")
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    return parsed.path.startswith("/dash/") and parsed.path.endswith(".mpd")
+
+
 def _summarize_media_url(url: str) -> str:
     if url.startswith("data:application/dash+xml;base64,"):
         return "data:application/dash+xml;base64,..."
@@ -13577,6 +13586,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _recover_current_item_after_premature_finish(self) -> None:
         position = max(0, int(self._last_playback_position_seconds))
         duration = max(0, int(self._observed_media_duration_seconds))
+        item = self._current_play_item()
+        if _is_dash_manifest_playback_url(getattr(item, "url", "") or ""):
+            # ffmpeg dashdemux 在"重载+seek"路径上可能陷入不退出的读包循环，
+            # 会把整个 mpv 实例拖死；DASH 流的提前结束直接按源失败处理，不做自动恢复。
+            self._stop_after_premature_finish_failure(
+                "DASH 流提前结束，跳过自动恢复（规避 ffmpeg 重载卡死）: "
+                f"index={self.current_index} position={position} duration={duration}"
+            )
+            return
         if self._premature_finish_recovery_attempts > 0:
             self._stop_after_premature_finish_failure(
                 "播放提前结束，恢复失败: "
