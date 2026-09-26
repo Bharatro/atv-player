@@ -277,6 +277,13 @@ def _is_dash_manifest_playback_url(url: str) -> bool:
     return parsed.path.startswith("/dash/") and parsed.path.endswith(".mpd")
 
 
+def _is_dash_asset_playback_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return False
+    return parsed.path.startswith("/dash/asset/") and parsed.path.endswith(".m4s")
+
+
 def _summarize_media_url(url: str) -> str:
     if url.startswith("data:application/dash+xml;base64,"):
         return "data:application/dash+xml;base64,..."
@@ -734,7 +741,8 @@ class _ExternalSubtitleFetchRequest:
 
 
 class _PlaybackPrepareSignals(QObject):
-    succeeded = Signal(int, str)
+    # 第三个参数:DASH 直连分发时需外挂的音频地址(空串 = 无)。
+    succeeded = Signal(int, str, str)
     failed = Signal(int, str)
 
 
@@ -6079,7 +6087,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if preloaded_url:
                 if not self._is_window_alive():
                     return
-                self._playback_prepare_signals.succeeded.emit(request_id, preloaded_url)
+                self._playback_prepare_signals.succeeded.emit(request_id, preloaded_url, "")
                 return
             try:
                 drive_prepared_url = self._prepare_drive_parallel_url(current_item, source_url)
@@ -6093,7 +6101,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if drive_prepared_url:
                 if not self._is_window_alive():
                     return
-                self._playback_prepare_signals.succeeded.emit(request_id, drive_prepared_url)
+                self._playback_prepare_signals.succeeded.emit(request_id, drive_prepared_url, "")
                 return
             try:
                 if requested_dash_video_id:
@@ -6115,7 +6123,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 return
             if not self._is_window_alive():
                 return
-            self._playback_prepare_signals.succeeded.emit(request_id, prepared_url)
+            external_audio_url = ""
+            dash_audio_getter = getattr(self._m3u8_ad_filter, "dash_external_audio_url", None)
+            if callable(dash_audio_getter):
+                try:
+                    external_audio_url = str(dash_audio_getter(prepared_url) or "")
+                except Exception:
+                    logger.warning(
+                        "DASH 外挂音频解析失败 url=%s",
+                        _summarize_media_url(prepared_url),
+                        exc_info=True,
+                    )
+                    external_audio_url = ""
+            self._playback_prepare_signals.succeeded.emit(
+                request_id, prepared_url, external_audio_url
+            )
 
         self._enqueue_controller_task("播放地址预处理失败", prepare)
         return True
@@ -6342,6 +6364,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _should_skip_playback_prepare(self, current_item: PlayItem) -> bool:
         resolved_url = (current_item.url or "").strip()
         if resolved_url.startswith(self._DASH_DATA_URI_PREFIX):
+            return False
+        original_url = (current_item.original_url or "").strip()
+        if original_url.startswith(self._DASH_DATA_URI_PREFIX) and (
+            _is_dash_manifest_playback_url(resolved_url)
+            or _is_dash_asset_playback_url(resolved_url)
+        ):
+            # DASH 代理会话有 TTL,复用旧地址会在过期后 404,重播一律重建会话。
             return False
         if self._should_skip_live_m3u8_prepare(current_item, resolved_url):
             return True
@@ -6994,7 +7023,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._append_log(message)
         self._render_detail_actions()
 
-    def _handle_playback_prepare_succeeded(self, request_id: int, prepared_url: str) -> None:
+    def _handle_playback_prepare_succeeded(
+        self, request_id: int, prepared_url: str, external_audio_url: str = ""
+    ) -> None:
         if request_id != self._playback_prepare_request_id:
             return
         pending_prepare = self._pending_playback_prepare
@@ -7009,6 +7040,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if pending_prepare.requested_dash_video_id:
             current_item.dash_video_id = pending_prepare.requested_dash_video_id
         current_item.url = prepared_url
+        if external_audio_url:
+            current_item.audio_url = external_audio_url
+            logger.info(
+                "DASH 直连起播(视频/音频 asset 拆分,绕开 dashdemux 线性 seek) video=%s audio=%s",
+                _summarize_media_url(prepared_url),
+                _summarize_media_url(external_audio_url),
+            )
         self._maybe_restore_cached_danmaku_for_current_item()
         self._refresh_video_quality_state(prepared_url)
         try:

@@ -1291,6 +1291,39 @@ def test_mpv_widget_keeps_special_readahead_profiles_for_ytdlp_sources(qtbot) ->
     assert player.options["demuxer-readahead-secs"] == 120
 
 
+def test_mpv_widget_uses_dash_direct_profile_for_asset_with_external_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+
+    profile_name = widget._apply_stream_profile(
+        player,
+        "http://127.0.0.1:2323/dash/asset/test-token/0.m4s",
+        audio_files="http://127.0.0.1:2323/dash/asset/test-token/1.m4s",
+    )
+
+    assert profile_name == "dash-direct-external-audio"
+    assert player.options["cache-pause"] == "no"
+    assert player.options["cache-pause-initial"] == "no"
+    assert player.options["demuxer-readahead-secs"] == 30
+
+
+def test_mpv_widget_keeps_dash_proxy_profile_for_manifest_without_external_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+
+    profile_name = widget._apply_stream_profile(
+        player,
+        "http://127.0.0.1:2323/dash/test-token.mpd",
+    )
+
+    assert profile_name == "dash-proxy"
+    assert player.options["demuxer-readahead-secs"] == 120
+
+
 def test_mpv_widget_extra_options_override_profile_values(qtbot) -> None:
     widget = MpvWidget(
         config=AppConfig(mpv_extra_options="demuxer-readahead-secs=9\ncache-pause-wait=1")

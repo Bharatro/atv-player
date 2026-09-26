@@ -256,12 +256,23 @@ class M3U8AdFilter:
             )
         if _is_dash_data_uri(url):
             if dash_video_id:
-                return self._proxy_server.create_dash_url(
+                mpd_url = self._proxy_server.create_dash_url(
                     url,
                     headers=normalized_headers,
                     selected_video_id=dash_video_id,
                 )
-            return self._proxy_server.create_dash_url(url, headers=normalized_headers)
+            else:
+                mpd_url = self._proxy_server.create_dash_url(url, headers=normalized_headers)
+            # ffmpeg dashdemux 对"单文件 BaseURL"表示的 seek 是从头线性读,
+            # 长视频续播/拖动会卡分钟级;改为直连视频 asset(mov demuxer 用 sidx 秒跳),
+            # 音频 asset 由播放器作为外挂音轨挂载(见 dash_external_audio_url)。
+            direct_media_getter = getattr(self._proxy_server, "dash_direct_media_urls", None)
+            direct_video_url = ""
+            if callable(direct_media_getter):
+                direct_video_url, _direct_audio_url = direct_media_getter(mpd_url)
+            if direct_video_url:
+                return direct_video_url
+            return mpd_url
         if _is_remote_m3u8_url(url):
             return self._proxy_server.create_playlist_url(url, headers=normalized_headers)
         if _is_disguised_media_url(url):
@@ -331,6 +342,25 @@ class M3U8AdFilter:
 
     def selected_dash_video_quality(self, prepared_url: str) -> str | None:
         return self._proxy_server.selected_dash_video_representation_id(prepared_url)
+
+    def dash_external_audio_url(self, prepared_url: str) -> str:
+        """DASH 直连分发(prepared_url 为视频 asset 代理地址)时返回应外挂的音频地址。
+
+        其余场景(含 .mpd 清单分发)返回空串:清单模式下音频由 dashdemux 内部封装,
+        再外挂会导致双音轨。
+        """
+        parsed = urlparse(prepared_url or "")
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        if not (parsed.path.startswith("/dash/asset/") and parsed.path.endswith(".m4s")):
+            return ""
+        direct_media_getter = getattr(self._proxy_server, "dash_direct_media_urls", None)
+        if not callable(direct_media_getter):
+            return ""
+        video_url, audio_url = direct_media_getter(prepared_url)
+        if video_url != prepared_url:
+            return ""
+        return audio_url
 
     def _prepare(self, url: str, headers: dict[str, str], depth: int, visited: set[str]) -> str:
         if not self.should_prepare(url):

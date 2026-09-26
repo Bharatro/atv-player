@@ -21,6 +21,8 @@ class DashRepresentation:
     codecs: str = ""
     mime_type: str = ""
     base_url: str = ""
+    # 带 SegmentTemplate/SegmentList 的表示是"多分段"流,BaseURL 不是完整媒体文件。
+    segmented: bool = False
 
 
 @dataclass(slots=True)
@@ -40,6 +42,9 @@ class ProxySession:
     dash_audio_representations: list[DashRepresentation] = field(default_factory=list)
     selected_dash_video_id: str = ""
     selected_dash_audio_id: str = ""
+    # 直连分发用:rewrite 后选中视频/音频表示对应的 dash_assets 下标(-1 = 不存在)。
+    dash_video_asset_index: int = -1
+    dash_audio_asset_index: int = -1
     cached_playlist_text: str | None = None
     media_encrypted: bool = False
     cenc_reader: object | None = None

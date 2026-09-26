@@ -27640,6 +27640,82 @@ def test_player_window_enqueues_danmaku_restore_after_playback_prepare(
     assert calls == expected_order
 
 
+def test_player_window_prepare_success_attaches_dash_external_audio(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    item = window.session.playlist[0]
+    window._playback_prepare_request_id = 3
+    window._pending_playback_prepare = player_window_module._PendingPlaybackPrepare(
+        index=0,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        source_url="data:application/dash+xml;base64,QUFB",
+    )
+    started: list[dict] = []
+    monkeypatch.setattr(window, "_start_current_item_playback", lambda **kwargs: started.append(kwargs))
+    monkeypatch.setattr(window, "_maybe_restore_cached_danmaku_for_current_item", lambda: None)
+    monkeypatch.setattr(window, "_refresh_video_quality_state", lambda *args, **kwargs: None)
+
+    window._handle_playback_prepare_succeeded(
+        window._playback_prepare_request_id,
+        "http://127.0.0.1:2323/dash/asset/tok/0.m4s",
+        "http://127.0.0.1:2323/dash/asset/tok/1.m4s",
+    )
+
+    assert item.url == "http://127.0.0.1:2323/dash/asset/tok/0.m4s"
+    assert item.audio_url == "http://127.0.0.1:2323/dash/asset/tok/1.m4s"
+    assert item.original_url == "data:application/dash+xml;base64,QUFB"
+    assert started
+
+
+def test_player_window_prepare_success_without_external_audio_keeps_audio_url(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    window.current_index = 0
+    item = window.session.playlist[0]
+    item.audio_url = "https://media.example/karaoke.m4a"
+    window._playback_prepare_request_id = 4
+    window._pending_playback_prepare = player_window_module._PendingPlaybackPrepare(
+        index=0,
+        previous_index=0,
+        start_position_seconds=0,
+        pause=False,
+        source_url="http://m/1.m3u8",
+    )
+    monkeypatch.setattr(window, "_start_current_item_playback", lambda **kwargs: None)
+    monkeypatch.setattr(window, "_maybe_restore_cached_danmaku_for_current_item", lambda: None)
+    monkeypatch.setattr(window, "_refresh_video_quality_state", lambda *args, **kwargs: None)
+
+    window._handle_playback_prepare_succeeded(
+        window._playback_prepare_request_id,
+        "http://127.0.0.1:2323/m3u/tok",
+        "",
+    )
+
+    assert item.audio_url == "https://media.example/karaoke.m4a"
+
+
+def test_player_window_replays_dash_proxy_urls_with_fresh_prepare(qtbot) -> None:
+    # DASH 代理会话有 TTL,重播复用旧 .mpd/asset 地址会在过期后 404:
+    # 只要 original_url 还是 data URI,就不允许跳过预处理。
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = make_player_session(start_index=0)
+    item = window.session.playlist[0]
+    item.original_url = "data:application/dash+xml;base64,QUFB"
+
+    item.url = "http://127.0.0.1:2323/dash/asset/tok/0.m4s"
+    item.audio_url = "http://127.0.0.1:2323/dash/asset/tok/1.m4s"
+    assert window._should_skip_playback_prepare(item) is False
+
+    item.url = "http://127.0.0.1:2323/dash/tok.mpd"
+    assert window._should_skip_playback_prepare(item) is False
+
+
 def test_player_window_retries_danmaku_attach_while_player_track_pending(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

@@ -80,6 +80,15 @@ _LOW_LATENCY_STREAM_PROFILE: dict[str, object] = {
     "demuxer-readahead-secs": 3,
 }
 
+# DASH 直连分发(视频 asset + 外挂音频 asset):两条普通媒体文件流,关掉初始
+# 缓冲暂停让续播尽快起画面,保留可观前向缓冲防上游 CDN 抖动。
+_DASH_DIRECT_STREAM_PROFILE: dict[str, object] = {
+    "cache-pause": "no",
+    "cache-pause-initial": "no",
+    "cache-pause-wait": 0,
+    "demuxer-readahead-secs": 30,
+}
+
 _YTDL_STREAM_PROFILE: dict[str, object] = {
     "cache-pause": "yes",
     "cache-pause-initial": "yes",
@@ -873,19 +882,22 @@ class MpvWidget(QWidget):
         if self._is_local_iso_proxy_url(url):
             profile = _ISO_PROXY_STREAM_PROFILE
             profile_name = "iso-proxy"
-        elif self._is_local_dash_proxy_url(url):
-            # DASH proxy needs some buffering for remote media, but a full initial cache pause
-            # makes first-frame startup feel much slower than direct playback.
-            profile = _YTDL_STREAM_PROFILE
-            profile_name = "dash-proxy"
         elif ytdl_format:
             profile = _YTDL_STREAM_PROFILE
             profile_name = "hybrid-ytdl"
+        elif audio_files and self._is_local_dash_proxy_url(url):
+            profile = _DASH_DIRECT_STREAM_PROFILE
+            profile_name = "dash-direct-external-audio"
         elif audio_files:
             # Separate remote video/audio streams pay the startup cost twice if we keep
             # mpv's initial cache pause enabled.
             profile = _LOW_LATENCY_STREAM_PROFILE
             profile_name = "low-latency-external-audio"
+        elif self._is_local_dash_proxy_url(url):
+            # DASH proxy needs some buffering for remote media, but a full initial cache pause
+            # makes first-frame startup feel much slower than direct playback.
+            profile = _YTDL_STREAM_PROFILE
+            profile_name = "dash-proxy"
         else:
             profile = default_profile
             profile_name = "default"

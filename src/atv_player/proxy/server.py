@@ -255,10 +255,18 @@ def _parse_dash_session_metadata(
             content_type = _dash_adaptation_content_type(adaptation_set, prefix)
             if content_type not in {"video", "audio"}:
                 continue
+            set_segmented = any(
+                _dash_child_elements(adaptation_set, prefix, child)
+                for child in ("SegmentTemplate", "SegmentList")
+            )
             for representation in _dash_child_elements(adaptation_set, prefix, "Representation"):
                 base_url_element = next(iter(_dash_child_elements(representation, prefix, "BaseURL")), None)
                 base_url = unescape((base_url_element.text or "").strip()) if base_url_element is not None else ""
                 parsed_representation = _dash_representation_from_element(representation, base_url)
+                parsed_representation.segmented = set_segmented or any(
+                    _dash_child_elements(representation, prefix, child)
+                    for child in ("SegmentTemplate", "SegmentList")
+                )
                 if content_type == "video":
                     session.dash_video_representations.append(parsed_representation)
                 else:
@@ -288,8 +296,24 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
     root = ET.fromstring(payload)
     session.dash_assets = []
     session.dash_asset_chunk_sizes = []
+    session.dash_video_asset_index = -1
+    session.dash_audio_asset_index = -1
     prefix = _dash_namespace_prefix(root)
     namespace = prefix[1:-1] if prefix else ""
+
+    # 选中且非多分段表示的 BaseURL 即完整媒体文件,可走直连分发;按原始 URL 对账。
+    selected_rep_base_urls: dict[str, str] = {}
+    for role, representations, selected_id in (
+        ("video", session.dash_video_representations, session.selected_dash_video_id),
+        ("audio", session.dash_audio_representations, session.selected_dash_audio_id),
+    ):
+        for representation in representations:
+            if representation.id != selected_id or representation.segmented:
+                continue
+            base_url = representation.base_url
+            if base_url.startswith(("http://", "https://")) and base_url not in selected_rep_base_urls:
+                selected_rep_base_urls[base_url] = role
+            break
 
     periods = [element for element in root.iter() if element.tag == f"{prefix}Period"]
     for period in periods:
@@ -326,6 +350,11 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
         session.dash_asset_chunk_sizes.append(chunk_size if chunk_size > 0 else 0)
         base_url.text = f"{proxy_base_url}/dash/asset/{quote(session.token)}/{asset_index}.m4s"
         processed_base_urls.add(id(base_url))
+        role = selected_rep_base_urls.get(raw_url)
+        if role == "video" and session.dash_video_asset_index < 0:
+            session.dash_video_asset_index = asset_index
+        elif role == "audio" and session.dash_audio_asset_index < 0:
+            session.dash_audio_asset_index = asset_index
 
     for representation in [element for element in root.iter() if element.tag == f"{prefix}Representation"]:
         chunk_size = _dash_representation_http_chunk_size(representation, prefix)
@@ -636,6 +665,13 @@ class LocalHlsProxyServer:
                 session.dash_manifest_payload,
                 session,
                 selected_video_id=selected_video_id,
+            )
+            # 提前跑一遍 rewrite:立刻得到 dash_assets 与选中表示的下标,
+            # 供直连分发(dash_direct_media_urls)使用;.mpd 请求时会幂等重算。
+            _rewrite_dash_manifest(
+                session.dash_manifest_payload,
+                session,
+                f"http://{self.host}:{self.port}",
             )
         return f"http://{self.host}:{self.port}/dash/{quote(token)}.mpd"
 
@@ -968,7 +1004,12 @@ class LocalHlsProxyServer:
     def _dash_session_for_url(self, dash_url: str) -> ProxySession | None:
         parsed = urlparse(dash_url)
         try:
-            token = self._path_token(parsed.path) if parsed.path.startswith("/dash/") else self._query_token(parse_qs(parsed.query))
+            if parsed.path.startswith("/dash/asset/"):
+                token = self._dash_asset_path(parsed.path)[0]
+            elif parsed.path.startswith("/dash/"):
+                token = self._path_token(parsed.path)
+            else:
+                token = self._query_token(parse_qs(parsed.query))
         except KeyError:
             return None
         return self._registry.get(token)
@@ -984,6 +1025,33 @@ class LocalHlsProxyServer:
         if session is None or not session.selected_dash_video_id:
             return None
         return session.selected_dash_video_id
+
+    def dash_direct_media_urls(self, dash_url: str) -> tuple[str, str]:
+        """单文件 DASH(无 SegmentTemplate/SegmentList)的直连地址:(视频, 音频)。
+
+        返回的地址走既有 /dash/asset/ 代理(保留上游 Referer/UA 头与 Range 转发),
+        mpv 用 mov demuxer 直接打开即可用 sidx 索引随机 seek,绕开 ffmpeg dashdemux
+        对单文件表示 seek 时从头线性读的缺陷。视频地址为空表示该清单不适合直连;
+        清单里有音轨但音频地址为空时同样放弃直连(避免无声)。
+        """
+        session = self._dash_session_for_url(dash_url)
+        if session is None:
+            return ("", "")
+        video_url = self._dash_asset_proxy_url(session, session.dash_video_asset_index)
+        audio_url = self._dash_asset_proxy_url(session, session.dash_audio_asset_index)
+        if not video_url:
+            return ("", "")
+        if session.dash_audio_representations and not audio_url:
+            return ("", "")
+        return video_url, audio_url
+
+    def _dash_asset_proxy_url(self, session: ProxySession, asset_index: int) -> str:
+        if asset_index < 0 or asset_index >= len(session.dash_assets):
+            return ""
+        return (
+            f"http://{self.host}:{self.port}/dash/asset/"
+            f"{quote(session.token)}/{asset_index}.m4s"
+        )
 
     @staticmethod
     def _query_token(query: dict[str, list[str]]) -> str:

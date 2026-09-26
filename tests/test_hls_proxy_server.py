@@ -1028,6 +1028,155 @@ def test_local_hls_proxy_server_preserves_segment_base_when_rewriting_dash_manif
     assert 'Initialization range="0-701"' in body_text
 
 
+def test_local_hls_proxy_server_extracts_dash_direct_media_urls_for_single_file_manifest() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v1080" bandwidth="2800000" width="1920" height="1080" mimeType="video/mp4">
+        <BaseURL>https://media.example/video-1080.mp4</BaseURL>
+        <SegmentBase indexRange="738-1425"><Initialization range="0-737"/></SegmentBase>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000" mimeType="audio/mp4">
+        <BaseURL>https://media.example/audio-1.m4a</BaseURL>
+        <SegmentBase indexRange="702-1189"><Initialization range="0-701"/></SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    video_url, audio_url = server.dash_direct_media_urls(mpd_url)
+
+    assert video_url == f"http://{server.host}:{server.port}/dash/asset/{token}/0.m4s"
+    assert audio_url == f"http://{server.host}:{server.port}/dash/asset/{token}/1.m4s"
+    # .mpd 请求会幂等重算 rewrite,直连下标必须保持稳定
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    assert server.dash_direct_media_urls(mpd_url) == (video_url, audio_url)
+    # 画质菜单用 asset 地址也能反查会话
+    assert [rep.id for rep in server.dash_video_representations(video_url)] == ["v1080"]
+    assert server.selected_dash_video_representation_id(video_url) == "v1080"
+
+
+def test_local_hls_proxy_server_dash_direct_media_urls_rejects_segmented_manifest() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v1" bandwidth="2800000" mimeType="video/mp4">
+        <BaseURL>https://media.example/video/</BaseURL>
+        <SegmentTemplate media="seg-$Number$.m4s" duration="4" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000" mimeType="audio/mp4">
+        <BaseURL>https://media.example/audio.m4a</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+
+    # 分段模板清单:视频不是完整文件;音频虽是单文件也不能只直连音频丢视频,整体回退 .mpd
+    assert server.dash_direct_media_urls(mpd_url) == ("", "")
+
+
+def test_local_hls_proxy_server_dash_direct_media_urls_for_video_only_manifest() -> None:
+    server = LocalHlsProxyServer()
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v480" bandwidth="600000" width="854" height="480" mimeType="video/mp4">
+        <BaseURL>https://media.example/video-480.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+
+    video_url, audio_url = server.dash_direct_media_urls(mpd_url)
+
+    assert video_url == f"http://{server.host}:{server.port}/dash/asset/{token}/0.m4s"
+    assert audio_url == ""
+
+
+def test_m3u8_ad_filter_prefers_dash_direct_media_over_manifest_url() -> None:
+    server = LocalHlsProxyServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v720" bandwidth="1200000" width="1280" height="720" mimeType="video/mp4">
+        <BaseURL>https://media.example/video-720.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a1" bandwidth="128000" mimeType="audio/mp4">
+        <BaseURL>https://media.example/audio.m4a</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+
+    prepared_url = ad_filter.prepare(payload, {"Referer": "https://www.bilibili.com/"})
+
+    assert prepared_url.startswith(f"http://{server.host}:{server.port}/dash/asset/")
+    assert prepared_url.endswith("/0.m4s")
+    external_audio = ad_filter.dash_external_audio_url(prepared_url)
+    assert external_audio.startswith(f"http://{server.host}:{server.port}/dash/asset/")
+    assert external_audio.endswith("/1.m4s")
+    # 画质菜单仍能从直连地址取到表示列表
+    assert [rep.id for rep in ad_filter.dash_video_qualities(prepared_url)] == ["v720"]
+    assert ad_filter.selected_dash_video_quality(prepared_url) == "v720"
+
+
+def test_m3u8_ad_filter_keeps_manifest_url_without_dash_direct_media() -> None:
+    server = LocalHlsProxyServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
+    raw_xml = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v1" bandwidth="2800000" mimeType="video/mp4">
+        <SegmentTemplate media="seg-$Number$.m4s" duration="4" startNumber="1"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    payload = "data:application/dash+xml;base64," + __import__("base64").b64encode(raw_xml.encode("utf-8")).decode("ascii")
+
+    prepared_url = ad_filter.prepare(payload, {})
+
+    assert prepared_url.startswith(f"http://{server.host}:{server.port}/dash/")
+    assert prepared_url.endswith(".mpd")
+    assert ad_filter.dash_external_audio_url(prepared_url) == ""
+
+
 def test_local_hls_proxy_server_proxies_dash_asset_with_range_headers() -> None:
     requests: list[tuple[str, dict[str, str]]] = []
 
