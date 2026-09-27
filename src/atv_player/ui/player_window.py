@@ -10222,6 +10222,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _build_video_context_menu(self) -> QMenu:
         menu = QMenu(self)
+        # 直播会话:章节/刮削/重写剧集标题/搜索字幕/弹幕源/弹幕设置都是点播概念,不进菜单;
+        # "弹幕配置"子菜单在直播模式镜像弹幕下拉框(弹幕/关闭),与"直播弹幕"开关重复,同样不进。
+        live = self._current_session_is_live()
         menu.addMenu(self._build_primary_subtitle_menu(menu))
         menu.addMenu(self._build_secondary_subtitle_menu(menu))
         menu.addMenu(self._build_subtitle_position_menu(menu, title="主字幕位置", secondary=False))
@@ -10235,17 +10238,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         menu.addMenu(self._build_shader_menu(menu))
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
-        menu.addMenu(self._build_chapter_menu(menu))
-        menu.addMenu(self._build_danmaku_menu(menu))
-        live_danmaku_action = menu.addAction("直播弹幕")
-        live_danmaku_action.setCheckable(True)
-        live_danmaku_action.setChecked(self._live_danmaku_enabled())
-        live_danmaku_action.triggered.connect(self._toggle_live_danmaku_from_menu)
-        menu.addAction("刮削", self._open_metadata_scrape_dialog)
-        menu.addAction("重写剧集标题", self._rerun_episode_title_enhancement)
-        menu.addAction("搜索字幕", self._open_subtitle_search_dialog)
-        menu.addAction("弹幕源", self._open_danmaku_source_dialog)
-        menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
+        if not live:
+            menu.addMenu(self._build_chapter_menu(menu))
+            menu.addMenu(self._build_danmaku_menu(menu))
+        if self._live_danmaku_room_for_current_session() is not None:
+            live_danmaku_action = menu.addAction("直播弹幕")
+            live_danmaku_action.setCheckable(True)
+            live_danmaku_action.setChecked(self._live_danmaku_enabled())
+            live_danmaku_action.triggered.connect(self._toggle_live_danmaku_from_menu)
+        if not live:
+            menu.addAction("刮削", self._open_metadata_scrape_dialog)
+            menu.addAction("重写剧集标题", self._rerun_episode_title_enhancement)
+            menu.addAction("搜索字幕", self._open_subtitle_search_dialog)
+            menu.addAction("弹幕源", self._open_danmaku_source_dialog)
+            menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         telemetry_action = menu.addAction("播放遥测")
         telemetry_action.setCheckable(True)

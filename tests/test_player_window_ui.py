@@ -3378,6 +3378,63 @@ def test_player_window_video_context_menu_contains_danmaku_source_action_when_ca
     assert any(action.text() == "弹幕设置" for action in menu.actions())
 
 
+def _make_live_player_session(vod_id: str = "douyu$12345") -> PlayerSession:
+    return PlayerSession(
+        vod=VodItem(vod_id=vod_id, vod_name="主播A的直播间", detail_style="live"),
+        playlist=[PlayItem(title="主播A的直播间", url="http://live/1.flv", vod_id=vod_id)],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="live",
+    )
+
+
+def test_player_window_live_context_menu_hides_vod_only_actions(qtbot) -> None:
+    """直播右键菜单:点播专属项(章节/刮削/重写标题/搜索字幕/弹幕源/弹幕设置)不出现。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    window.open_session(_make_live_player_session())
+    menu = window._build_video_context_menu()
+    texts = [action.text() for action in menu.actions()]
+
+    for hidden in ("章节", "弹幕配置", "刮削", "重写剧集标题", "搜索字幕", "弹幕源", "弹幕设置"):
+        assert hidden not in texts
+    # 弹幕去重:直播间只保留"直播弹幕"一个开关,不再有镜像下拉框的"弹幕配置"子菜单
+    assert "直播弹幕" in texts
+
+
+def test_player_window_live_context_menu_skips_danmaku_toggle_without_room(qtbot) -> None:
+    """自订 m3u 频道解析不出直播间:直播弹幕开关也不出现(无房间可连)。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    window.open_session(_make_live_player_session(vod_id="custom-channel:1:cctv1"))
+    menu = window._build_video_context_menu()
+    texts = [action.text() for action in menu.actions()]
+
+    assert "直播弹幕" not in texts
+    assert "弹幕配置" not in texts
+
+
+def test_player_window_vod_context_menu_keeps_danmaku_actions(qtbot) -> None:
+    """点播会话不受影响:弹幕配置/弹幕源/弹幕设置仍在,直播弹幕不再混入。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    window.open_session(make_player_session(start_index=0))
+    menu = window._build_video_context_menu()
+    texts = [action.text() for action in menu.actions()]
+
+    assert "弹幕配置" in texts
+    assert "弹幕源" in texts
+    assert "弹幕设置" in texts
+    assert "直播弹幕" not in texts
+
+
 def test_player_window_video_context_menu_keeps_danmaku_source_action_enabled_without_candidates(qtbot) -> None:
     item = PlayItem(
         title="第1集",
