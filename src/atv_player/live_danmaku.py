@@ -409,8 +409,8 @@ class LiveDanmakuRenderer:
 
     FRAME_INTERVAL_MS = 33
     POLL_INTERVAL_MS = 2000.0
-    # 弹幕穿屏时长相对后端配置的放大倍数:越大滚动越慢
-    SCROLL_SLOWDOWN = 2.0
+    # 弹幕穿屏时长相对后端配置的放大倍数:越大滚动越慢(用户要求偏慢,正常档 8s→24s)
+    SCROLL_SLOWDOWN = 3.0
 
     def __init__(self, present: Callable[[str | None, int, int], None]) -> None:
         self._present = present
