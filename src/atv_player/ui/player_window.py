@@ -1642,6 +1642,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.favorite_button.clicked.connect(self._toggle_current_favorite)
         self.following_button = self._create_icon_button("following.svg", "加入追更")
         self.following_button.clicked.connect(self._toggle_current_following)
+        self.follow_streamer_button = self._create_icon_button("favorite.svg", "关注主播")
+        self.follow_streamer_button.clicked.connect(self._toggle_current_follow_streamer)
         self.detail_actions_widget = QWidget()
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1675,6 +1677,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._metadata_heading_row.addWidget(
             self.following_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._metadata_heading_row.addWidget(
+            self.follow_streamer_button, 0, Qt.AlignmentFlag.AlignVCenter
         )
         self._metadata_heading_row.addStretch(1)
         self._metadata_heading_row.addWidget(self._metadata_original_toggle, 0, Qt.AlignmentFlag.AlignRight)
@@ -2557,8 +2562,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self.favorite_button.setStyleSheet(qss)
         self.following_button.setStyleSheet(qss)
+        self.follow_streamer_button.setStyleSheet(qss)
         self._refresh_favorite_button()
         self._refresh_following_button()
+        self._refresh_follow_streamer_button()
 
     def _create_icon_button(
         self,
@@ -3612,6 +3619,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._clear_detail_action_buttons()
         self._refresh_favorite_button()
         self._refresh_following_button()
+        self._refresh_follow_streamer_button()
         actions = self._current_detail_actions()
         self.detail_actions_widget.setHidden(not actions)
         for action in actions:
@@ -3655,11 +3663,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         session = self.session
         return session is not None and str(getattr(session, "source_kind", "") or "") == "bilibili"
 
+    def _current_session_is_live(self) -> bool:
+        """网络直播会话(source_kind=live,含自订直播源):收藏/追更对直播间无意义,换关注主播。"""
+        session = self.session
+        return session is not None and str(getattr(session, "source_kind", "") or "").strip().lower() == "live"
+
     def _refresh_favorite_button(self) -> None:
         item = self._current_play_item()
         active = item is not None and self._favorite_is_active(item)
         tooltip = "取消收藏" if active else "加入收藏"
-        self.favorite_button.setHidden(item is None or self._hides_local_favorite_buttons())
+        self.favorite_button.setHidden(
+            item is None or self._hides_local_favorite_buttons() or self._current_session_is_live()
+        )
         self.favorite_button.setToolTip(tooltip)
         self.favorite_button.setAccessibleName(tooltip)
         self.favorite_button.setProperty("favorite_active", active)
@@ -3669,11 +3684,45 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         item = self._current_play_item()
         active = item is not None and self._following_is_active(item)
         tooltip = "取消追更" if active else "加入追更"
-        self.following_button.setHidden(item is None or self._hides_local_favorite_buttons())
+        self.following_button.setHidden(
+            item is None or self._hides_local_favorite_buttons() or self._current_session_is_live()
+        )
         self.following_button.setToolTip(tooltip)
         self.following_button.setAccessibleName(tooltip)
         self.following_button.setProperty("following_active", active)
         self._set_following_button_icon(active)
+
+    def _refresh_follow_streamer_button(self) -> None:
+        item = self._current_play_item()
+        visible = item is not None and self._current_session_is_live() and not self._hides_local_favorite_buttons()
+        # 关注主播 = 收藏直播间:收藏页已支持 live 记录展示与一键重开
+        active = visible and self._favorite_is_active(item)
+        tooltip = "取消关注" if active else "关注主播"
+        self.follow_streamer_button.setHidden(not visible)
+        self.follow_streamer_button.setToolTip(tooltip)
+        self.follow_streamer_button.setAccessibleName(tooltip)
+        self.follow_streamer_button.setProperty("follow_streamer_active", active)
+        self._set_follow_streamer_button_icon(active)
+
+    def _set_follow_streamer_button_icon(self, active: bool) -> None:
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        icon_name = "favorite-filled.svg" if active else "favorite.svg"
+        color = self._FAVORITE_ACTIVE_ICON_COLOR if active else tokens.text_secondary
+        self.follow_streamer_button.setProperty("icon_name", icon_name)
+        self.follow_streamer_button.setIcon(
+            tint_icon(
+                load_icon(self._icons_dir / icon_name),
+                color,
+                size=self.follow_streamer_button.iconSize(),
+            )
+        )
+
+    def _toggle_current_follow_streamer(self) -> None:
+        item = self._current_play_item()
+        if item is None:
+            return
+        self._favorite_toggle(item)
+        self._refresh_follow_streamer_button()
 
     def _set_favorite_button_icon(self, active: bool) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())

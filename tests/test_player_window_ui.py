@@ -10792,6 +10792,58 @@ def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
     assert window.favorite_button.property("icon_name") == "favorite.svg"
 
 
+def test_player_window_live_session_replaces_buttons_with_follow_streamer(qtbot) -> None:
+    """直播会话:收藏/追更按钮让位,关注主播=收藏直播间(收藏页可重开)。"""
+    favorite_ids: set[str] = set()
+    toggled: list[str] = []
+
+    def toggle_favorite(current_item: PlayItem) -> None:
+        toggled.append(current_item.vod_id)
+        if current_item.vod_id in favorite_ids:
+            favorite_ids.remove(current_item.vod_id)
+        else:
+            favorite_ids.add(current_item.vod_id)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="live-room-1", vod_name="主播A的直播间", detail_style="live"),
+        playlist=[PlayItem(title="主播A的直播间", url="http://live/1.flv", vod_id="live-room-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="live",
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+        favorite_is_active=lambda current_item: current_item.vod_id in favorite_ids,
+        favorite_toggle=toggle_favorite,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.favorite_button.isHidden()
+    assert window.following_button.isHidden()
+    assert not window.follow_streamer_button.isHidden()
+    assert window.follow_streamer_button.toolTip() == "关注主播"
+    assert window.follow_streamer_button.property("icon_name") == "favorite.svg"
+    window.follow_streamer_button.click()
+
+    assert toggled == ["live-room-1"]
+    assert window.follow_streamer_button.toolTip() == "取消关注"
+    assert window.follow_streamer_button.property("follow_streamer_active") is True
+    assert window.follow_streamer_button.property("icon_name") == "favorite-filled.svg"
+
+    # 非直播会话:恢复收藏/追更,关注主播按钮隐藏
+    window.open_session(make_player_session(start_index=0))
+
+    assert not window.favorite_button.isHidden()
+    assert not window.following_button.isHidden()
+    assert window.follow_streamer_button.isHidden()
+
+
 def test_player_window_following_button_sits_next_to_favorite(
     qtbot,
 ) -> None:
