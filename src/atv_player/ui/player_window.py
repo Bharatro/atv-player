@@ -114,6 +114,14 @@ from atv_player.controllers.player_controller import (
     split_drive_path,
 )
 from atv_player.player.resume import drive_relative_path
+from atv_player.live_danmaku import (
+    LiveDanmakuConfig,
+    LiveDanmakuMessage,
+    LiveDanmakuPoller,
+    LiveDanmakuRenderer,
+    LiveDanmakuSink,
+    resolve_live_room,
+)
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
 from atv_player.models import (
     ExternalSubtitleOption,
@@ -726,6 +734,13 @@ class _DanmakuRenderSignals(QObject):
     failed = Signal(int, str)
 
 
+class _LiveDanmakuSignals(QObject):
+    # 轮询线程 → 主线程:config/batch(list,online|None)
+    config = Signal(object)
+    batch = Signal(object, object)
+    stopped = Signal(str)
+
+
 class _ExternalSubtitleFetchSignals(QObject):
     succeeded = Signal(int, object, str)
     failed = Signal(int, object, str)
@@ -1329,6 +1344,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_render_signals = _DanmakuRenderSignals()
         self._connect_async_signal(self._danmaku_render_signals.succeeded, self._handle_danmaku_render_succeeded)
         self._connect_async_signal(self._danmaku_render_signals.failed, self._handle_danmaku_render_failed)
+        self._live_danmaku_signals = _LiveDanmakuSignals()
+        signals = self._live_danmaku_signals
+        self._connect_async_signal(signals.config, self._handle_live_danmaku_config)
+        self._connect_async_signal(signals.batch, self._handle_live_danmaku_batch)
+        self._connect_async_signal(signals.stopped, self._handle_live_danmaku_stopped)
+        self._live_danmaku_poller: LiveDanmakuPoller | None = None
+        self._live_danmaku_renderer: LiveDanmakuRenderer | None = None
+        self._live_danmaku_room: tuple[str, str] | None = None
+        self._danmaku_combo_live = False
         self._external_subtitle_fetch_signals = _ExternalSubtitleFetchSignals()
         self._connect_async_signal(
             self._external_subtitle_fetch_signals.succeeded,
@@ -5176,6 +5200,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._clear_active_danmaku()
         self._reset_danmaku_combo()
+        # 直播弹幕与点播弹幕(ASS 轨道)互不相干:这里按当前会话房间启停,
+        # 同一直播间换线路不清屏;失败路径提前 return 时弹幕也随之停止。
+        live_danmaku_active = self._sync_live_danmaku_for_current_item()
+        in_live_room = self._live_danmaku_room_for_current_session() is not None
+        if live_danmaku_active or in_live_room:
+            # 直播间:控制栏弹幕下拉框切到直播模式(开/关),本地关掉时停在"关闭"项
+            self._reset_danmaku_combo(
+                enabled=True,
+                live=True,
+                current_index=0 if live_danmaku_active else 1,
+            )
         self._video_quality_options = []
         self._reset_video_quality_combo()
         self._refresh_parse_combo_enabled_state()
@@ -7550,15 +7585,30 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.subtitle_combo.blockSignals(False)
         self._refresh_width_adaptive_control_visibility()
 
-    def _reset_danmaku_combo(self, *, enabled: bool = False, current_index: int = 0) -> None:
+    def _reset_danmaku_combo(
+        self,
+        *,
+        enabled: bool = False,
+        current_index: int = 0,
+        live: bool = False,
+    ) -> None:
         self.danmaku_combo.blockSignals(True)
         self.danmaku_combo.clear()
-        labels = ["弹幕", "关闭", *(f"{line_count}行" for line_count in range(1, 11))]
+        if live:
+            # 直播弹幕走后端轮询+OSD,没有时间轴轨道,只保留开/关
+            labels = ["弹幕", "关闭"]
+        else:
+            labels = [
+                "弹幕",
+                "关闭",
+                *(f"{line_count}行" for line_count in range(1, 11)),
+            ]
         for label in labels:
             self.danmaku_combo.addItem(label)
         self.danmaku_combo.setCurrentIndex(current_index)
         self.danmaku_combo.setEnabled(enabled)
         self.danmaku_combo.blockSignals(False)
+        self._danmaku_combo_live = live
         self._refresh_width_adaptive_control_visibility()
 
     def _reset_video_quality_combo(self) -> None:
@@ -7704,6 +7754,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return max(1, min(index - 1, 10))
 
     def _refresh_danmaku_combo_from_preferences(self) -> None:
+        if self._danmaku_combo_live:
+            self._reset_danmaku_combo(
+                enabled=True,
+                live=True,
+                current_index=0 if self._live_danmaku_enabled() else 1,
+            )
+            return
         self._reset_danmaku_combo(enabled=self.danmaku_combo.isEnabled(), current_index=self._preferred_danmaku_combo_index())
 
     def _save_preferred_danmaku_selection(self, index: int) -> None:
@@ -9017,6 +9074,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _configure_danmaku_for_current_item(self) -> None:
         self._danmaku_retry_timer.stop()
+        if self._danmaku_combo_live:
+            # 直播会话:下拉框由直播弹幕逻辑管理(弹幕/关闭),没有点播弹幕轨道;
+            # 无 XML 的重置路径会把刚启用的下拉框打回禁用态
+            return
         xml_text = self._current_play_item_danmaku_xml()
         if not xml_text:
             if self.session is not None and self.session.playlist[self.current_index].danmaku_pending:
@@ -9321,7 +9382,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._clear_primary_external_subtitle()
 
     def _change_danmaku_selection(self, index: int) -> None:
-        if index < 0 or not self._current_play_item_danmaku_xml():
+        if index < 0:
+            return
+        if self._danmaku_combo_live:
+            self._apply_live_danmaku_enabled(index != 1)
+            return
+        if not self._current_play_item_danmaku_xml():
             return
         self._save_preferred_danmaku_selection(index)
         if index == 1:
@@ -10122,6 +10188,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_chapter_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
+        live_danmaku_action = menu.addAction("直播弹幕")
+        live_danmaku_action.setCheckable(True)
+        live_danmaku_action.setChecked(self._live_danmaku_enabled())
+        live_danmaku_action.triggered.connect(self._toggle_live_danmaku_from_menu)
         menu.addAction("刮削", self._open_metadata_scrape_dialog)
         menu.addAction("重写剧集标题", self._rerun_episode_title_enhancement)
         menu.addAction("搜索字幕", self._open_subtitle_search_dialog)
@@ -12758,6 +12828,129 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self.telemetry_label.setGeometry(0, 0, badge_size.width(), badge_size.height())
 
+    # ── 直播实时弹幕(后端 /live/danmaku 轮询,mpv OSD 渲染) ───────────────
+
+    def _sync_live_danmaku_canvas(self) -> None:
+        renderer = self._live_danmaku_renderer
+        if renderer is None:
+            return
+        size = self.video_stack.size()
+        if size.width() > 0 and size.height() > 0:
+            renderer.set_canvas_size(size.width(), size.height())
+
+    def _live_danmaku_enabled(self) -> bool:
+        return bool(getattr(self.config, "live_danmaku_enabled", True))
+
+    def _live_danmaku_room_for_current_session(self) -> tuple[str, str] | None:
+        session = self.session
+        if session is None:
+            return None
+        return resolve_live_room(
+            getattr(session, "source_kind", ""), getattr(session.vod, "vod_id", "")
+        )
+
+    def _sync_live_danmaku_for_current_item(self) -> bool:
+        room = (
+            self._live_danmaku_room_for_current_session()
+            if self._live_danmaku_enabled()
+            else None
+        )
+        if room is None:
+            self._stop_live_danmaku()
+            return False
+        poller = self._live_danmaku_poller
+        if poller is not None and self._live_danmaku_room == room and poller.running:
+            # 同一直播间换清晰度线路会重新走播放流程,此时不重启,避免清屏
+            return True
+        self._stop_live_danmaku()
+        return self._start_live_danmaku(room)
+
+    def _start_live_danmaku(self, room: tuple[str, str]) -> bool:
+        api_client = getattr(self.controller, "api_client", None)
+        fetch = getattr(api_client, "poll_live_danmaku", None)
+        if fetch is None:
+            return False
+        platform, room_id = room
+        signals = self._live_danmaku_signals
+        poller = LiveDanmakuPoller(
+            platform,
+            room_id,
+            fetch,
+            LiveDanmakuSink(
+                on_config=signals.config.emit,
+                on_batch=signals.batch.emit,
+                on_stopped=signals.stopped.emit,
+            ),
+        )
+        renderer = LiveDanmakuRenderer(self.video_widget.present_live_danmaku)
+        self._live_danmaku_room = room
+        self._live_danmaku_poller = poller
+        self._live_danmaku_renderer = renderer
+        self._sync_live_danmaku_canvas()
+        renderer.start()
+        poller.start()
+        self._append_log(f"直播弹幕已连接: {platform}${room_id}")
+        return True
+
+    def _stop_live_danmaku(self) -> None:
+        poller = self._live_danmaku_poller
+        renderer = self._live_danmaku_renderer
+        self._live_danmaku_poller = None
+        self._live_danmaku_renderer = None
+        self._live_danmaku_room = None
+        if poller is not None:
+            poller.stop()
+        if renderer is not None:
+            # 先停渲染线程(避免停顿中的帧晚于清屏指令落回画面),再清 OSD
+            renderer.stop()
+            renderer.clear()
+
+    def _toggle_live_danmaku_from_menu(self, checked: bool) -> None:
+        self._apply_live_danmaku_enabled(checked)
+
+    def _apply_live_danmaku_enabled(self, enabled: bool) -> None:
+        """右键菜单与控制栏下拉框共用的直播弹幕开关(持久化到本地配置)。"""
+        changed = getattr(self.config, "live_danmaku_enabled", True) != enabled
+        if self.config is not None and changed:
+            self.config.live_danmaku_enabled = enabled
+            self._save_config()
+        if enabled:
+            active = self._sync_live_danmaku_for_current_item()
+        else:
+            self._stop_live_danmaku()
+            active = False
+        if self._danmaku_combo_live:
+            self._reset_danmaku_combo(
+                enabled=True,
+                live=True,
+                current_index=0 if active else 1,
+            )
+
+    def _handle_live_danmaku_config(self, config: LiveDanmakuConfig) -> None:
+        renderer = self._live_danmaku_renderer
+        if renderer is not None:
+            self._sync_live_danmaku_canvas()
+            renderer.apply_config(config)
+
+    def _handle_live_danmaku_batch(
+        self, bullets: list[LiveDanmakuMessage], online: object
+    ) -> None:
+        renderer = self._live_danmaku_renderer
+        if renderer is not None:
+            renderer.feed(bullets, None if online is None else str(online))
+
+    def _handle_live_danmaku_stopped(self, reason: str) -> None:
+        # 仅 unsupported/giveup 会到这里(本地 stop 不发信号);清引用防 _sync 误判存活
+        poller = self._live_danmaku_poller
+        if poller is not None and not poller.running:
+            self._live_danmaku_poller = None
+            self._live_danmaku_room = None
+        renderer = self._live_danmaku_renderer
+        if renderer is not None:
+            renderer.clear()
+        self._append_log(f"直播弹幕已停止: {reason}")
+        self._append_log(f"直播弹幕已停止: {reason}")
+
     def _tick_skip_banner(self) -> None:
         kind = self._skip_banner_kind
         if kind is None:
@@ -13398,6 +13591,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._close_metadata_scrape_dialog()
         self._close_video_context_menu()
         self._hide_related_overlay()
+        self._stop_live_danmaku()
         self._remember_restore_state()
         try:
             self.controls.pause()
@@ -13773,6 +13967,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._close_help_dialog()
             self._close_video_context_menu()
             self._clear_active_danmaku()
+            self._stop_live_danmaku()
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             self._uninstall_danmaku_log_handler()
@@ -13821,6 +14016,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if watched is video_stack and event.type() == QEvent.Type.Resize:
             self._position_skip_banner()
             self._position_telemetry_badge()
+            self._sync_live_danmaku_canvas()
             if not self.related_overlay.isHidden():
                 self._position_related_overlay()
         related_scroll = getattr(self, "related_overlay_scroll", None)

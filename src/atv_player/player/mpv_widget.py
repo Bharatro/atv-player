@@ -98,6 +98,8 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 }
 
 logger = logging.getLogger(__name__)
+# 直播弹幕专用的 osd-overlay id(避免与其它 OSD 覆盖层冲突)
+_LIVE_DANMAKU_OSD_ID = 4242
 # mpv_terminate_destroy 会同步等待全部内部线程退出;ffmpeg demuxer 卡死时永不返回。
 # shutdown() 在 GUI 线程被调用,terminate 挪到后台线程执行,
 # 超过该时长仍未返回则放弃等待(泄漏实例)。
@@ -1372,6 +1374,47 @@ class MpvWidget(QWidget):
             return
         if hasattr(player, "loadfile"):
             player.loadfile(audio_files, "append")
+
+    # ── 直播弹幕 OSD(ass-events 由 live_danmaku 渲染器产出) ───────────
+
+    def present_live_danmaku(self, data: str | None, res_w: int, res_h: int) -> None:
+        """把 ASS 事件帧交给 mpv osd-overlay 合成;data 为 None 表示清除。
+
+        弹幕画在 mpv 自己的 OSD 里(Wayland/XWayland 下 Qt 原生叠加层
+        无法透明),坐标空间 res_w/res_h 即视频窗口像素。渲染循环跑在
+        独立线程(python-mpv 命令线程安全),不经 UI 线程转发,避免
+        30fps 同步命令被 UI 阻塞造成滚动卡顿。
+        """
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return
+        try:
+            if data:
+                player.command(
+                    "osd-overlay",
+                    id=_LIVE_DANMAKU_OSD_ID,
+                    format="ass-events",
+                    data=data,
+                    res_x=max(1, res_w),
+                    res_y=max(1, res_h),
+                )
+            else:
+                # 本机 mpv 不接受 format="none"(python-mpv 的 osd_overlay_remove
+                # 同样报 -4);空 ass-events 数据等效清屏。
+                player.command(
+                    "osd-overlay",
+                    id=_LIVE_DANMAKU_OSD_ID,
+                    format="ass-events",
+                    data="",
+                    res_x=16,
+                    res_y=16,
+                )
+        except Exception:
+            if not getattr(player, "core_shutdown", False):
+                logger.debug("live danmaku osd update failed", exc_info=True)
+
+    def clear_live_danmaku(self) -> None:
+        self.present_live_danmaku(None, 0, 0)
 
     def attach_audio_cover(self, poster_image_path: str) -> None:
         if not self._on_widget_thread():

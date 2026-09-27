@@ -100,8 +100,11 @@ class ApiClient:
                 summary[str(key)] = value
         return summary or None
 
-    def _request(self, method: str, url: str, **kwargs: Any) -> Any:
-        logger.info(
+    def _request(
+        self, method: str, url: str, *, quiet: bool = False, **kwargs: Any
+    ) -> Any:
+        log = logger.debug if quiet else logger.info
+        log(
             "API request method=%s url=%s params=%s",
             method,
             url,
@@ -277,6 +280,20 @@ class ApiClient:
 
     def get_live_detail(self, vod_id: str) -> dict[str, Any]:
         return self._request("GET", f"/live/{self._vod_token}", params={"ids": vod_id, "platform": "gui"})
+
+    def poll_live_danmaku(
+        self,
+        platform: str,
+        room_id: str,
+        after: int | None = None,
+    ) -> dict[str, Any] | None:
+        """直播弹幕增量轮询。2 秒级高频调用,quiet 降日志避免刷爆应用日志。"""
+        params: dict[str, Any] = {"platform": platform, "roomId": room_id}
+        if after is not None:
+            params["after"] = after
+        return self._request(
+            "GET", f"/live/danmaku/{self._vod_token}", params=params, quiet=True
+        )
 
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")

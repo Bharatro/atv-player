@@ -120,6 +120,10 @@ class PlayerController:
 
     def __init__(self, api_client) -> None:
         self._api_client = api_client
+
+    @property
+    def api_client(self):
+        return self._api_client
         self._prefetch_timer_factory = lambda delay_seconds, callback: threading.Timer(delay_seconds, callback)
 
     def _bind_playback_loader(
