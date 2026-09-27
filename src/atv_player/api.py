@@ -295,6 +295,31 @@ class ApiClient:
             "GET", f"/live/danmaku/{self._vod_token}", params=params, quiet=True
         )
 
+    def follow_live_streamer(self, platform: str, room_id: str) -> dict[str, Any]:
+        """关注直播间(服务端按 token 归属用户落库,自动补全房间信息)。"""
+        return self._request(
+            "POST",
+            f"/live/{self._vod_token}/follow",
+            json={"platform": platform, "roomId": room_id},
+        )
+
+    def unfollow_live_streamer(self, platform: str, room_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/live/{self._vod_token}/unfollow",
+            json={"platform": platform, "roomId": room_id},
+        )
+
+    def list_followed_live_rooms(self) -> list[dict[str, Any]]:
+        """关注列表(t=follow 分类同源),vod_id 形如 platform$roomId。"""
+        payload = self._request(
+            "GET",
+            f"/live/{self._vod_token}",
+            params={"t": "follow", "ac": "gui", "pg": 1},
+            quiet=True,
+        )
+        return list((payload or {}).get("list") or [])
+
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")
 

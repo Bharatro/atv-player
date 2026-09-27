@@ -741,6 +741,12 @@ class _LiveDanmakuSignals(QObject):
     stopped = Signal(str)
 
 
+class _LiveFollowSignals(QObject):
+    # 关注请求线程 → 主线程:loaded=set[vod_id]|None(失败);toggled=(key,目标态,成功,失败原因)
+    loaded = Signal(object)
+    toggled = Signal(str, bool, bool, str)
+
+
 class _ExternalSubtitleFetchSignals(QObject):
     succeeded = Signal(int, object, str)
     failed = Signal(int, object, str)
@@ -1353,6 +1359,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._live_danmaku_renderer: LiveDanmakuRenderer | None = None
         self._live_danmaku_room: tuple[str, str] | None = None
         self._danmaku_combo_live = False
+        self._live_follow_signals = _LiveFollowSignals()
+        self._connect_async_signal(self._live_follow_signals.loaded, self._handle_live_follow_loaded)
+        self._connect_async_signal(self._live_follow_signals.toggled, self._handle_live_follow_toggled)
+        # 服务端关注列表缓存(platform$roomId 集合);None=未加载,加载失败后有 _failed 防重试风暴
+        self._followed_live_rooms: set[str] | None = None
+        self._live_follow_loading = False
+        self._live_follow_failed = False
+        self._live_follow_pending_key: str | None = None
         self._external_subtitle_fetch_signals = _ExternalSubtitleFetchSignals()
         self._connect_async_signal(
             self._external_subtitle_fetch_signals.succeeded,
@@ -3692,17 +3706,106 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.following_button.setProperty("following_active", active)
         self._set_following_button_icon(active)
 
+    def _live_follow_api(self):
+        """控制器上的 api_client 且带直播关注三件套;老服务端没有时按钮退场。"""
+        api_client = getattr(self.controller, "api_client", None)
+        if api_client is None or getattr(api_client, "follow_live_streamer", None) is None:
+            return None
+        return api_client
+
     def _refresh_follow_streamer_button(self) -> None:
         item = self._current_play_item()
-        visible = item is not None and self._current_session_is_live() and not self._hides_local_favorite_buttons()
-        # 关注主播 = 收藏直播间:收藏页已支持 live 记录展示与一键重开
-        active = visible and self._favorite_is_active(item)
+        # 关注主播走服务端(POST /live/{token}/follow|unfollow,按用户落库):
+        # 仅服务器直播间(platform$roomId)可关注,自订 m3u 频道与老服务端不显示按钮
+        room = self._live_danmaku_room_for_current_session()
+        visible = (
+            item is not None
+            and room is not None
+            and self._live_follow_api() is not None
+            and not self._hides_local_favorite_buttons()
+        )
+        key = f"{room[0]}${room[1]}" if room is not None else ""
+        active = visible and key in (self._followed_live_rooms or set())
         tooltip = "取消关注" if active else "关注主播"
         self.follow_streamer_button.setHidden(not visible)
         self.follow_streamer_button.setToolTip(tooltip)
         self.follow_streamer_button.setAccessibleName(tooltip)
         self.follow_streamer_button.setProperty("follow_streamer_active", active)
         self._set_follow_streamer_button_icon(active)
+        if (
+            visible
+            and self._followed_live_rooms is None
+            and not self._live_follow_loading
+            and not self._live_follow_failed
+        ):
+            self._load_followed_live_rooms()
+
+    def _load_followed_live_rooms(self) -> None:
+        api_client = self._live_follow_api()
+        if api_client is None:
+            return
+        self._live_follow_loading = True
+
+        def run() -> None:
+            rooms: object
+            try:
+                rooms = {str(entry.get("vod_id") or "") for entry in api_client.list_followed_live_rooms()}
+            except Exception:
+                rooms = None
+            self._live_follow_signals.loaded.emit(rooms)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_live_follow_loaded(self, rooms: object) -> None:
+        self._live_follow_loading = False
+        if rooms is None:
+            # 失败只标记不再重试,按钮按未关注显示,点按仍会发请求(可自愈)
+            self._live_follow_failed = True
+            self._append_log("直播关注列表加载失败")
+        else:
+            self._followed_live_rooms = set(rooms)  # type: ignore[arg-type]
+        self._refresh_follow_streamer_button()
+
+    def _toggle_current_follow_streamer(self) -> None:
+        room = self._live_danmaku_room_for_current_session()
+        api_client = self._live_follow_api()
+        if room is None or api_client is None:
+            return
+        platform, room_id = room
+        key = f"{platform}${room_id}"
+        if self._live_follow_pending_key is not None:
+            return
+        rooms = set(self._followed_live_rooms or set())
+        target_followed = key not in rooms
+        # 乐观翻转,失败回滚:网络往返期间按钮即时反馈
+        self._followed_live_rooms = rooms | {key} if target_followed else rooms - {key}
+        self._live_follow_pending_key = key
+        self._refresh_follow_streamer_button()
+
+        def run() -> None:
+            ok, message = True, ""
+            try:
+                if target_followed:
+                    api_client.follow_live_streamer(platform, room_id)
+                else:
+                    api_client.unfollow_live_streamer(platform, room_id)
+            except Exception as exc:
+                ok, message = False, str(exc)
+            self._live_follow_signals.toggled.emit(key, target_followed, ok, message)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_live_follow_toggled(self, key: str, followed: bool, ok: bool, message: str) -> None:
+        if self._live_follow_pending_key == key:
+            self._live_follow_pending_key = None
+        rooms = set(self._followed_live_rooms or set())
+        if not ok:
+            rooms = rooms - {key} if followed else rooms | {key}
+            self._append_log(f"{'关注主播' if followed else '取消关注'}失败: {message}")
+        else:
+            self._append_log("已关注主播,可在网络直播-关注分类查看" if followed else "已取消关注主播")
+        self._followed_live_rooms = rooms
+        self._refresh_follow_streamer_button()
 
     def _set_follow_streamer_button_icon(self, active: bool) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
@@ -3716,13 +3819,6 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                 size=self.follow_streamer_button.iconSize(),
             )
         )
-
-    def _toggle_current_follow_streamer(self) -> None:
-        item = self._current_play_item()
-        if item is None:
-            return
-        self._favorite_toggle(item)
-        self._refresh_follow_streamer_button()
 
     def _set_favorite_button_icon(self, active: bool) -> None:
         tokens = current_theme_manager().tokens_for(current_resolved_theme())
@@ -4283,6 +4379,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             session.source_index = 0
             session.playlist = session.playlists[session.playlist_index]
         self.session = session
+        # 关注列表随会话重开重新拉取(web 管理端/其他端可能已改),换线路重开会话也会刷新
+        self._followed_live_rooms = None
+        self._live_follow_failed = False
         self._playlist_sort_state.reset(session.playlists)
         initial_item = session.playlist[session.start_index] if 0 <= session.start_index < len(session.playlist) else None
         if initial_item is not None:

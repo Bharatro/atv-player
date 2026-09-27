@@ -10849,33 +10849,41 @@ def test_player_window_renders_detail_favorite_icon_button(qtbot) -> None:
     assert window.favorite_button.property("icon_name") == "favorite.svg"
 
 
+class FakeLiveFollowApi:
+    def __init__(self, followed=()) -> None:
+        self.followed = set(followed)
+        self.follow_calls: list[tuple[str, str]] = []
+        self.unfollow_calls: list[tuple[str, str]] = []
+        self.fail_follow = False
+
+    def list_followed_live_rooms(self):
+        return [{"vod_id": key} for key in sorted(self.followed)]
+
+    def follow_live_streamer(self, platform: str, room_id: str) -> None:
+        if self.fail_follow:
+            raise RuntimeError("房间校验失败")
+        self.follow_calls.append((platform, room_id))
+        self.followed.add(f"{platform}${room_id}")
+
+    def unfollow_live_streamer(self, platform: str, room_id: str) -> None:
+        self.unfollow_calls.append((platform, room_id))
+        self.followed.discard(f"{platform}${room_id}")
+
+
 def test_player_window_live_session_replaces_buttons_with_follow_streamer(qtbot) -> None:
-    """直播会话:收藏/追更按钮让位,关注主播=收藏直播间(收藏页可重开)。"""
-    favorite_ids: set[str] = set()
-    toggled: list[str] = []
-
-    def toggle_favorite(current_item: PlayItem) -> None:
-        toggled.append(current_item.vod_id)
-        if current_item.vod_id in favorite_ids:
-            favorite_ids.remove(current_item.vod_id)
-        else:
-            favorite_ids.add(current_item.vod_id)
-
+    """直播会话:收藏/追更按钮让位,关注主播直连服务端 /live/{token}/follow。"""
+    api = FakeLiveFollowApi(followed={"douyu$999"})
+    controller = FakePlayerController()
+    controller.api_client = api
     session = PlayerSession(
-        vod=VodItem(vod_id="live-room-1", vod_name="主播A的直播间", detail_style="live"),
-        playlist=[PlayItem(title="主播A的直播间", url="http://live/1.flv", vod_id="live-room-1")],
+        vod=VodItem(vod_id="douyu$12345", vod_name="主播A的直播间", detail_style="live"),
+        playlist=[PlayItem(title="主播A的直播间", url="http://live/1.flv", vod_id="douyu$12345")],
         start_index=0,
         start_position_seconds=0,
         speed=1.0,
         source_kind="live",
     )
-    window = PlayerWindow(
-        FakePlayerController(),
-        config=AppConfig(),
-        save_config=lambda: None,
-        favorite_is_active=lambda current_item: current_item.vod_id in favorite_ids,
-        favorite_toggle=toggle_favorite,
-    )
+    window = PlayerWindow(controller)
     qtbot.addWidget(window)
     window.video = RecordingVideo()
 
@@ -10883,15 +10891,21 @@ def test_player_window_live_session_replaces_buttons_with_follow_streamer(qtbot)
 
     assert window.favorite_button.isHidden()
     assert window.following_button.isHidden()
-    assert not window.follow_streamer_button.isHidden()
+    qtbot.waitUntil(lambda: not window.follow_streamer_button.isHidden())
+    # 关注列表异步加载完成前按未关注显示;加载后仍不在列表 → 关注主播
+    qtbot.waitUntil(lambda: window._followed_live_rooms == {"douyu$999"})
     assert window.follow_streamer_button.toolTip() == "关注主播"
-    assert window.follow_streamer_button.property("icon_name") == "favorite.svg"
     window.follow_streamer_button.click()
 
-    assert toggled == ["live-room-1"]
+    qtbot.waitUntil(lambda: api.follow_calls == [("douyu", "12345")])
+    qtbot.waitUntil(lambda: window._live_follow_pending_key is None)
     assert window.follow_streamer_button.toolTip() == "取消关注"
     assert window.follow_streamer_button.property("follow_streamer_active") is True
     assert window.follow_streamer_button.property("icon_name") == "favorite-filled.svg"
+    window.follow_streamer_button.click()
+
+    qtbot.waitUntil(lambda: api.unfollow_calls == [("douyu", "12345")])
+    qtbot.waitUntil(lambda: window.follow_streamer_button.toolTip() == "关注主播")
 
     # 非直播会话:恢复收藏/追更,关注主播按钮隐藏
     window.open_session(make_player_session(start_index=0))
@@ -10899,6 +10913,47 @@ def test_player_window_live_session_replaces_buttons_with_follow_streamer(qtbot)
     assert not window.favorite_button.isHidden()
     assert not window.following_button.isHidden()
     assert window.follow_streamer_button.isHidden()
+
+
+def test_player_window_live_follow_failure_reverts_button_state(qtbot) -> None:
+    """关注请求失败:乐观翻转回滚,按钮回到未关注。"""
+    api = FakeLiveFollowApi()
+    api.fail_follow = True
+    controller = FakePlayerController()
+    controller.api_client = api
+    session = PlayerSession(
+        vod=VodItem(vod_id="huya$113524", vod_name="主播B", detail_style="live"),
+        playlist=[PlayItem(title="主播B", url="http://live/2.flv", vod_id="huya$113524")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="live",
+    )
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: not window.follow_streamer_button.isHidden())
+    window.follow_streamer_button.click()
+    # 请求失败后回滚:pending 清空、按钮回到未关注
+    qtbot.waitUntil(lambda: window._live_follow_pending_key is None)
+    qtbot.waitUntil(lambda: window.follow_streamer_button.property("follow_streamer_active") is False)
+    assert api.follow_calls == []
+
+
+def test_player_window_live_follow_button_hidden_without_backend_api(qtbot) -> None:
+    """老服务端(无 follow 接口)与自订 m3u 频道:按钮不显示,收藏/追更仍让位。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.progress_timer.stop()
+
+    window.open_session(_make_live_player_session())
+
+    assert window.follow_streamer_button.isHidden()
+    assert window.favorite_button.isHidden()
+    assert window.following_button.isHidden()
 
 
 def test_player_window_following_button_sits_next_to_favorite(

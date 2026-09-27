@@ -945,6 +945,50 @@ def test_api_client_gets_live_detail_by_ids() -> None:
     assert seen == {"path": "/live/Harold", "query": "ids=bili%241785607569&platform=gui"}
 
 
+def test_api_client_follows_live_streamer() -> None:
+    seen: list[tuple[str, str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.content.decode()))
+        return httpx.Response(200, json={"success": True, "followed": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.follow_live_streamer("douyu", "12345")
+    client.unfollow_live_streamer("douyu", "12345")
+
+    assert seen == [
+        ("POST", "/live/Harold/follow", '{"platform":"douyu","roomId":"12345"}'),
+        ("POST", "/live/Harold/unfollow", '{"platform":"douyu","roomId":"12345"}'),
+    ]
+
+
+def test_api_client_lists_followed_live_rooms() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": [{"vod_id": "huya$31313657"}], "total": 1})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    rooms = client.list_followed_live_rooms()
+
+    assert seen == {"path": "/live/Harold", "query": "t=follow&ac=gui&pg=1"}
+    assert rooms == [{"vod_id": "huya$31313657"}]
+
+
 def test_api_client_lists_emby_categories() -> None:
     seen = {"path": "", "query": ""}
 
