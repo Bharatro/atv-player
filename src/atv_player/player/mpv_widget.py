@@ -365,6 +365,9 @@ class MpvWidget(QWidget):
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
         self._player_property_cache: dict[str, object] = {}
+        # loadfile 刚发出就 audio-add(select)会撞上 AO 初始化竞态,mpv 返回 -12
+        # 但音轨往往实际已挂上;失败时记录,待 file-loaded 后校验补挂。
+        self._pending_external_audio_files = ""
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -769,6 +772,7 @@ class MpvWidget(QWidget):
         def handle_file_loaded(*_args) -> None:
             self._telemetry.clear()
             self._post_to_widget_thread(self.file_loaded.emit)
+            self._post_to_widget_thread(self._retry_pending_external_audio)
 
         self._file_loaded_handler = handle_file_loaded
         observe_property = getattr(self._player, "observe_property", None)
@@ -1171,6 +1175,7 @@ class MpvWidget(QWidget):
         self._playback_finished_emitted = False
         self._windows_file_loaded_timer.stop()
         self._player_property_cache.clear()
+        self._pending_external_audio_files = ""
         ensure_started_at = time.monotonic()
         self._ensure_player()
         ensure_elapsed = time.monotonic() - ensure_started_at
@@ -1316,6 +1321,47 @@ class MpvWidget(QWidget):
     def _attach_external_audio(self, player: Any, audio_files: str) -> None:
         if not audio_files:
             return
+        try:
+            self._audio_add_command(player, audio_files)
+        except Exception:
+            if getattr(player, "core_shutdown", False):
+                return
+            self._pending_external_audio_files = audio_files
+            logger.warning(
+                "audio-add right after loadfile failed (AO init race), "
+                "will verify after file-loaded: %s",
+                self._summarize_media_url(audio_files),
+                exc_info=True,
+            )
+
+    def _retry_pending_external_audio(self) -> None:
+        audio_files = self._pending_external_audio_files
+        if not audio_files:
+            return
+        self._pending_external_audio_files = ""
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return
+        tracks = self._player_property("track-list") or []
+        has_external_audio = any(
+            isinstance(track, dict)
+            and track.get("type") == "audio"
+            and track.get("external")
+            for track in tracks
+        )
+        if has_external_audio:
+            return
+        try:
+            self._audio_add_command(player, audio_files)
+        except Exception:
+            if not getattr(player, "core_shutdown", False):
+                logger.warning(
+                    "external audio retry after file-loaded failed: %s",
+                    self._summarize_media_url(audio_files),
+                    exc_info=True,
+                )
+
+    def _audio_add_command(self, player: Any, audio_files: str) -> None:
         audio_add = getattr(player, "audio_add", None)
         if callable(audio_add):
             audio_add(audio_files)
