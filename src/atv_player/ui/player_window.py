@@ -5068,6 +5068,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         hydrate_only=has_playable_url,
                     )
                 if not has_playable_url:
+                    needs_detail_resolution = (
+                        resolved_vod is None
+                        and bool(current_item.vod_id)
+                        and self.session.detail_resolver is not None
+                    )
+                    if needs_detail_resolution:
+                        # 无地址条目此处随 loader 先行返回,此后无人再触发详情解析——
+                        # 影片详情(树里切相关/合集/UP主条目)会一直停在打开时的视频;
+                        # 与 loader 并发解析,随播随切。
+                        self._start_play_item_resolution(
+                            previous_index=previous_index,
+                            start_position_seconds=start_position_seconds,
+                            pause=pause,
+                            wait_for_load=False,
+                        )
                     return False
             else:
                 load_result = self.session.playback_loader(current_item)

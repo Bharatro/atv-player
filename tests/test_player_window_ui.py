@@ -24825,6 +24825,56 @@ def test_player_window_bilibili_tree_rebuilds_flat_mapping_after_replacement(qtb
     assert window.session.playlist[window.current_index].title == "相关B"
 
 
+def test_player_window_unresolved_bilibili_item_hydrates_detail_alongside_loader(qtbot) -> None:
+    """无地址条目 loader 先行返回后无人再触发详情解析——影片详情会一直停在打开时的视频;
+    回归点=切到树里未解析的条目时详情解析与 loader 并发,session.vod 换成该条目的详情。"""
+    resolved_detail = VodItem(
+        vod_id="BV-r1",
+        vod_name="相关1详情",
+        vod_play_from="BiliBili$$$相关视频",
+        vod_play_url="相关1$BV-r1$$$下一条$111-222",
+    )
+
+    class ResolvingController(FakePlayerController):
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def resolve_play_item_detail(self, session, play_item):
+            self.calls.append(play_item.vod_id)
+            return resolved_detail
+
+    def playback_loader(item):
+        item.url = "http://m/real.m4s"
+        return PlaybackLoadResult()
+
+    controller = ResolvingController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    main_group = [PlayItem(title="正片", url="http://m/main.mp4", vod_id="BV-main", play_source="BiliBili")]
+    related_group = [PlayItem(title="相关1", url="", vod_id="BV-r1", play_source="相关视频")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="BV-main", vod_name="B站视频"),
+        playlist=related_group,
+        playlists=[main_group, related_group],
+        playlist_index=1,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+        detail_resolver=lambda item: resolved_detail,
+        playback_loader=playback_loader,
+        async_playback_loader=True,
+    )
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window.session is not None and window.session.vod.vod_name == "相关1详情")
+    assert controller.calls == ["BV-r1"]
+    assert window.session.playlist[0].url == "http://m/real.m4s"
+
+
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(controller)

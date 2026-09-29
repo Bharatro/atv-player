@@ -20,6 +20,7 @@ from atv_player.models import (
     VodItem,
 )
 from atv_player.episode_titles import playlist_item_display_title
+from atv_player.controllers.telegram_search_controller import _looks_like_media_url
 from atv_player.player.resume import resolve_resume_index, resolve_resume_index_by_drive_path
 from atv_player.yt_dlp_service import looks_like_youtube_video_id
 
@@ -594,10 +595,14 @@ class PlayerController:
             session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
         if resolved_vod is None:
             return None
-        url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
-        if not url:
-            return None
-        play_item.url = url
+        url = resolved_vod.items[0].url if resolved_vod.items else ""
+        if not url and _looks_like_media_url(resolved_vod.vod_play_url):
+            # vod_play_url 整体就是一个媒体直链时可直接播(直链型源);B站等线路型详情
+            # items 为空、vod_play_url 是整包线路串(标题$id$$$…),塞给播放项会覆盖
+            # playback_loader 已取到的真实直链——那种情况只取元数据,不动播放地址。
+            url = resolved_vod.vod_play_url
+        if url:
+            play_item.url = url
         # 浏览/网盘流程:外挂字幕随详情一起解析(直链带时效),跟着播放地址一起落到播放项。
         if resolved_vod.items and resolved_vod.items[0].external_subtitles and not play_item.external_subtitles:
             play_item.external_subtitles = list(resolved_vod.items[0].external_subtitles)

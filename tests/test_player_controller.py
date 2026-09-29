@@ -425,6 +425,45 @@ def test_player_controller_resolve_play_item_detail_propagates_external_subtitle
     assert [subtitle.name for subtitle in playlist[0].external_subtitles] == ["简体中文 [网盘]"]
 
 
+def test_player_controller_resolve_play_item_detail_keeps_route_blob_off_play_url() -> None:
+    """B站线路型详情 items 为空、vod_play_url 是整包线路串:只取元数据,不得覆盖已解析的真实直链。"""
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="BV-main", vod_name="B站视频")
+    playlist = [PlayItem(title="相关1", url="http://loader/real.m4s", vod_id="116958703918865-40168587741")]
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        return VodItem(
+            vod_id="BV-resolved",
+            vod_name="相关视频详情",
+            vod_play_url="标题$116958703918865-40168587741$$$另一条$111-222",
+        )
+
+    session = controller.create_session(vod, playlist, clicked_index=0, detail_resolver=detail_resolver)
+
+    resolved = controller.resolve_play_item_detail(session, playlist[0])
+
+    assert resolved is not None
+    assert resolved.vod_name == "相关视频详情"
+    assert playlist[0].url == "http://loader/real.m4s"
+
+
+def test_player_controller_resolve_play_item_detail_falls_back_to_direct_play_url() -> None:
+    """直链型源 vod_play_url 整体就是媒体地址:仍直接落到播放项(回归保护)。"""
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1$91483$1")]
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        return VodItem(vod_id=item.vod_id, vod_name="直链详情", vod_play_url="http://m/1.mp4")
+
+    session = controller.create_session(vod, playlist, clicked_index=0, detail_resolver=detail_resolver)
+
+    resolved = controller.resolve_play_item_detail(session, playlist[0])
+
+    assert resolved is not None
+    assert playlist[0].url == "http://m/1.mp4"
+
+
 def test_player_controller_skips_local_history_when_session_disables_it() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
